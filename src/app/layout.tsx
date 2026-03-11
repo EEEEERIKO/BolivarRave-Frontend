@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "@fontsource/material-symbols-outlined";
 import "./globals.css";
+import { AdminShell } from "@/components/layout/admin-shell";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -23,7 +24,7 @@ export default function RootLayout({
       <body
         className={`${inter.variable} antialiased`}
       >
-        {children}
+        <AdminShell>{children}</AdminShell>
       </body>
     </html>
   );
