@@ -14,9 +14,9 @@ type NavItem = {
 const navItems: NavItem[] = [
   { label: "Dashboard", icon: "dashboard", href: "/", isRoute: true },
   { label: "Schedules", icon: "calendar_today", href: "/schedules", isRoute: true },
-  { label: "Rooms", icon: "meeting_room", href: "#" },
+  { label: "Rooms", icon: "meeting_room", href: "/rooms", isRoute: true },
   { label: "Floors", icon: "layers", href: "#" },
-  { label: "Excel Import", icon: "upload_file", href: "#" },
+  { label: "Excel Import", icon: "upload_file", href: "/excel-import", isRoute: true },
 ];
 
 function navClasses(isActive: boolean) {
