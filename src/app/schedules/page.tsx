@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, Fragment, useMemo, useState } from "react";
+import { FormEvent, Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Rnd, RndDragCallback, RndResizeCallback } from "react-rnd";
 
 type ScheduleEvent = {
@@ -45,16 +45,9 @@ const getInitialNewEvent = (): NewEventForm => ({
 });
 
 const weekDays = ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado", "Domingo"];
-
-const weekDates: Record<string, string> = {
-  Lunes: "14",
-  Martes: "15",
-  Miercoles: "16",
-  Jueves: "17",
-  Viernes: "18",
-  Sabado: "19",
-  Domingo: "20",
-};
+const shortMonthNames = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
+const monthNames = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
+const pickerWeekDays = ["Lun", "Mar", "Mie", "Jue", "Vie", "Sab", "Dom"];
 
 const rooms = [
   "Aula Foro Union",
@@ -131,6 +124,7 @@ const timeSlots = [
   "09:30-10:00",
   "10:00-10:30",
   "10:30-11:00",
+  "11:00-11:30",
   "11:30-12:00",
   "12:00-12:30",
   "12:30-13:00",
@@ -206,8 +200,111 @@ const eventStyles: Record<ScheduleEvent["color"], string> = {
   violet: "bg-violet-100 border-violet-600 text-violet-900",
 };
 
+const getWeekdayName = (date: Date) => {
+  const day = date.getDay();
+  return weekDays[(day + 6) % 7];
+};
+
+const startOfWeekMonday = (date: Date) => {
+  const copy = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const day = copy.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  copy.setDate(copy.getDate() + diff);
+  return copy;
+};
+
+const addDays = (date: Date, days: number) => {
+  const copy = new Date(date);
+  copy.setDate(copy.getDate() + days);
+  return copy;
+};
+
+const getColombiaToday = () => {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Bogota",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+
+  const parts = formatter.formatToParts(new Date());
+  const year = Number(parts.find((part) => part.type === "year")?.value ?? "0");
+  const month = Number(parts.find((part) => part.type === "month")?.value ?? "1");
+  const day = Number(parts.find((part) => part.type === "day")?.value ?? "1");
+
+  return new Date(year, month - 1, day);
+};
+
+const getColombiaTime = () => {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Bogota",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+
+  const parts = formatter.formatToParts(new Date());
+  const hour = Number(parts.find((part) => part.type === "hour")?.value ?? "0");
+  const minute = Number(parts.find((part) => part.type === "minute")?.value ?? "0");
+
+  return { hour, minute };
+};
+
+const getCurrentTimeSlotIndex = (slots: string[]) => {
+  const { hour, minute } = getColombiaTime();
+  const currentMinutes = hour * 60 + minute;
+
+  for (let i = 0; i < slots.length; i++) {
+    const [start] = slots[i].split("-");
+    const [startHour, startMin] = start.split(":").map(Number);
+    const slotStartMinutes = startHour * 60 + startMin;
+    const slotEndMinutes = slotStartMinutes + 30;
+
+    if (currentMinutes >= slotStartMinutes && currentMinutes < slotEndMinutes) {
+      return i;
+    }
+  }
+
+  return -1;
+};
+
+const dateValue = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+
+const startOfMonth = (date: Date) => new Date(date.getFullYear(), date.getMonth(), 1);
+
+const endOfMonth = (date: Date) => new Date(date.getFullYear(), date.getMonth() + 1, 0);
+
+const buildMonthGrid = (monthCursor: Date) => {
+  const monthStart = startOfMonth(monthCursor);
+  const monthEnd = endOfMonth(monthCursor);
+  const startDay = monthStart.getDay();
+  const endDay = monthEnd.getDay();
+
+  const gridStart = addDays(monthStart, startDay === 0 ? -6 : 1 - startDay);
+  const gridEnd = addDays(monthEnd, endDay === 0 ? 0 : 7 - endDay);
+
+  const days: Date[] = [];
+  for (let cursor = new Date(gridStart); cursor <= gridEnd; cursor = addDays(cursor, 1)) {
+    days.push(new Date(cursor));
+  }
+
+  return days;
+};
+
+const formatWeekRangeLabel = (weekStart: Date) => {
+  const weekEnd = addDays(weekStart, 6);
+  return `Semana ${shortMonthNames[weekStart.getMonth()]} ${weekStart.getDate()} - ${shortMonthNames[weekEnd.getMonth()]} ${weekEnd.getDate()}, ${weekEnd.getFullYear()}`;
+};
+
 export default function SchedulesPage() {
-  const [selectedDay, setSelectedDay] = useState("Miercoles");
+  const weekPickerRef = useRef<HTMLDivElement>(null);
+
+  const colombiaToday = useMemo(() => getColombiaToday(), []);
+  const [selectedDay, setSelectedDay] = useState(getWeekdayName(colombiaToday));
+  const [currentWeekStart, setCurrentWeekStart] = useState(startOfWeekMonday(colombiaToday));
+  const [currentTimeSlotIndex, setCurrentTimeSlotIndex] = useState(() => getCurrentTimeSlotIndex(timeSlots));
+  const [isWeekPickerOpen, setIsWeekPickerOpen] = useState(false);
+  const [pickerMonthCursor, setPickerMonthCursor] = useState(startOfMonth(colombiaToday));
   const [roomQuery, setRoomQuery] = useState("");
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [events, setEvents] = useState<ScheduleEvent[]>(initialEvents);
@@ -217,6 +314,30 @@ export default function SchedulesPage() {
   const [editError, setEditError] = useState<string | null>(null);
   const [newEvent, setNewEvent] = useState<NewEventForm>(getInitialNewEvent);
   const [editEvent, setEditEvent] = useState<NewEventForm>(getInitialNewEvent);
+
+  // Close week picker when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (weekPickerRef.current && !weekPickerRef.current.contains(e.target as Node)) {
+        setIsWeekPickerOpen(false);
+      }
+    };
+
+    if (isWeekPickerOpen) {
+      document.addEventListener("click", handleClickOutside);
+      return () => document.removeEventListener("click", handleClickOutside);
+    }
+  }, [isWeekPickerOpen]);
+
+  // Update current time slot index every minute
+  useEffect(() => {
+    const updateTimeSlot = () => {
+      setCurrentTimeSlotIndex(getCurrentTimeSlotIndex(timeSlots));
+    };
+
+    const timer = setInterval(updateTimeSlot, 60000);
+    return () => clearInterval(timer);
+  }, []);
 
   const resetCreateForm = () => {
     setCreateError(null);
@@ -246,6 +367,20 @@ export default function SchedulesPage() {
     () => events.filter((event) => event.day === selectedDay && filteredRooms.includes(event.room)),
     [events, selectedDay, filteredRooms]
   );
+
+  const weekDates = useMemo(() => {
+    const map: Record<string, string> = {};
+    weekDays.forEach((day, index) => {
+      map[day] = String(addDays(currentWeekStart, index).getDate());
+    });
+    return map;
+  }, [currentWeekStart]);
+
+  const weekRangeLabel = useMemo(() => formatWeekRangeLabel(currentWeekStart), [currentWeekStart]);
+  const currentWeekEnd = useMemo(() => addDays(currentWeekStart, 6), [currentWeekStart]);
+  const pickerMonthDays = useMemo(() => buildMonthGrid(pickerMonthCursor), [pickerMonthCursor]);
+  const isTodayInVisibleWeek = dateValue(colombiaToday) >= dateValue(currentWeekStart) && dateValue(colombiaToday) <= dateValue(currentWeekEnd);
+  const showCurrentTimeMarker = selectedDay === getWeekdayName(colombiaToday) && isTodayInVisibleWeek;
 
   const selectedEvent = events.find((event) => event.id === selectedEventId) ?? null;
 
@@ -511,34 +646,112 @@ export default function SchedulesPage() {
           <div className="flex flex-wrap items-center gap-3">
             <h1 className="text-lg font-bold">Academic Planner - Schedules</h1>
             <span className="rounded-full bg-[#295786]/10 px-3 py-1 text-xs font-semibold text-[#295786]">
-              Semana Oct 14 - Oct 20, 2024
+              {weekRangeLabel}
             </span>
-            <button
-              type="button"
-              onClick={() => {
-                resetCreateForm();
-                setIsCreateOpen(true);
-              }}
-              className="rounded-lg bg-[#295786] px-4 py-2 text-sm font-semibold text-white"
-            >
-              Agregar nueva clase
-            </button>
+            <div className="relative" ref={weekPickerRef}>
+              <button
+                type="button"
+                onClick={() =>
+                  setIsWeekPickerOpen((open) => {
+                    const next = !open;
+                    if (next) {
+                      setPickerMonthCursor(startOfMonth(currentWeekStart));
+                    }
+                    return next;
+                  })
+                }
+                className="inline-flex items-center justify-center rounded-lg border border-slate-200 p-2 text-slate-600 transition hover:bg-slate-50"
+                title="Seleccionar semana"
+                aria-label="Seleccionar semana"
+              >
+                <span className="material-symbols-outlined text-[20px]">calendar_month</span>
+              </button>
+
+              {isWeekPickerOpen ? (
+                <div className="absolute left-0 top-11 z-40 w-80 rounded-lg border border-slate-200 bg-white p-3 shadow-lg">
+                  <div className="mb-2 flex items-center justify-between">
+                    <button
+                      type="button"
+                      onClick={() => setPickerMonthCursor((current) => new Date(current.getFullYear(), current.getMonth() - 1, 1))}
+                      className="rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                    >
+                      ←
+                    </button>
+                    <p className="text-sm font-semibold text-slate-800">
+                      {monthNames[pickerMonthCursor.getMonth()]} {pickerMonthCursor.getFullYear()}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setPickerMonthCursor((current) => new Date(current.getFullYear(), current.getMonth() + 1, 1))}
+                      className="rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                    >
+                      →
+                    </button>
+                  </div>
+
+                  <div className="mb-2 grid grid-cols-7 gap-1">
+                    {pickerWeekDays.map((day) => (
+                      <div key={`picker-day-${day}`} className="text-center text-[11px] font-semibold text-slate-500">
+                        {day}
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="grid grid-cols-7 gap-1">
+                    {pickerMonthDays.map((day) => {
+                      const isCurrentMonth = day.getMonth() === pickerMonthCursor.getMonth();
+                      const inSelectedWeek = dateValue(day) >= dateValue(currentWeekStart) && dateValue(day) <= dateValue(currentWeekEnd);
+                      const isSelectedDay = getWeekdayName(day) === selectedDay && inSelectedWeek;
+                      const isToday = dateValue(day) === dateValue(colombiaToday);
+
+                      return (
+                        <button
+                          key={`picker-date-${day.toISOString()}`}
+                          type="button"
+                          onClick={() => {
+                            const monday = startOfWeekMonday(day);
+                            setCurrentWeekStart(monday);
+                            setSelectedDay(getWeekdayName(day));
+                            setIsWeekPickerOpen(false);
+                          }}
+                          className={`relative h-8 rounded-md text-xs font-medium transition ${
+                            isCurrentMonth ? "text-slate-700 hover:bg-slate-100" : "text-slate-400 hover:bg-slate-50"
+                          } ${inSelectedWeek ? "bg-[#295786]/10" : ""} ${isSelectedDay ? "ring-2 ring-[#295786]" : ""} ${isToday ? "font-bold text-[#295786]" : ""}`}
+                          title={isToday ? "Hoy (Colombia)" : undefined}
+                        >
+                          {day.getDate()}
+                          {isToday ? <span className="absolute bottom-1 left-1/2 h-1.5 w-1.5 -translate-x-1/2 rounded-full bg-[#295786]" /> : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                </div>
+              ) : null}
+            </div>
           </div>
 
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
             <div className="flex gap-1 rounded-lg bg-slate-100 p-1">
-              {weekDays.map((day) => (
-                <button
-                  key={day}
-                  type="button"
-                  onClick={() => setSelectedDay(day)}
-                  className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${
-                    selectedDay === day ? "bg-[#295786] text-white" : "text-slate-600 hover:bg-white"
-                  }`}
-                >
-                  {day.slice(0, 3)} {weekDates[day]}
-                </button>
-              ))}
+              {weekDays.map((day, index) => {
+                const thisDayDate = addDays(currentWeekStart, index);
+                const isToday = dateValue(thisDayDate) === dateValue(colombiaToday);
+
+                return (
+                  <button
+                    key={day}
+                    type="button"
+                    onClick={() => setSelectedDay(day)}
+                    className={`relative rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${
+                      selectedDay === day ? "bg-[#295786] text-white" : "text-slate-600 hover:bg-white"
+                    } ${isToday ? "ring-1 ring-[#295786]/60" : ""}`}
+                    title={isToday ? "Hoy (Colombia)" : undefined}
+                  >
+                    {day.slice(0, 3)} {weekDates[day]}
+                    {isToday ? <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-[#295786] align-middle" /> : null}
+                  </button>
+                );
+              })}
             </div>
 
             <input
@@ -582,7 +795,11 @@ export default function SchedulesPage() {
                 {timeSlots.map((slot, rowIndex) => (
                   <Fragment key={`row-${slot}`}>
                     <div
-                      className="sticky left-0 z-20 border-r border-b border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-600"
+                      className={`sticky left-0 z-20 border-r border-b px-3 py-2 text-xs font-medium ${
+                        rowIndex === currentTimeSlotIndex && showCurrentTimeMarker
+                          ? "border-r-red-600 border-b-red-400 border-t-4 border-t-red-600 bg-red-100 font-bold text-red-900"
+                          : "border-slate-200 bg-slate-50 text-slate-600"
+                      }`}
                       style={{ gridRow: rowIndex + 2, gridColumn: 1 }}
                     >
                       {slot}
@@ -592,7 +809,11 @@ export default function SchedulesPage() {
                       <button
                         key={`${slot}-${room}-${roomIndex}`}
                         type="button"
-                        className="border-r border-b border-slate-100 transition-colors hover:bg-[#295786]/5"
+                        className={`border-r border-b transition-colors ${
+                          rowIndex === currentTimeSlotIndex && showCurrentTimeMarker
+                            ? "border-t-4 border-t-red-600 bg-red-100 hover:bg-red-200"
+                            : "border-slate-100 hover:bg-[#295786]/5"
+                        }`}
                         style={{ gridRow: rowIndex + 2, gridColumn: roomIndex + 2 }}
                         onClick={() => setSelectedEventId(null)}
                         title={`${room} - ${slot}`}
@@ -658,43 +879,55 @@ export default function SchedulesPage() {
           </div>
         </section>
 
-        <aside className="h-fit rounded-xl border border-slate-200 bg-white p-5 shadow-sm xl:sticky xl:top-24">
-          <h2 className="text-sm font-bold tracking-wide text-slate-500 uppercase">Detalle interactivo</h2>
-          <p className="mt-2 text-sm text-slate-600">
-            Arrastra bloques para mover clase de salon/hora. Redimensiona arriba o abajo para ampliar/reducir horas.
-          </p>
+        <div className="h-fit xl:sticky xl:top-24">
+          <button
+            type="button"
+            onClick={() => {
+              resetCreateForm();
+              setIsCreateOpen(true);
+            }}
+            className="mb-3 w-full rounded-lg bg-[#295786] px-4 py-3 text-sm font-semibold text-white"
+          >
+            Agregar nueva clase
+          </button>
 
-          {selectedEvent ? (
-            <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
-              {!isEditMode ? (
-                <>
-                  <p className="text-xs font-semibold text-[#295786]">{selectedEvent.day}</p>
-                  <h3 className="mt-1 text-base font-bold">{selectedEvent.code} | {selectedEvent.subject}</h3>
-                  <p className="mt-2 text-sm text-slate-600">Facultad: {selectedEvent.faculty}</p>
-                  <p className="text-sm text-slate-600">Docente: {selectedEvent.teacher}</p>
-                  <p className="text-sm text-slate-600">Salon: {selectedEvent.room}</p>
-                  <p className="text-sm text-slate-600">Horario: {selectedEvent.start} - {selectedEvent.end}</p>
-                  <p className="text-sm text-slate-600">Rango: {selectedEvent.startDate} a {selectedEvent.endDate}</p>
+          <aside className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h2 className="text-sm font-bold tracking-wide text-slate-500 uppercase">Detalle interactivo</h2>
+            <p className="mt-2 text-sm text-slate-600">
+              Arrastra bloques para mover clase de salon/hora. Redimensiona arriba o abajo para ampliar/reducir horas.
+            </p>
 
-                  <div className="mt-4 grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={startEditEvent}
-                      className="rounded-lg bg-[#295786] px-3 py-2 text-sm font-semibold text-white"
-                    >
-                      Modificar datos
-                    </button>
-                    <button
-                      type="button"
-                      onClick={deleteSelectedEvent}
-                      className="rounded-lg bg-red-600 px-3 py-2 text-sm font-semibold text-white"
-                    >
-                      Eliminar clase
-                    </button>
-                  </div>
-                </>
-              ) : (
-                <form className="space-y-3" onSubmit={saveEditEvent}>
+            {selectedEvent ? (
+              <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                {!isEditMode ? (
+                  <>
+                    <p className="text-xs font-semibold text-[#295786]">{selectedEvent.day}</p>
+                    <h3 className="mt-1 text-base font-bold">{selectedEvent.code} | {selectedEvent.subject}</h3>
+                    <p className="mt-2 text-sm text-slate-600">Facultad: {selectedEvent.faculty}</p>
+                    <p className="text-sm text-slate-600">Docente: {selectedEvent.teacher}</p>
+                    <p className="text-sm text-slate-600">Salon: {selectedEvent.room}</p>
+                    <p className="text-sm text-slate-600">Horario: {selectedEvent.start} - {selectedEvent.end}</p>
+                    <p className="text-sm text-slate-600">Rango: {selectedEvent.startDate} a {selectedEvent.endDate}</p>
+
+                    <div className="mt-4 grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={startEditEvent}
+                        className="rounded-lg bg-[#295786] px-3 py-2 text-sm font-semibold text-white"
+                      >
+                        Modificar datos
+                      </button>
+                      <button
+                        type="button"
+                        onClick={deleteSelectedEvent}
+                        className="rounded-lg bg-red-600 px-3 py-2 text-sm font-semibold text-white"
+                      >
+                        Eliminar clase
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <form className="space-y-3" onSubmit={saveEditEvent}>
                   {editError && (
                     <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
                       {editError}
@@ -819,15 +1052,16 @@ export default function SchedulesPage() {
                       Eliminar
                     </button>
                   </div>
-                </form>
-              )}
-            </div>
-          ) : (
-            <div className="mt-4 rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-500">
-              No hay evento seleccionado. Haz click en un bloque para ver su informacion.
-            </div>
-          )}
-        </aside>
+                  </form>
+                )}
+              </div>
+            ) : (
+              <div className="mt-4 rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-500">
+                No hay evento seleccionado. Haz click en un bloque para ver su informacion.
+              </div>
+            )}
+          </aside>
+        </div>
       </div>
 
       {isCreateOpen && (
