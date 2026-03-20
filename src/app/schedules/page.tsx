@@ -15,10 +15,47 @@ type ScheduleEvent = {
   teacher: string;
   startDate: string;
   endDate: string;
-  color: "blue" | "emerald" | "amber" | "violet";
+  reservationType?: "normal" | "momentanea" | "iglesia";
+  color: "blue" | "emerald" | "amber" | "violet" | "red";
+};
+
+type ReservationType = "normal" | "momentanea" | "iglesia";
+
+const reservationTypeLabels: Record<ReservationType, string> = {
+  normal: "Reserva semestre",
+  momentanea: "Reserva por dia",
+  iglesia: "Reserva iglesia",
+};
+
+const getReservationTypeColor = (type: ReservationType): ScheduleEvent["color"] => {
+  if (type === "momentanea") return "amber";
+  if (type === "iglesia") return "red";
+  return "blue";
+};
+
+type ScheduleSlotForm = {
+  day: string;
+  room: string;
+  start: string;
+  end: string;
 };
 
 type NewEventForm = {
+  reservationType: ReservationType;
+  faculty: string;
+  code: string;
+  subject: string;
+  teacher: string;
+  startDate: string;
+  endDate: string;
+  oneDayDate: string;
+  churchGroup: string;
+  churchEvent: string;
+  churchContact: string;
+  slots: ScheduleSlotForm[];
+};
+
+type EditEventForm = {
   faculty: string;
   code: string;
   subject: string;
@@ -31,13 +68,51 @@ type NewEventForm = {
   end: string;
 };
 
+function getColombiaTodayIsoDate() {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Bogota",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+
+  const parts = formatter.formatToParts(new Date());
+  const year = parts.find((part) => part.type === "year")?.value ?? "0000";
+  const month = parts.find((part) => part.type === "month")?.value ?? "01";
+  const day = parts.find((part) => part.type === "day")?.value ?? "01";
+
+  return `${year}-${month}-${day}`;
+}
+
+const getInitialSlot = (): ScheduleSlotForm => ({
+  day: "",
+  room: "",
+  start: "",
+  end: "",
+});
+
 const getInitialNewEvent = (): NewEventForm => ({
-  faculty: "",
+  reservationType: "normal",
+  faculty: faculties[0],
   code: "",
   subject: "",
   teacher: "",
-  startDate: "2026-02-09",
-  endDate: "2026-06-12",
+  startDate: getColombiaTodayIsoDate(),
+  endDate: getColombiaTodayIsoDate(),
+  oneDayDate: getColombiaTodayIsoDate(),
+  churchGroup: "",
+  churchEvent: "",
+  churchContact: "",
+  slots: [getInitialSlot()],
+});
+
+const getInitialEditEvent = (): EditEventForm => ({
+  faculty: faculties[0],
+  code: "",
+  subject: "",
+  teacher: "",
+  startDate: getColombiaTodayIsoDate(),
+  endDate: getColombiaTodayIsoDate(),
   day: "Lunes",
   room: rooms[0],
   start: "08:00",
@@ -48,6 +123,14 @@ const weekDays = ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado",
 const shortMonthNames = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
 const monthNames = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
 const pickerWeekDays = ["Lun", "Mar", "Mie", "Jue", "Vie", "Sab", "Dom"];
+
+const faculties = [
+  "Facultad de Ciencias Administrativas y Contables",
+  "Facultad de Ciencias Humanas y de la Educacion",
+  "Facultad de Ciencias de la Salud",
+  "Facultad de Ingenieria",
+  "Facultad de Teologia y Religion",
+];
 
 const rooms = [
   "Aula Foro Union",
@@ -161,7 +244,8 @@ const initialEvents: ScheduleEvent[] = [
     teacher: "ESPINOSA ECHAVARRIA JESUS",
     startDate: "2026-02-09",
     endDate: "2026-06-12",
-    color: "blue",
+    reservationType: "normal",
+    color: getReservationTypeColor("normal"),
   },
   {
     id: "ev-2",
@@ -175,7 +259,8 @@ const initialEvents: ScheduleEvent[] = [
     teacher: "DOCENTE PENDIENTE ASIGNAR FTR 2",
     startDate: "2026-02-09",
     endDate: "2026-06-12",
-    color: "emerald",
+    reservationType: "normal",
+    color: getReservationTypeColor("normal"),
   },
   {
     id: "ev-3",
@@ -189,7 +274,8 @@ const initialEvents: ScheduleEvent[] = [
     teacher: "Prof. Jamila",
     startDate: "2026-02-09",
     endDate: "2026-06-12",
-    color: "amber",
+    reservationType: "normal",
+    color: getReservationTypeColor("normal"),
   },
 ];
 
@@ -198,6 +284,7 @@ const eventStyles: Record<ScheduleEvent["color"], string> = {
   emerald: "bg-emerald-100 border-emerald-600 text-emerald-900",
   amber: "bg-amber-100 border-amber-600 text-amber-900",
   violet: "bg-violet-100 border-violet-600 text-violet-900",
+  red: "bg-red-100 border-red-600 text-red-900",
 };
 
 const getWeekdayName = (date: Date) => {
@@ -217,6 +304,11 @@ const addDays = (date: Date, days: number) => {
   const copy = new Date(date);
   copy.setDate(copy.getDate() + days);
   return copy;
+};
+
+const parseIsoDateToLocal = (value: string) => {
+  const [year, month, day] = value.split("-").map(Number);
+  return new Date(year, (month ?? 1) - 1, day ?? 1);
 };
 
 const getColombiaToday = () => {
@@ -298,6 +390,7 @@ const formatWeekRangeLabel = (weekStart: Date) => {
 
 export default function SchedulesPage() {
   const weekPickerRef = useRef<HTMLDivElement>(null);
+  const gridScrollRef = useRef<HTMLDivElement>(null);
 
   const colombiaToday = useMemo(() => getColombiaToday(), []);
   const [selectedDay, setSelectedDay] = useState(getWeekdayName(colombiaToday));
@@ -313,7 +406,7 @@ export default function SchedulesPage() {
   const [isEditMode, setIsEditMode] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
   const [newEvent, setNewEvent] = useState<NewEventForm>(getInitialNewEvent);
-  const [editEvent, setEditEvent] = useState<NewEventForm>(getInitialNewEvent);
+  const [editEvent, setEditEvent] = useState<EditEventForm>(getInitialEditEvent);
 
   // Close week picker when clicking outside
   useEffect(() => {
@@ -364,8 +457,25 @@ export default function SchedulesPage() {
   );
 
   const visibleEvents = useMemo(
-    () => events.filter((event) => event.day === selectedDay && filteredRooms.includes(event.room)),
-    [events, selectedDay, filteredRooms]
+    () => {
+      const selectedDayIndex = weekDays.indexOf(selectedDay);
+      if (selectedDayIndex < 0) return [];
+
+      const selectedDate = addDays(currentWeekStart, selectedDayIndex);
+      const selectedDateValue = dateValue(selectedDate);
+
+      return events.filter((event) => {
+        if (event.day !== selectedDay || !filteredRooms.includes(event.room)) {
+          return false;
+        }
+
+        const eventStartValue = dateValue(parseIsoDateToLocal(event.startDate));
+        const eventEndValue = dateValue(parseIsoDateToLocal(event.endDate));
+
+        return selectedDateValue >= eventStartValue && selectedDateValue <= eventEndValue;
+      });
+    },
+    [events, selectedDay, filteredRooms, currentWeekStart]
   );
 
   const weekDates = useMemo(() => {
@@ -383,6 +493,29 @@ export default function SchedulesPage() {
   const showCurrentTimeMarker = selectedDay === getWeekdayName(colombiaToday) && isTodayInVisibleWeek;
 
   const selectedEvent = events.find((event) => event.id === selectedEventId) ?? null;
+
+  useEffect(() => {
+    if (!selectedEventId) return;
+    const container = gridScrollRef.current;
+    if (!container) return;
+
+    const focusedEvent = events.find((event) => event.id === selectedEventId);
+    if (!focusedEvent) return;
+    if (focusedEvent.day !== selectedDay) return;
+    if (!filteredRooms.includes(focusedEvent.room)) return;
+
+    const geom = eventGeometry(focusedEvent, filteredRooms);
+    if (geom.roomIndex < 0) return;
+
+    const targetLeft = Math.max(0, geom.x - roomColWidth);
+    const targetTop = Math.max(0, geom.y - headerHeight - slotHeight);
+
+    container.scrollTo({
+      left: targetLeft,
+      top: targetTop,
+      behavior: "smooth",
+    });
+  }, [selectedEventId, selectedDay, events, filteredRooms]);
 
   const timeColWidth = 130;
   const roomColWidth = 220;
@@ -484,64 +617,180 @@ export default function SchedulesPage() {
   const createEvent = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    if (!rooms.includes(newEvent.room)) {
-      const message = "Salon invalido: debes seleccionar un salon de la lista disponible.";
+    if (!newEvent.slots.length) {
+      const message = "Debes agregar al menos un horario.";
       setCreateError(message);
       window.alert(message);
       return;
     }
 
-    const newStartIndex = startToIndex[newEvent.start] ?? -1;
-    const newEndExclusive = endToExclusiveIndex[newEvent.end] ?? -1;
+    for (let i = 0; i < newEvent.slots.length; i++) {
+      const slot = newEvent.slots[i];
 
-    if (newStartIndex < 0 || newEndExclusive < 0 || newEndExclusive <= newStartIndex) {
-      const message = "Horario invalido: la hora fin debe ser mayor que la hora inicio.";
-      setCreateError(message);
-      window.alert(message);
-      return;
-    }
-
-    const overlappingClass = events.find((existing) => {
-      if (existing.day !== newEvent.day || existing.room !== newEvent.room) {
-        return false;
+      if (!slot.day) {
+        const message = "Debes seleccionar un dia.";
+        setCreateError(message);
+        window.alert(message);
+        return;
       }
 
-      const existingStart = startToIndex[existing.start] ?? -1;
-      const existingEnd = endToExclusiveIndex[existing.end] ?? -1;
+      if (!slot.room) {
+        const message = "Debes seleccionar un salon.";
+        setCreateError(message);
+        window.alert(message);
+        return;
+      }
 
-      if (existingStart < 0 || existingEnd < 0) return false;
+      if (!slot.start || !slot.end) {
+        const message = "Debes seleccionar hora inicio y hora fin.";
+        setCreateError(message);
+        window.alert(message);
+        return;
+      }
 
-      return newStartIndex < existingEnd && existingStart < newEndExclusive;
-    });
+      if (!rooms.includes(slot.room)) {
+        const message = `Salon invalido en horario ${i + 1}: debes seleccionar un salon de la lista disponible.`;
+        setCreateError(message);
+        window.alert(message);
+        return;
+      }
 
-    if (overlappingClass) {
-      const message = `Conflicto detectado: ya existe "${overlappingClass.code} | ${overlappingClass.subject}" en ${newEvent.room} para ese horario.`;
+      const slotStartIndex = startToIndex[slot.start] ?? -1;
+      const slotEndExclusive = endToExclusiveIndex[slot.end] ?? -1;
+
+      if (slotStartIndex < 0 || slotEndExclusive < 0 || slotEndExclusive <= slotStartIndex) {
+        const message = `Horario invalido en bloque ${i + 1}: la hora fin debe ser mayor que la hora inicio.`;
+        setCreateError(message);
+        window.alert(message);
+        return;
+      }
+
+      const overlappingClass = events.find((existing) => {
+        if (existing.day !== slot.day || existing.room !== slot.room) {
+          return false;
+        }
+
+        const existingStart = startToIndex[existing.start] ?? -1;
+        const existingEnd = endToExclusiveIndex[existing.end] ?? -1;
+
+        if (existingStart < 0 || existingEnd < 0) return false;
+
+        return slotStartIndex < existingEnd && existingStart < slotEndExclusive;
+      });
+
+      if (overlappingClass) {
+        const message = `Conflicto detectado: ya existe "${overlappingClass.code} | ${overlappingClass.subject}" en ${slot.room} (${slot.day}) para ese horario.`;
+        setCreateError(message);
+        window.alert(message);
+        return;
+      }
+
+      const overlapInForm = newEvent.slots.some((other, index) => {
+        if (index === i) return false;
+        if (other.day !== slot.day || other.room !== slot.room) return false;
+
+        const otherStart = startToIndex[other.start] ?? -1;
+        const otherEnd = endToExclusiveIndex[other.end] ?? -1;
+
+        if (otherStart < 0 || otherEnd < 0) return false;
+        return slotStartIndex < otherEnd && otherStart < slotEndExclusive;
+      });
+
+      if (overlapInForm) {
+        const message = `Hay solape entre los horarios del formulario en ${slot.room} (${slot.day}).`;
+        setCreateError(message);
+        window.alert(message);
+        return;
+      }
+    }
+
+    if (newEvent.reservationType === "normal") {
+      if (!newEvent.faculty || !newEvent.code || !newEvent.subject || !newEvent.teacher) {
+        const message = "Completa Facultad, Codigo, Materia y Docente para la reserva normal.";
+        setCreateError(message);
+        window.alert(message);
+        return;
+      }
+    }
+
+    if (newEvent.reservationType === "momentanea" && !newEvent.subject.trim()) {
+      const message = "En reserva por dia debes indicar el motivo o nombre de la reserva.";
       setCreateError(message);
       window.alert(message);
       return;
     }
 
-    const id = `ev-${Date.now()}`;
-    setEvents((current) => [
-      ...current,
-      {
-        id,
-        day: newEvent.day,
-        room: newEvent.room,
-        start: newEvent.start,
-        end: newEvent.end,
-        faculty: newEvent.faculty || "Sin facultad",
-        code: newEvent.code || "SIN-CODIGO",
-        subject: newEvent.subject || "CLASE NUEVA",
-        teacher: newEvent.teacher || "DOCENTE PENDIENTE",
-        startDate: newEvent.startDate,
-        endDate: newEvent.endDate,
-        color: "blue",
-      },
-    ]);
+    if (newEvent.reservationType === "iglesia") {
+      if (!newEvent.churchGroup.trim() || !newEvent.churchEvent.trim() || !newEvent.churchContact.trim()) {
+        const message = "Para reserva de iglesia completa grupo, actividad y contacto.";
+        setCreateError(message);
+        window.alert(message);
+        return;
+      }
 
-    setSelectedDay(newEvent.day);
-    setSelectedEventId(id);
+      if (!newEvent.startDate || !newEvent.endDate) {
+        const message = "Para reserva de iglesia debes seleccionar fecha de inicio y fecha de fin.";
+        setCreateError(message);
+        window.alert(message);
+        return;
+      }
+    }
+
+    const baseStartDate =
+      newEvent.reservationType === "momentanea" ? newEvent.oneDayDate : newEvent.startDate;
+    const baseEndDate =
+      newEvent.reservationType === "momentanea" ? newEvent.oneDayDate : newEvent.endDate;
+
+    const normalizedFaculty =
+      newEvent.reservationType === "normal"
+        ? newEvent.faculty
+        : newEvent.reservationType === "momentanea"
+          ? "Reserva por dia"
+          : "Reserva iglesia";
+
+    const normalizedCode =
+      newEvent.reservationType === "normal"
+        ? newEvent.code
+        : newEvent.reservationType === "momentanea"
+          ? "RESERVA-DIA"
+          : "RESERVA-IGLESIA";
+
+    const normalizedSubject =
+      newEvent.reservationType === "normal"
+        ? newEvent.subject
+        : newEvent.reservationType === "momentanea"
+          ? newEvent.subject
+          : `${newEvent.churchGroup} - ${newEvent.churchEvent}`;
+
+    const normalizedTeacher =
+      newEvent.reservationType === "normal"
+        ? newEvent.teacher
+        : newEvent.reservationType === "momentanea"
+          ? newEvent.teacher || "Reserva temporal"
+          : newEvent.churchContact;
+
+    const createdEvents = newEvent.slots.map((slot, index) => ({
+      id: `ev-${Date.now()}-${index}`,
+      day: slot.day,
+      room: slot.room,
+      start: slot.start,
+      end: slot.end,
+      faculty: normalizedFaculty || "Sin facultad",
+      code: normalizedCode || "SIN-CODIGO",
+      subject: normalizedSubject || "CLASE NUEVA",
+      teacher: normalizedTeacher || "DOCENTE PENDIENTE",
+      startDate: baseStartDate,
+      endDate: baseEndDate,
+      reservationType: newEvent.reservationType,
+      color: getReservationTypeColor(newEvent.reservationType),
+    }));
+
+    setEvents((current) => [...current, ...createdEvents]);
+
+    setRoomQuery("");
+    setCurrentWeekStart(startOfWeekMonday(parseIsoDateToLocal(baseStartDate)));
+    setSelectedDay(createdEvents[0].day);
+    setSelectedEventId(createdEvents[0].id);
     resetCreateForm();
     setIsCreateOpen(false);
   };
@@ -767,7 +1016,7 @@ export default function SchedulesPage() {
 
       <div className="grid gap-4 xl:grid-cols-[1fr_330px]">
         <section className="relative isolate overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-          <div className="overflow-auto" style={{ maxHeight: "75vh" }}>
+          <div ref={gridScrollRef} className="overflow-auto" style={{ maxHeight: "75vh" }}>
             <div
               className="relative min-w-max"
               style={{ width: timeColWidth + filteredRooms.length * roomColWidth }}
@@ -902,6 +1151,9 @@ export default function SchedulesPage() {
                 {!isEditMode ? (
                   <>
                     <p className="text-xs font-semibold text-[#295786]">{selectedEvent.day}</p>
+                    <p className="mt-1 inline-flex rounded-full bg-slate-200 px-2 py-0.5 text-xs font-semibold text-slate-700">
+                      {reservationTypeLabels[selectedEvent.reservationType ?? "normal"]}
+                    </p>
                     <h3 className="mt-1 text-base font-bold">{selectedEvent.code} | {selectedEvent.subject}</h3>
                     <p className="mt-2 text-sm text-slate-600">Facultad: {selectedEvent.faculty}</p>
                     <p className="text-sm text-slate-600">Docente: {selectedEvent.teacher}</p>
@@ -934,13 +1186,21 @@ export default function SchedulesPage() {
                     </div>
                   )}
 
-                  <input
+                  <select
                     required
                     value={editEvent.faculty}
                     onChange={(e) => setEditEvent((s) => ({ ...s, faculty: e.target.value }))}
                     className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-                    placeholder="Facultad"
-                  />
+                  >
+                    {!faculties.includes(editEvent.faculty) ? (
+                      <option value={editEvent.faculty}>{editEvent.faculty}</option>
+                    ) : null}
+                    {faculties.map((faculty) => (
+                      <option key={`edit-faculty-${faculty}`} value={faculty}>
+                        {faculty}
+                      </option>
+                    ))}
+                  </select>
                   <input
                     required
                     value={editEvent.code}
@@ -1079,24 +1339,187 @@ export default function SchedulesPage() {
             )}
 
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              <input required placeholder="Facultad" className="rounded-lg border border-slate-200 px-3 py-2 text-sm" value={newEvent.faculty} onChange={(e) => setNewEvent((s) => ({ ...s, faculty: e.target.value }))} />
-              <input required placeholder="Codigo" className="rounded-lg border border-slate-200 px-3 py-2 text-sm" value={newEvent.code} onChange={(e) => setNewEvent((s) => ({ ...s, code: e.target.value }))} />
-              <input required placeholder="Materia" className="rounded-lg border border-slate-200 px-3 py-2 text-sm sm:col-span-2" value={newEvent.subject} onChange={(e) => setNewEvent((s) => ({ ...s, subject: e.target.value }))} />
-              <input required placeholder="Docente" className="rounded-lg border border-slate-200 px-3 py-2 text-sm sm:col-span-2" value={newEvent.teacher} onChange={(e) => setNewEvent((s) => ({ ...s, teacher: e.target.value }))} />
-              <input required type="date" className="rounded-lg border border-slate-200 px-3 py-2 text-sm" value={newEvent.startDate} onChange={(e) => setNewEvent((s) => ({ ...s, startDate: e.target.value }))} />
-              <input required type="date" className="rounded-lg border border-slate-200 px-3 py-2 text-sm" value={newEvent.endDate} onChange={(e) => setNewEvent((s) => ({ ...s, endDate: e.target.value }))} />
-              <select className="rounded-lg border border-slate-200 px-3 py-2 text-sm" value={newEvent.day} onChange={(e) => setNewEvent((s) => ({ ...s, day: e.target.value }))}>
-                {weekDays.map((day) => <option key={day} value={day}>{day}</option>)}
-              </select>
-              <select className="rounded-lg border border-slate-200 px-3 py-2 text-sm" value={newEvent.room} onChange={(e) => setNewEvent((s) => ({ ...s, room: e.target.value }))}>
-                {rooms.map((room, index) => <option key={`${room}-${index}`} value={room}>{room}</option>)}
-              </select>
-              <select className="rounded-lg border border-slate-200 px-3 py-2 text-sm" value={newEvent.start} onChange={(e) => setNewEvent((s) => ({ ...s, start: e.target.value }))}>
-                {slotStarts.map((slot) => <option key={`s-${slot}`} value={slot}>{slot}</option>)}
-              </select>
-              <select className="rounded-lg border border-slate-200 px-3 py-2 text-sm" value={newEvent.end} onChange={(e) => setNewEvent((s) => ({ ...s, end: e.target.value }))}>
-                {slotEnds.map((slot) => <option key={`e-${slot}`} value={slot}>{slot}</option>)}
-              </select>
+              <div className="sm:col-span-2">
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Tipo de reserva</label>
+                <select
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                  value={newEvent.reservationType}
+                  onChange={(e) =>
+                    setNewEvent((s) => ({
+                      ...s,
+                      reservationType: e.target.value as ReservationType,
+                    }))
+                  }
+                >
+                  <option value="normal">Reserva normal (semestre)</option>
+                  <option value="momentanea">Reserva por dia (momentanea)</option>
+                  <option value="iglesia">Reserva fuera del ambito academico (iglesia)</option>
+                </select>
+              </div>
+
+              {newEvent.reservationType === "normal" ? (
+                <>
+                  <select
+                    required
+                    className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                    value={newEvent.faculty}
+                    onChange={(e) => setNewEvent((s) => ({ ...s, faculty: e.target.value }))}
+                  >
+                    {faculties.map((faculty) => (
+                      <option key={`create-faculty-${faculty}`} value={faculty}>
+                        {faculty}
+                      </option>
+                    ))}
+                  </select>
+                  <input required placeholder="Codigo" className="rounded-lg border border-slate-200 px-3 py-2 text-sm" value={newEvent.code} onChange={(e) => setNewEvent((s) => ({ ...s, code: e.target.value }))} />
+                  <input required placeholder="Materia" className="rounded-lg border border-slate-200 px-3 py-2 text-sm sm:col-span-2" value={newEvent.subject} onChange={(e) => setNewEvent((s) => ({ ...s, subject: e.target.value }))} />
+                  <input required placeholder="Docente" className="rounded-lg border border-slate-200 px-3 py-2 text-sm sm:col-span-2" value={newEvent.teacher} onChange={(e) => setNewEvent((s) => ({ ...s, teacher: e.target.value }))} />
+                  <input required type="date" className="rounded-lg border border-slate-200 px-3 py-2 text-sm" value={newEvent.startDate} onChange={(e) => setNewEvent((s) => ({ ...s, startDate: e.target.value }))} />
+                  <input required type="date" className="rounded-lg border border-slate-200 px-3 py-2 text-sm" value={newEvent.endDate} onChange={(e) => setNewEvent((s) => ({ ...s, endDate: e.target.value }))} />
+                </>
+              ) : null}
+
+              {newEvent.reservationType === "momentanea" ? (
+                <>
+                  <input required placeholder="Motivo de la reserva" className="rounded-lg border border-slate-200 px-3 py-2 text-sm sm:col-span-2" value={newEvent.subject} onChange={(e) => setNewEvent((s) => ({ ...s, subject: e.target.value }))} />
+                  <input placeholder="Responsable (opcional)" className="rounded-lg border border-slate-200 px-3 py-2 text-sm sm:col-span-2" value={newEvent.teacher} onChange={(e) => setNewEvent((s) => ({ ...s, teacher: e.target.value }))} />
+                  <input required type="date" className="rounded-lg border border-slate-200 px-3 py-2 text-sm sm:col-span-2" value={newEvent.oneDayDate} onChange={(e) => setNewEvent((s) => ({ ...s, oneDayDate: e.target.value }))} />
+                </>
+              ) : null}
+
+              {newEvent.reservationType === "iglesia" ? (
+                <>
+                  <input required placeholder="Nombre del grupo" className="rounded-lg border border-slate-200 px-3 py-2 text-sm" value={newEvent.churchGroup} onChange={(e) => setNewEvent((s) => ({ ...s, churchGroup: e.target.value }))} />
+                  <input required placeholder="Actividad" className="rounded-lg border border-slate-200 px-3 py-2 text-sm" value={newEvent.churchEvent} onChange={(e) => setNewEvent((s) => ({ ...s, churchEvent: e.target.value }))} />
+                  <input required placeholder="Contacto responsable" className="rounded-lg border border-slate-200 px-3 py-2 text-sm sm:col-span-2" value={newEvent.churchContact} onChange={(e) => setNewEvent((s) => ({ ...s, churchContact: e.target.value }))} />
+                  <input required type="date" className="rounded-lg border border-slate-200 px-3 py-2 text-sm" value={newEvent.startDate} onChange={(e) => setNewEvent((s) => ({ ...s, startDate: e.target.value }))} />
+                  <input required type="date" className="rounded-lg border border-slate-200 px-3 py-2 text-sm" value={newEvent.endDate} onChange={(e) => setNewEvent((s) => ({ ...s, endDate: e.target.value }))} />
+                </>
+              ) : null}
+
+              <div className="sm:col-span-2 mt-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <p className="text-sm font-semibold text-slate-700">Horarios de esta clase</p>
+                  <button
+                    type="button"
+                    className="rounded-md border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-700"
+                    onClick={() =>
+                      setNewEvent((s) => ({
+                        ...s,
+                        slots: [...s.slots, getInitialSlot()],
+                      }))
+                    }
+                  >
+                    + Agregar horario
+                  </button>
+                </div>
+
+                <div className="space-y-3">
+                  {newEvent.slots.map((slot, index) => (
+                    <div key={`new-slot-${index}`} className="rounded-lg border border-slate-200 bg-white p-3">
+                      <div className="mb-2 flex items-center justify-between">
+                        <p className="text-xs font-semibold text-slate-500">Horario {index + 1}</p>
+                        {newEvent.slots.length > 1 ? (
+                          <button
+                            type="button"
+                            className="rounded-md border border-red-200 px-2 py-1 text-xs font-semibold text-red-700"
+                            onClick={() =>
+                              setNewEvent((s) => ({
+                                ...s,
+                                slots: s.slots.filter((_, slotIndex) => slotIndex !== index),
+                              }))
+                            }
+                          >
+                            Quitar
+                          </button>
+                        ) : null}
+                      </div>
+
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <select
+                          className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                          value={slot.day}
+                          onChange={(e) =>
+                            setNewEvent((s) => ({
+                              ...s,
+                              slots: s.slots.map((currentSlot, slotIndex) =>
+                                slotIndex === index ? { ...currentSlot, day: e.target.value } : currentSlot
+                              ),
+                            }))
+                          }
+                        >
+                          <option value="">Selecciona dia</option>
+                          {weekDays.map((day) => (
+                            <option key={`day-${index}-${day}`} value={day}>
+                              {day}
+                            </option>
+                          ))}
+                        </select>
+
+                        <select
+                          className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                          value={slot.room}
+                          onChange={(e) =>
+                            setNewEvent((s) => ({
+                              ...s,
+                              slots: s.slots.map((currentSlot, slotIndex) =>
+                                slotIndex === index ? { ...currentSlot, room: e.target.value } : currentSlot
+                              ),
+                            }))
+                          }
+                        >
+                          <option value="">Selecciona salon</option>
+                          {rooms.map((room, roomIndex) => (
+                            <option key={`room-${index}-${roomIndex}`} value={room}>
+                              {room}
+                            </option>
+                          ))}
+                        </select>
+
+                        <select
+                          className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                          value={slot.start}
+                          onChange={(e) =>
+                            setNewEvent((s) => ({
+                              ...s,
+                              slots: s.slots.map((currentSlot, slotIndex) =>
+                                slotIndex === index ? { ...currentSlot, start: e.target.value } : currentSlot
+                              ),
+                            }))
+                          }
+                        >
+                          <option value="">Selecciona hora inicio</option>
+                          {slotStarts.map((slotStart) => (
+                            <option key={`slot-start-${index}-${slotStart}`} value={slotStart}>
+                              {slotStart}
+                            </option>
+                          ))}
+                        </select>
+
+                        <select
+                          className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                          value={slot.end}
+                          onChange={(e) =>
+                            setNewEvent((s) => ({
+                              ...s,
+                              slots: s.slots.map((currentSlot, slotIndex) =>
+                                slotIndex === index ? { ...currentSlot, end: e.target.value } : currentSlot
+                              ),
+                            }))
+                          }
+                        >
+                          <option value="">Selecciona hora fin</option>
+                          {slotEnds.map((slotEnd) => (
+                            <option key={`slot-end-${index}-${slotEnd}`} value={slotEnd}>
+                              {slotEnd}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
 
             <div className="mt-5 flex justify-end gap-2">
