@@ -1,6 +1,8 @@
 "use client";
 
 import { ChangeEvent, DragEvent, useMemo, useRef, useState } from "react";
+import { parseScheduleWorkbookClient } from "@/lib/schedule-parser";
+import { fetchApiJson } from "@/lib/api-client";
 
 const EXCEL_EXTENSIONS = [".xlsx", ".xls"];
 const CSV_EXTENSIONS = [".csv"];
@@ -11,7 +13,6 @@ const EXCEL_MIME_TYPES = [
   "application/csv",
 ];
 const WEEK_DAYS = ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes"] as const;
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
 
 type ImportResponse = {
   message: string;
@@ -95,24 +96,22 @@ export default function ExcelImportPage() {
     setImportError(null);
 
     try {
-      const formData = new FormData();
-      formData.append("file", selectedFile);
-      if (isCsvFile) {
-        formData.append("day", fallbackDay);
-      }
-
-      const response = await fetch(`${API_BASE_URL}/api/schedules/import`, {
-        method: "POST",
-        body: formData,
+      const rows = await parseScheduleWorkbookClient(selectedFile, {
+        fallbackDay: isCsvFile ? fallbackDay : undefined,
       });
 
-      const body = (await response.json()) as ImportResponse | { error?: string };
+      const body = await fetchApiJson<ImportResponse>("/api/schedules/import-parsed", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          sourceFile: selectedFile.name,
+          rows,
+        }),
+      });
 
-      if (!response.ok) {
-        throw new Error((body as { error?: string }).error ?? "No se pudo importar el archivo");
-      }
-
-      setImportResult((body as ImportResponse).import);
+      setImportResult(body.import);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Error al importar el archivo";
       setImportError(message);

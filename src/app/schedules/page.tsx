@@ -2,6 +2,7 @@
 
 import { FormEvent, Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Rnd, RndDragCallback, RndResizeCallback } from "react-rnd";
+import { fetchApiJson } from "@/lib/api-client";
 
 type ScheduleEvent = {
   id: string;
@@ -279,12 +280,109 @@ const initialEvents: ScheduleEvent[] = [
   },
 ];
 
-const eventStyles: Record<ScheduleEvent["color"], string> = {
-  blue: "bg-blue-100 border-blue-600 text-blue-900",
-  emerald: "bg-emerald-100 border-emerald-600 text-emerald-900",
-  amber: "bg-amber-100 border-amber-600 text-amber-900",
-  violet: "bg-violet-100 border-violet-600 text-violet-900",
-  red: "bg-red-100 border-red-600 text-red-900",
+const normalizeKey = (value: string) =>
+  value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const hashString = (value: string) => {
+  let hash = 0;
+  for (let i = 0; i < value.length; i++) {
+    hash = (hash << 5) - hash + value.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash);
+};
+
+const facultyToneMap: Array<{ keys: string[]; tones: string[] }> = [
+  {
+    keys: ["facultad de ciencias administrativas y contables", "administrativas y contables"],
+    tones: [
+      "bg-emerald-50 border-emerald-700 text-emerald-900",
+      "bg-emerald-100 border-emerald-700 text-emerald-900",
+      "bg-teal-50 border-teal-700 text-teal-900",
+      "bg-teal-100 border-teal-700 text-teal-900",
+    ],
+  },
+  {
+    keys: ["facultad de ciencias humanas y de la educacion", "humanas y de la educacion"],
+    tones: [
+      "bg-violet-50 border-violet-700 text-violet-900",
+      "bg-violet-100 border-violet-700 text-violet-900",
+      "bg-fuchsia-50 border-fuchsia-700 text-fuchsia-900",
+      "bg-fuchsia-100 border-fuchsia-700 text-fuchsia-900",
+    ],
+  },
+  {
+    keys: ["facultad de ciencias de la salud", "ciencias de la salud"],
+    tones: [
+      "bg-rose-50 border-rose-700 text-rose-900",
+      "bg-rose-100 border-rose-700 text-rose-900",
+      "bg-pink-50 border-pink-700 text-pink-900",
+      "bg-pink-100 border-pink-700 text-pink-900",
+    ],
+  },
+  {
+    keys: ["facultad de ingenieria", "ingenieria"],
+    tones: [
+      "bg-blue-50 border-blue-700 text-blue-900",
+      "bg-blue-100 border-blue-700 text-blue-900",
+      "bg-sky-50 border-sky-700 text-sky-900",
+      "bg-sky-100 border-sky-700 text-sky-900",
+    ],
+  },
+  {
+    keys: ["facultad de teologia y religion", "teologia y religion"],
+    tones: [
+      "bg-amber-50 border-amber-700 text-amber-900",
+      "bg-amber-100 border-amber-700 text-amber-900",
+      "bg-yellow-50 border-yellow-700 text-yellow-900",
+      "bg-yellow-100 border-yellow-700 text-yellow-900",
+    ],
+  },
+];
+
+const defaultFacultyTones = [
+  "bg-slate-50 border-slate-700 text-slate-900",
+  "bg-slate-100 border-slate-700 text-slate-900",
+  "bg-zinc-50 border-zinc-700 text-zinc-900",
+  "bg-zinc-100 border-zinc-700 text-zinc-900",
+];
+
+const inferReservationType = (event: ScheduleEvent): ReservationType => {
+  if (event.reservationType) return event.reservationType;
+
+  const normalizedCode = normalizeKey(event.code);
+  if (normalizedCode.includes("reserva-dia") || normalizedCode.includes("reserva dia")) {
+    return "momentanea";
+  }
+  if (normalizedCode.includes("reserva-iglesia") || normalizedCode.includes("reserva iglesia")) {
+    return "iglesia";
+  }
+  return "normal";
+};
+
+const getEventVisualClass = (event: ScheduleEvent) => {
+  const reservationType = inferReservationType(event);
+
+  if (reservationType === "momentanea") {
+    return "bg-white border-amber-700 text-slate-900 border-2 border-dashed";
+  }
+
+  if (reservationType === "iglesia") {
+    return "bg-white border-slate-900 text-slate-900 border-2";
+  }
+
+  const facultyKey = normalizeKey(event.faculty);
+  const palette =
+    facultyToneMap.find((entry) => entry.keys.some((key) => facultyKey.includes(key)))?.tones ??
+    defaultFacultyTones;
+
+  const toneIndex = hashString(`${event.subject}|${event.code}`) % palette.length;
+  return palette[toneIndex] ?? palette[0] ?? defaultFacultyTones[0];
 };
 
 const getWeekdayName = (date: Date) => {
@@ -400,7 +498,9 @@ export default function SchedulesPage() {
   const [pickerMonthCursor, setPickerMonthCursor] = useState(startOfMonth(colombiaToday));
   const [roomQuery, setRoomQuery] = useState("");
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
-  const [events, setEvents] = useState<ScheduleEvent[]>(initialEvents);
+  const [events, setEvents] = useState<ScheduleEvent[]>([]);
+  const [roomCatalog, setRoomCatalog] = useState<string[]>(rooms);
+  const [remoteLoadError, setRemoteLoadError] = useState<string | null>(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [isEditMode, setIsEditMode] = useState(false);
@@ -432,6 +532,59 @@ export default function SchedulesPage() {
     return () => clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    const normalizeColor = (value: string): ScheduleEvent["color"] => {
+      if (value === "blue" || value === "emerald" || value === "amber" || value === "violet" || value === "red") {
+        return value;
+      }
+
+      return "blue";
+    };
+
+    const loadFromApi = async () => {
+      try {
+        setRemoteLoadError(null);
+        console.info("[Schedules] Loading events and rooms from API");
+
+        const [eventsBody, roomsBody] = await Promise.all([
+          fetchApiJson<{ events?: ScheduleEvent[] }>("/api/schedules/events", { cache: "no-store" }),
+          fetchApiJson<{ rooms?: string[] }>("/api/schedules/rooms", { cache: "no-store" }),
+        ]);
+
+        if (cancelled) return;
+
+        const loadedEvents = (eventsBody.events ?? []).map((event) => ({
+          ...event,
+          color: normalizeColor(event.color),
+        }));
+
+        setEvents(loadedEvents);
+
+        const loadedRooms = (roomsBody.rooms ?? []).filter((room) => typeof room === "string" && room.trim().length > 0);
+        if (loadedRooms.length > 0) {
+          setRoomCatalog(loadedRooms);
+        }
+
+        console.info("[Schedules] API load success", {
+          events: loadedEvents.length,
+          rooms: loadedRooms.length,
+        });
+      } catch (error) {
+        if (cancelled) return;
+        console.error("[Schedules] API load failed", error);
+        setRemoteLoadError(error instanceof Error ? error.message : "Error cargando horarios");
+      }
+    };
+
+    void loadFromApi();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const resetCreateForm = () => {
     setCreateError(null);
     setNewEvent(getInitialNewEvent());
@@ -439,9 +592,9 @@ export default function SchedulesPage() {
 
   const filteredRooms = useMemo(() => {
     const query = roomQuery.trim().toLowerCase();
-    if (!query) return rooms;
-    return rooms.filter((room) => room.toLowerCase().includes(query));
-  }, [roomQuery]);
+    if (!query) return roomCatalog;
+    return roomCatalog.filter((room) => room.toLowerCase().includes(query));
+  }, [roomQuery, roomCatalog]);
 
   const slotStarts = useMemo(() => timeSlots.map((slot) => slot.split("-")[0]), []);
   const slotEnds = useMemo(() => timeSlots.map((slot) => slot.split("-")[1]), []);
@@ -493,6 +646,7 @@ export default function SchedulesPage() {
   const showCurrentTimeMarker = selectedDay === getWeekdayName(colombiaToday) && isTodayInVisibleWeek;
 
   const selectedEvent = events.find((event) => event.id === selectedEventId) ?? null;
+  const selectedReservationType = selectedEvent ? inferReservationType(selectedEvent) : null;
 
   useEffect(() => {
     if (!selectedEventId) return;
@@ -648,7 +802,7 @@ export default function SchedulesPage() {
         return;
       }
 
-      if (!rooms.includes(slot.room)) {
+      if (!roomCatalog.includes(slot.room)) {
         const message = `Salon invalido en horario ${i + 1}: debes seleccionar un salon de la lista disponible.`;
         setCreateError(message);
         window.alert(message);
@@ -818,7 +972,7 @@ export default function SchedulesPage() {
     event.preventDefault();
     if (!selectedEvent) return;
 
-    if (!rooms.includes(editEvent.room)) {
+    if (!roomCatalog.includes(editEvent.room)) {
       const message = "Salon invalido: debes seleccionar un salon de la lista disponible.";
       setEditError(message);
       window.alert(message);
@@ -891,6 +1045,11 @@ export default function SchedulesPage() {
   return (
     <div className="p-4 md:p-6">
       <div className="sticky top-20 z-30 mb-4 rounded-xl border border-slate-200 bg-white px-5 py-3 shadow-sm">
+        {remoteLoadError ? (
+          <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            {remoteLoadError}
+          </div>
+        ) : null}
         <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
           <div className="flex flex-wrap items-center gap-3">
             <h1 className="text-lg font-bold">Academic Planner - Schedules</h1>
@@ -1077,6 +1236,13 @@ export default function SchedulesPage() {
                 if (geom.roomIndex < 0) return null;
 
                 const hasEnoughSpace = geom.span >= 4;
+                const reservationType = inferReservationType(event);
+                const reservationBadge =
+                  reservationType === "momentanea"
+                    ? "RESERVA DIA"
+                    : reservationType === "iglesia"
+                      ? "RESERVA IGLESIA"
+                      : null;
 
                 return (
                   <Rnd
@@ -1103,12 +1269,17 @@ export default function SchedulesPage() {
                       setIsEditMode(false);
                       setEditError(null);
                     }}
-                    className={`z-10 overflow-hidden rounded-lg border-l-4 p-2 text-left shadow-sm transition hover:shadow-md ${eventStyles[event.color]} ${
+                    className={`z-10 overflow-hidden rounded-lg border-l-4 p-2 text-left shadow-sm transition hover:shadow-md ${getEventVisualClass(event)} ${
                       selectedEventId === event.id ? "ring-2 ring-[#295786]" : ""
                     }`}
                     minHeight={slotHeight - 8}
                     minWidth={roomColWidth - 8}
                   >
+                    {reservationBadge ? (
+                      <p className="mb-1 inline-flex rounded-full border border-slate-400 bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-slate-700">
+                        {reservationBadge}
+                      </p>
+                    ) : null}
                     <p className={`text-[11px] font-semibold opacity-80 ${hasEnoughSpace ? "whitespace-normal break-words" : "truncate"}`}>
                       {event.faculty}
                     </p>
@@ -1152,7 +1323,7 @@ export default function SchedulesPage() {
                   <>
                     <p className="text-xs font-semibold text-[#295786]">{selectedEvent.day}</p>
                     <p className="mt-1 inline-flex rounded-full bg-slate-200 px-2 py-0.5 text-xs font-semibold text-slate-700">
-                      {reservationTypeLabels[selectedEvent.reservationType ?? "normal"]}
+                      {reservationTypeLabels[selectedReservationType ?? "normal"]}
                     </p>
                     <h3 className="mt-1 text-base font-bold">{selectedEvent.code} | {selectedEvent.subject}</h3>
                     <p className="mt-2 text-sm text-slate-600">Facultad: {selectedEvent.faculty}</p>
@@ -1257,7 +1428,7 @@ export default function SchedulesPage() {
                       onChange={(e) => setEditEvent((s) => ({ ...s, room: e.target.value }))}
                       className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
                     >
-                      {rooms.map((room, index) => (
+                      {roomCatalog.map((room, index) => (
                         <option key={`edit-room-${index}-${room}`} value={room}>
                           {room}
                         </option>
@@ -1469,7 +1640,7 @@ export default function SchedulesPage() {
                           }
                         >
                           <option value="">Selecciona salon</option>
-                          {rooms.map((room, roomIndex) => (
+                          {roomCatalog.map((room, roomIndex) => (
                             <option key={`room-${index}-${roomIndex}`} value={room}>
                               {room}
                             </option>
