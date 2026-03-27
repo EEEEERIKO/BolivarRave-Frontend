@@ -82,6 +82,14 @@ type RoomsInfoResponse = {
   roomsByFloor?: RoomsInfoRoom[][];
 };
 
+type DashboardCachePayload = {
+  savedAt: number;
+  scheduleItems: ScheduleItem[];
+  importsHistory: ImportHistoryItem[];
+  roomsCatalog: string[];
+  roomsByFloor: Array<{ floor: number; rooms: RoomsInfoRoom[] }>;
+};
+
 const DAY_COLORS: Record<ScheduleItem["day"], string> = {
   Monday: "#295786",
   Tuesday: "#1f8f6a",
@@ -100,6 +108,10 @@ const DAY_LABELS: Record<ScheduleItem["day"], string> = {
 
 const ALL_DAYS: ScheduleItem["day"][] = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 const HOURS = Array.from({ length: 14 }, (_, idx) => 7 + idx);
+const DASHBOARD_CACHE_KEY = "dashboard_cache_v1";
+const DASHBOARD_CACHE_TTL_MS = 5 * 60 * 1000;
+
+let inMemoryDashboardCache: DashboardCachePayload | null = null;
 
 const DAY_ES_TO_EN: Record<string, ScheduleItem["day"]> = {
   lunes: "Monday",
@@ -121,6 +133,60 @@ const DAY_EN_TO_ES: Record<ScheduleItem["day"], string> = {
 const toMinutes = (time: string) => {
   const [hour = "0", minute = "0"] = time.split(":");
   return Number(hour) * 60 + Number(minute);
+};
+
+const isDashboardCacheFresh = (payload: DashboardCachePayload) => Date.now() - payload.savedAt <= DASHBOARD_CACHE_TTL_MS;
+
+const readDashboardCache = (): DashboardCachePayload | null => {
+  if (inMemoryDashboardCache && isDashboardCacheFresh(inMemoryDashboardCache)) {
+    return inMemoryDashboardCache;
+  }
+
+  if (typeof window === "undefined") return null;
+
+  try {
+    const raw = window.sessionStorage.getItem(DASHBOARD_CACHE_KEY);
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw) as DashboardCachePayload;
+    if (
+      !parsed ||
+      typeof parsed.savedAt !== "number" ||
+      !Array.isArray(parsed.scheduleItems) ||
+      !Array.isArray(parsed.importsHistory) ||
+      !Array.isArray(parsed.roomsCatalog) ||
+      !Array.isArray(parsed.roomsByFloor)
+    ) {
+      return null;
+    }
+
+    if (!isDashboardCacheFresh(parsed)) {
+      window.sessionStorage.removeItem(DASHBOARD_CACHE_KEY);
+      return null;
+    }
+
+    inMemoryDashboardCache = parsed;
+    return parsed;
+  } catch {
+    return null;
+  }
+};
+
+const writeDashboardCache = (payload: Omit<DashboardCachePayload, "savedAt">) => {
+  const cache: DashboardCachePayload = {
+    ...payload,
+    savedAt: Date.now(),
+  };
+
+  inMemoryDashboardCache = cache;
+
+  if (typeof window === "undefined") return;
+
+  try {
+    window.sessionStorage.setItem(DASHBOARD_CACHE_KEY, JSON.stringify(cache));
+  } catch {
+    // Ignore storage failures and keep runtime cache only.
+  }
 };
 
 const parseScheduleClockToMinutes = (value: string) => {
@@ -257,6 +323,16 @@ export default function Home() {
   useEffect(() => {
     let cancelled = false;
 
+    const cached = readDashboardCache();
+    if (cached) {
+      setScheduleItems(cached.scheduleItems);
+      setImportsHistory(cached.importsHistory);
+      setRoomsCatalog(cached.roomsCatalog);
+      setRoomsByFloor(cached.roomsByFloor);
+      setSelectedFloor((prev) => prev ?? cached.roomsByFloor[0]?.floor ?? null);
+      setIsLoadingData(false);
+    }
+
     const loadDashboardData = async () => {
       try {
         const [eventsBody, roomsBody, importsBody] = await Promise.all([
@@ -287,15 +363,26 @@ export default function Home() {
           .filter((entry): entry is { floor: number; rooms: RoomsInfoRoom[] } => entry !== null)
           .sort((a, b) => a.floor - b.floor);
 
+        const selectedFloorFromData = floors[0]?.floor ?? null;
+
         setRoomsByFloor(floors);
-        setSelectedFloor((prev) => prev ?? floors[0]?.floor ?? null);
+        setSelectedFloor((prev) => prev ?? selectedFloorFromData);
+
+        writeDashboardCache({
+          scheduleItems: mapped,
+          importsHistory: importsBody.imports ?? [],
+          roomsCatalog: Array.from(new Set((roomsBody.rooms ?? []).map((room) => room.trim()).filter(Boolean))),
+          roomsByFloor: floors,
+        });
       } catch {
         if (cancelled) return;
-        setScheduleItems([]);
-        setRoomsCatalog([]);
-        setImportsHistory([]);
-        setRoomsByFloor([]);
-        setSelectedFloor(null);
+        if (!cached) {
+          setScheduleItems([]);
+          setRoomsCatalog([]);
+          setImportsHistory([]);
+          setRoomsByFloor([]);
+          setSelectedFloor(null);
+        }
       } finally {
         if (!cancelled) {
           setIsLoadingData(false);
@@ -575,6 +662,7 @@ export default function Home() {
   const recentActivity = useMemo(
     () =>
       importsHistory.slice(0, 4).map((item) => ({
+        key: item.id,
         text: `Import ${item.source_file} (${item.status})`,
         when: formatRelativeTime(item.imported_at),
         icon: "upload_file",
@@ -886,13 +974,13 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="grid grid-cols-1 gap-8 lg:grid-cols-2">
-        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+      <section className="grid grid-cols-1 gap-8 lg:grid-cols-2 lg:items-stretch">
+        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 lg:flex lg:h-full lg:flex-col">
           <div className="flex items-center justify-between border-b border-slate-100 p-5 dark:border-slate-800">
             <h4 className="text-sm font-bold tracking-wider text-slate-800 uppercase dark:text-slate-200">Next Classes</h4>
             <button className="text-xs font-bold text-[#295786] hover:underline">View All</button>
           </div>
-          <div className="divide-y divide-slate-50 dark:divide-slate-800">
+          <div className="divide-y divide-slate-50 dark:divide-slate-800 lg:flex-1 lg:overflow-y-auto">
             {nextClasses.map((nextClass) => (
               <div key={`${nextClass.subject}-${nextClass.time}`} className="flex items-center justify-between p-4 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/50">
                 <div className="flex items-center gap-4">
@@ -918,7 +1006,7 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="space-y-6">
+        <div className="flex flex-col gap-6 lg:h-full">
           <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
             <div className="border-b border-slate-100 p-5 dark:border-slate-800">
               <h4 className="text-sm font-bold tracking-wider text-slate-800 uppercase dark:text-slate-200">Weekly Building Overview</h4>
@@ -939,13 +1027,13 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 lg:flex lg:flex-1 lg:flex-col">
             <div className="border-b border-slate-100 p-5 dark:border-slate-800">
               <h4 className="text-sm font-bold tracking-wider text-slate-800 uppercase dark:text-slate-200">Recent Activity</h4>
             </div>
-            <div className="divide-y divide-slate-100 dark:divide-slate-800">
+            <div className="divide-y divide-slate-100 dark:divide-slate-800 lg:flex-1 lg:overflow-y-auto">
               {recentActivity.map((activity) => (
-                <div key={activity.text} className="flex items-start gap-3 p-4">
+                <div key={activity.key} className="flex items-start gap-3 p-4">
                   <span className="material-symbols-outlined mt-0.5 text-base text-[#295786]">{activity.icon}</span>
                   <div className="min-w-0">
                     <p className="text-sm font-semibold text-slate-800 dark:text-slate-200">{activity.text}</p>
