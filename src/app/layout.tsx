@@ -1,13 +1,7 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
 import "@fontsource/material-symbols-outlined";
 import "./globals.css";
 import { AdminShell } from "@/components/layout/admin-shell";
-
-const inter = Inter({
-  variable: "--font-inter",
-  subsets: ["latin"],
-});
 
 export const metadata: Metadata = {
   title: "UNAC Bolivar | Horarios",
@@ -21,9 +15,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="es">
-      <body
-        className={`${inter.variable} antialiased`}
-      >
+      <body className="antialiased">
         <AdminShell>{children}</AdminShell>
       </body>
     </html>

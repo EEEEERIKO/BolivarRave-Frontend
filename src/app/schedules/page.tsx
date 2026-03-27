@@ -3,9 +3,11 @@
 import { FormEvent, Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Rnd, RndDragCallback, RndResizeCallback } from "react-rnd";
 import { fetchApiJson } from "@/lib/api-client";
+import { useWebSocketSchedules } from "@/lib/use-websocket-schedules";
 
 type ScheduleEvent = {
   id: string;
+  classId?: string;
   day: string;
   room: string;
   start: string;
@@ -67,6 +69,87 @@ type EditEventForm = {
   room: string;
   start: string;
   end: string;
+};
+
+type SchedulesCachePayload = {
+  savedAt: number;
+  events: ScheduleEvent[];
+  rooms: string[];
+};
+
+const SCHEDULES_CACHE_KEY = "schedules-page-cache-v1";
+const SCHEDULES_CACHE_TTL_MS = 5 * 60 * 1000;
+let inMemorySchedulesCache: SchedulesCachePayload | null = null;
+
+const canonicalizeRoomName = (value: string) => {
+  const normalized = value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .replace(/[()]/g, " ")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\bmd\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (/^aula foro union( 101)?$/.test(normalized)) return "Aula Foro Union 101";
+  if (/^aula foro unac( 102)?$/.test(normalized)) return "Aula Foro UNAC 102";
+
+  if (/^sala( de)? informatica 1 bolivar$/.test(normalized)) {
+    return "Sala Informática 1 Bolivar";
+  }
+
+  if (/^sala( de)? informatica 2 bolivar$/.test(normalized)) {
+    return "Sala Informática 2 Bolivar";
+  }
+
+  if (/^laboratorio de (analisis de datos y )?simulacion financiera( 403)?$/.test(normalized)) {
+    return "Laboratorio de simulación financiera 403";
+  }
+
+  if (/^laboratorio de desarrollo de software( lds)?( 404)?$/.test(normalized)) {
+    return "Laboratorio de Desarrollo de Software (LDS) 404";
+  }
+
+  if (/^laboratorio de fisica( 405)?$/.test(normalized)) {
+    return "Laboratorio de Física 405";
+  }
+
+  if (/^laboratorio de musica( 308)?$/.test(normalized)) {
+    return "Laboratorio de Música 308";
+  }
+
+  if (/^laboratorio de infantil( 204)?$/.test(normalized)) {
+    return "Laboratorio de Infantil 204";
+  }
+
+  if (/^aula interamericana (501|1)$/.test(normalized)) return "Aula Interamericana 501";
+  if (/^aula interamericana (502|2)$/.test(normalized)) return "Aula Interamericana 502";
+  if (/^aula interamericana (503|3)$/.test(normalized)) return "Aula Interamericana 503";
+
+  return value.trim();
+};
+
+const normalizeLoadedEvents = (events: ScheduleEvent[], normalizeColor: (color: string) => ScheduleEvent["color"]) =>
+  events.map((event) => ({
+    ...event,
+    room: canonicalizeRoomName(event.room),
+    color: normalizeColor(event.color),
+  }));
+
+const normalizeLoadedRooms = (incomingRooms: string[]) => {
+  const seen = new Set<string>();
+  const output: string[] = [];
+
+  incomingRooms.forEach((room) => {
+    if (typeof room !== "string") return;
+    const canonical = canonicalizeRoomName(room);
+    if (!canonical || seen.has(canonical)) return;
+    seen.add(canonical);
+    output.push(canonical);
+  });
+
+  return output;
 };
 
 function getColombiaTodayIsoDate() {
@@ -486,9 +569,68 @@ const formatWeekRangeLabel = (weekStart: Date) => {
   return `Semana ${shortMonthNames[weekStart.getMonth()]} ${weekStart.getDate()} - ${shortMonthNames[weekEnd.getMonth()]} ${weekEnd.getDate()}, ${weekEnd.getFullYear()}`;
 };
 
+const isCacheFresh = (payload: SchedulesCachePayload) => Date.now() - payload.savedAt <= SCHEDULES_CACHE_TTL_MS;
+
+const readSchedulesCache = (): SchedulesCachePayload | null => {
+  if (inMemorySchedulesCache && isCacheFresh(inMemorySchedulesCache)) {
+    return inMemorySchedulesCache;
+  }
+
+  if (typeof window === "undefined") return null;
+
+  try {
+    const raw = window.sessionStorage.getItem(SCHEDULES_CACHE_KEY);
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw) as SchedulesCachePayload;
+    if (!parsed || !Array.isArray(parsed.events) || !Array.isArray(parsed.rooms) || typeof parsed.savedAt !== "number") {
+      return null;
+    }
+
+    if (!isCacheFresh(parsed)) {
+      window.sessionStorage.removeItem(SCHEDULES_CACHE_KEY);
+      return null;
+    }
+
+    const normalizedParsed: SchedulesCachePayload = {
+      savedAt: parsed.savedAt,
+      events: parsed.events.map((event) => ({
+        ...event,
+        room: canonicalizeRoomName(event.room),
+      })),
+      rooms: normalizeLoadedRooms(parsed.rooms),
+    };
+
+    inMemorySchedulesCache = normalizedParsed;
+    return normalizedParsed;
+  } catch {
+    return null;
+  }
+};
+
+const writeSchedulesCache = (events: ScheduleEvent[], cachedRooms: string[]) => {
+  const payload: SchedulesCachePayload = {
+    savedAt: Date.now(),
+    events,
+    rooms: cachedRooms,
+  };
+
+  inMemorySchedulesCache = payload;
+
+  if (typeof window === "undefined") return;
+
+  try {
+    window.sessionStorage.setItem(SCHEDULES_CACHE_KEY, JSON.stringify(payload));
+  } catch {
+    // Ignore storage failures (private mode, quota, etc.) and keep memory cache only.
+  }
+};
+
 export default function SchedulesPage() {
   const weekPickerRef = useRef<HTMLDivElement>(null);
   const gridScrollRef = useRef<HTMLDivElement>(null);
+
+  const cachedSnapshot = readSchedulesCache();
 
   const colombiaToday = useMemo(() => getColombiaToday(), []);
   const [selectedDay, setSelectedDay] = useState(getWeekdayName(colombiaToday));
@@ -498,15 +640,48 @@ export default function SchedulesPage() {
   const [pickerMonthCursor, setPickerMonthCursor] = useState(startOfMonth(colombiaToday));
   const [roomQuery, setRoomQuery] = useState("");
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
-  const [events, setEvents] = useState<ScheduleEvent[]>([]);
-  const [roomCatalog, setRoomCatalog] = useState<string[]>(rooms);
+  const [events, setEvents] = useState<ScheduleEvent[]>(cachedSnapshot?.events ?? []);
+  const [roomCatalog, setRoomCatalog] = useState<string[]>(
+    cachedSnapshot?.rooms?.length ? cachedSnapshot.rooms : rooms
+  );
   const [remoteLoadError, setRemoteLoadError] = useState<string | null>(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [isEditMode, setIsEditMode] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+  const [isDeleteAllOpen, setIsDeleteAllOpen] = useState(false);
+  const [deleteAllConfirmText, setDeleteAllConfirmText] = useState("");
+  const [isDeletingAll, setIsDeletingAll] = useState(false);
+  const [deleteAllError, setDeleteAllError] = useState<string | null>(null);
   const [newEvent, setNewEvent] = useState<NewEventForm>(getInitialNewEvent);
   const [editEvent, setEditEvent] = useState<EditEventForm>(getInitialEditEvent);
+
+  const normalizeColor = (value: string): ScheduleEvent["color"] => {
+    if (value === "blue" || value === "emerald" || value === "amber" || value === "violet" || value === "red") {
+      return value;
+    }
+
+    return "blue";
+  };
+
+  const syncSchedulesFromApi = async () => {
+    const [eventsBody, roomsBody] = await Promise.all([
+      fetchApiJson<{ events?: ScheduleEvent[] }>("/api/schedules/events", { cache: "no-store" }),
+      fetchApiJson<{ rooms?: string[] }>("/api/schedules/rooms", { cache: "no-store" }),
+    ]);
+
+    const loadedEvents = normalizeLoadedEvents(eventsBody.events ?? [], normalizeColor);
+    setEvents(loadedEvents);
+
+    const loadedRooms = normalizeLoadedRooms((roomsBody.rooms ?? []).filter((room) => typeof room === "string" && room.trim().length > 0));
+    if (loadedRooms.length > 0) {
+      setRoomCatalog(loadedRooms);
+      writeSchedulesCache(loadedEvents, loadedRooms);
+      return;
+    }
+
+    writeSchedulesCache(loadedEvents, roomCatalog);
+  };
 
   // Close week picker when clicking outside
   useEffect(() => {
@@ -535,13 +710,13 @@ export default function SchedulesPage() {
   useEffect(() => {
     let cancelled = false;
 
-    const normalizeColor = (value: string): ScheduleEvent["color"] => {
-      if (value === "blue" || value === "emerald" || value === "amber" || value === "violet" || value === "red") {
-        return value;
+    const cached = readSchedulesCache();
+    if (cached) {
+      setEvents(cached.events);
+      if (cached.rooms.length > 0) {
+        setRoomCatalog(cached.rooms);
       }
-
-      return "blue";
-    };
+    }
 
     const loadFromApi = async () => {
       try {
@@ -555,16 +730,16 @@ export default function SchedulesPage() {
 
         if (cancelled) return;
 
-        const loadedEvents = (eventsBody.events ?? []).map((event) => ({
-          ...event,
-          color: normalizeColor(event.color),
-        }));
+        const loadedEvents = normalizeLoadedEvents(eventsBody.events ?? [], normalizeColor);
 
         setEvents(loadedEvents);
 
-        const loadedRooms = (roomsBody.rooms ?? []).filter((room) => typeof room === "string" && room.trim().length > 0);
+        const loadedRooms = normalizeLoadedRooms((roomsBody.rooms ?? []).filter((room) => typeof room === "string" && room.trim().length > 0));
         if (loadedRooms.length > 0) {
           setRoomCatalog(loadedRooms);
+          writeSchedulesCache(loadedEvents, loadedRooms);
+        } else {
+          writeSchedulesCache(loadedEvents, roomCatalog);
         }
 
         console.info("[Schedules] API load success", {
@@ -584,6 +759,20 @@ export default function SchedulesPage() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    writeSchedulesCache(events, roomCatalog);
+  }, [events, roomCatalog]);
+
+  // WebSocket sync para actualización en tiempo real
+  useWebSocketSchedules({
+    onScheduleRefresh: () => {
+      console.log("📡 Refrescando horarios desde WebSocket");
+      syncSchedulesFromApi().catch((error) => {
+        console.error("Error refrescando horarios:", error);
+      });
+    },
+  });
 
   const resetCreateForm = () => {
     setCreateError(null);
@@ -648,29 +837,6 @@ export default function SchedulesPage() {
   const selectedEvent = events.find((event) => event.id === selectedEventId) ?? null;
   const selectedReservationType = selectedEvent ? inferReservationType(selectedEvent) : null;
 
-  useEffect(() => {
-    if (!selectedEventId) return;
-    const container = gridScrollRef.current;
-    if (!container) return;
-
-    const focusedEvent = events.find((event) => event.id === selectedEventId);
-    if (!focusedEvent) return;
-    if (focusedEvent.day !== selectedDay) return;
-    if (!filteredRooms.includes(focusedEvent.room)) return;
-
-    const geom = eventGeometry(focusedEvent, filteredRooms);
-    if (geom.roomIndex < 0) return;
-
-    const targetLeft = Math.max(0, geom.x - roomColWidth);
-    const targetTop = Math.max(0, geom.y - headerHeight - slotHeight);
-
-    container.scrollTo({
-      left: targetLeft,
-      top: targetTop,
-      behavior: "smooth",
-    });
-  }, [selectedEventId, selectedDay, events, filteredRooms]);
-
   const timeColWidth = 130;
   const roomColWidth = 220;
   const headerHeight = 64;
@@ -712,19 +878,68 @@ export default function SchedulesPage() {
     const newSpan = Math.min(currentSpan, timeSlots.length - newStartIndex);
     const endSlotIndex = Math.min(timeSlots.length - 1, newStartIndex + newSpan - 1);
 
-    setEvents((current) =>
-      current.map((event) => {
-        if (event.id !== id) return event;
+    const originalEvent = events.find((event) => event.id === id);
+    if (!originalEvent) return;
 
-        return {
-          ...event,
-          day: selectedDay,
-          room: filteredRooms[newRoomIndex],
-          start: slotStarts[newStartIndex],
-          end: slotEnds[endSlotIndex],
-        };
-      })
-    );
+    const updatedEvent: ScheduleEvent = {
+      ...originalEvent,
+      day: selectedDay,
+      room: filteredRooms[newRoomIndex],
+      start: slotStarts[newStartIndex],
+      end: slotEnds[endSlotIndex],
+    };
+
+    console.log("🔄 [Drag] Actualizando evento:", {
+      id,
+      newRoom: updatedEvent.room,
+      newStart: updatedEvent.start,
+      newEnd: updatedEvent.end,
+    });
+
+    setEvents((current) => current.map((event) => (event.id === id ? updatedEvent : event)));
+
+    const [eventIdFromComposite, slotId] = updatedEvent.id.split(":");
+    const eventId = updatedEvent.classId || eventIdFromComposite;
+
+    if (!eventId || !slotId) {
+      console.warn("❌ [Drag] No se pudo obtener eventId o slotId", { eventIdFromComposite, slotId });
+      return;
+    }
+
+    void (async () => {
+      try {
+        console.log("📤 [Drag] Enviando petición PUT al backend...");
+        const response = await fetchApiJson<{ message: string }>(`/api/schedules/events/${eventId}/${slotId}`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            faculty: updatedEvent.faculty,
+            code: updatedEvent.code,
+            subject: updatedEvent.subject,
+            teacher: updatedEvent.teacher,
+            startDate: updatedEvent.startDate,
+            endDate: updatedEvent.endDate,
+            day: updatedEvent.day,
+            room: updatedEvent.room,
+            start: updatedEvent.start,
+            end: updatedEvent.end,
+          }),
+        });
+        console.log("✅ [Drag] Evento actualizado en backend:", response);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "No se pudo actualizar la clase en base de datos";
+        console.error("❌ [Drag] Error al actualizar:", message);
+        setRemoteLoadError(message);
+        window.alert(message);
+        try {
+          await syncSchedulesFromApi();
+        } catch {
+          // noop
+        }
+      }
+    })();
   };
 
   const handleDragStop = (id: string, span: number): RndDragCallback => {
@@ -753,22 +968,55 @@ export default function SchedulesPage() {
       const finalSpan = Math.min(maxSpan, snappedSpan);
       const endSlotIndex = Math.min(timeSlots.length - 1, newStartIndex + finalSpan - 1);
 
-      setEvents((all) =>
-        all.map((event) => {
-          if (event.id !== id) return event;
-          return {
-            ...event,
-            day: selectedDay,
-            room: filteredRooms[newRoomIndex],
-            start: slotStarts[newStartIndex],
-            end: slotEnds[endSlotIndex],
-          };
-        })
-      );
+      const updatedEvent: ScheduleEvent = {
+        ...current,
+        day: selectedDay,
+        room: filteredRooms[newRoomIndex],
+        start: slotStarts[newStartIndex],
+        end: slotEnds[endSlotIndex],
+      };
+
+      setEvents((all) => all.map((event) => (event.id === id ? updatedEvent : event)));
+
+      const [eventIdFromComposite, slotId] = updatedEvent.id.split(":");
+      const eventId = updatedEvent.classId || eventIdFromComposite;
+      if (!eventId || !slotId) return;
+
+      void (async () => {
+        try {
+          await fetchApiJson<{ message: string }>(`/api/schedules/events/${eventId}/${slotId}`, {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              faculty: updatedEvent.faculty,
+              code: updatedEvent.code,
+              subject: updatedEvent.subject,
+              teacher: updatedEvent.teacher,
+              startDate: updatedEvent.startDate,
+              endDate: updatedEvent.endDate,
+              day: updatedEvent.day,
+              room: updatedEvent.room,
+              start: updatedEvent.start,
+              end: updatedEvent.end,
+            }),
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "No se pudo actualizar la clase en base de datos";
+          setRemoteLoadError(message);
+          window.alert(message);
+          try {
+            await syncSchedulesFromApi();
+          } catch {
+            // noop
+          }
+        }
+      })();
     };
   };
 
-  const createEvent = (event: FormEvent<HTMLFormElement>) => {
+  const createEvent = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
     if (!newEvent.slots.length) {
@@ -923,30 +1171,65 @@ export default function SchedulesPage() {
           ? newEvent.teacher || "Reserva temporal"
           : newEvent.churchContact;
 
-    const createdEvents = newEvent.slots.map((slot, index) => ({
-      id: `ev-${Date.now()}-${index}`,
-      day: slot.day,
-      room: slot.room,
-      start: slot.start,
-      end: slot.end,
-      faculty: normalizedFaculty || "Sin facultad",
-      code: normalizedCode || "SIN-CODIGO",
-      subject: normalizedSubject || "CLASE NUEVA",
-      teacher: normalizedTeacher || "DOCENTE PENDIENTE",
-      startDate: baseStartDate,
-      endDate: baseEndDate,
-      reservationType: newEvent.reservationType,
-      color: getReservationTypeColor(newEvent.reservationType),
-    }));
+    try {
+      await fetchApiJson<{ message: string; eventId: string }>("/api/schedules/events", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          reservationType: newEvent.reservationType,
+          faculty: normalizedFaculty || "Sin facultad",
+          code: normalizedCode || "SIN-CODIGO",
+          subject: normalizedSubject || "CLASE NUEVA",
+          teacher: normalizedTeacher || "DOCENTE PENDIENTE",
+          startDate: baseStartDate,
+          endDate: baseEndDate,
+          slots: newEvent.slots.map((slot) => ({
+            day: slot.day,
+            room: slot.room,
+            start: slot.start,
+            end: slot.end,
+          })),
+        }),
+      });
 
-    setEvents((current) => [...current, ...createdEvents]);
+      const normalizeColor = (value: string): ScheduleEvent["color"] => {
+        if (value === "blue" || value === "emerald" || value === "amber" || value === "violet" || value === "red") {
+          return value;
+        }
 
-    setRoomQuery("");
-    setCurrentWeekStart(startOfWeekMonday(parseIsoDateToLocal(baseStartDate)));
-    setSelectedDay(createdEvents[0].day);
-    setSelectedEventId(createdEvents[0].id);
-    resetCreateForm();
-    setIsCreateOpen(false);
+        return "blue";
+      };
+
+      const [eventsBody, roomsBody] = await Promise.all([
+        fetchApiJson<{ events?: ScheduleEvent[] }>("/api/schedules/events", { cache: "no-store" }),
+        fetchApiJson<{ rooms?: string[] }>("/api/schedules/rooms", { cache: "no-store" }),
+      ]);
+
+      const loadedEvents = (eventsBody.events ?? []).map((eventItem) => ({
+        ...eventItem,
+        color: normalizeColor(eventItem.color),
+      }));
+
+      setEvents(loadedEvents);
+
+      const loadedRooms = (roomsBody.rooms ?? []).filter((room) => typeof room === "string" && room.trim().length > 0);
+      if (loadedRooms.length > 0) {
+        setRoomCatalog(loadedRooms);
+      }
+
+      setRoomQuery("");
+      setCurrentWeekStart(startOfWeekMonday(parseIsoDateToLocal(baseStartDate)));
+      setSelectedDay(newEvent.slots[0]?.day ?? "Lunes");
+      setSelectedEventId(null);
+      resetCreateForm();
+      setIsCreateOpen(false);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "No se pudo crear la clase en base de datos";
+      setCreateError(message);
+      window.alert(message);
+    }
   };
 
   const startEditEvent = () => {
@@ -1007,28 +1290,70 @@ export default function SchedulesPage() {
       return;
     }
 
-    setEvents((all) =>
-      all.map((item) => {
-        if (item.id !== selectedEvent.id) return item;
-        return {
-          ...item,
-          faculty: editEvent.faculty,
-          code: editEvent.code,
-          subject: editEvent.subject,
-          teacher: editEvent.teacher,
-          startDate: editEvent.startDate,
-          endDate: editEvent.endDate,
-          day: editEvent.day,
-          room: editEvent.room,
-          start: editEvent.start,
-          end: editEvent.end,
-        };
-      })
-    );
+    const [eventIdFromComposite, slotId] = selectedEvent.id.split(":");
+    const eventId = selectedEvent.classId || eventIdFromComposite;
 
-    setSelectedDay(editEvent.day);
-    setEditError(null);
-    setIsEditMode(false);
+    if (!eventId || !slotId) {
+      const message = "No se pudo identificar la clase a modificar.";
+      setEditError(message);
+      window.alert(message);
+      return;
+    }
+
+    void (async () => {
+      try {
+        await fetchApiJson<{ message: string }>(`/api/schedules/events/${eventId}/${slotId}`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            faculty: editEvent.faculty,
+            code: editEvent.code,
+            subject: editEvent.subject,
+            teacher: editEvent.teacher,
+            startDate: editEvent.startDate,
+            endDate: editEvent.endDate,
+            day: editEvent.day,
+            room: editEvent.room,
+            start: editEvent.start,
+            end: editEvent.end,
+          }),
+        });
+
+        const normalizeColor = (value: string): ScheduleEvent["color"] => {
+          if (value === "blue" || value === "emerald" || value === "amber" || value === "violet" || value === "red") {
+            return value;
+          }
+          return "blue";
+        };
+
+        const [eventsBody, roomsBody] = await Promise.all([
+          fetchApiJson<{ events?: ScheduleEvent[] }>("/api/schedules/events", { cache: "no-store" }),
+          fetchApiJson<{ rooms?: string[] }>("/api/schedules/rooms", { cache: "no-store" }),
+        ]);
+
+        const loadedEvents = (eventsBody.events ?? []).map((item) => ({
+          ...item,
+          color: normalizeColor(item.color),
+        }));
+        setEvents(loadedEvents);
+
+        const loadedRooms = (roomsBody.rooms ?? []).filter((room) => typeof room === "string" && room.trim().length > 0);
+        if (loadedRooms.length > 0) {
+          setRoomCatalog(loadedRooms);
+        }
+
+        setSelectedDay(editEvent.day);
+        setSelectedEventId(null);
+        setEditError(null);
+        setIsEditMode(false);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "No se pudo modificar la clase en base de datos";
+        setEditError(message);
+        window.alert(message);
+      }
+    })();
   };
 
   const deleteSelectedEvent = () => {
@@ -1036,10 +1361,79 @@ export default function SchedulesPage() {
     const accepted = window.confirm(`Eliminar la clase \"${selectedEvent.code} | ${selectedEvent.subject}\"?`);
     if (!accepted) return;
 
-    setEvents((all) => all.filter((item) => item.id !== selectedEvent.id));
-    setSelectedEventId(null);
-    setIsEditMode(false);
-    setEditError(null);
+    const [eventIdFromComposite, slotId] = selectedEvent.id.split(":");
+    const eventId = selectedEvent.classId || eventIdFromComposite;
+
+    if (!eventId || !slotId) {
+      const message = "No se pudo identificar la clase a eliminar.";
+      setEditError(message);
+      window.alert(message);
+      return;
+    }
+
+    void (async () => {
+      try {
+        await fetchApiJson<{ message: string }>(`/api/schedules/events/${eventId}/${slotId}`, {
+          method: "DELETE",
+        });
+
+        const normalizeColor = (value: string): ScheduleEvent["color"] => {
+          if (value === "blue" || value === "emerald" || value === "amber" || value === "violet" || value === "red") {
+            return value;
+          }
+          return "blue";
+        };
+
+        const [eventsBody, roomsBody] = await Promise.all([
+          fetchApiJson<{ events?: ScheduleEvent[] }>("/api/schedules/events", { cache: "no-store" }),
+          fetchApiJson<{ rooms?: string[] }>("/api/schedules/rooms", { cache: "no-store" }),
+        ]);
+
+        const loadedEvents = (eventsBody.events ?? []).map((item) => ({
+          ...item,
+          color: normalizeColor(item.color),
+        }));
+        setEvents(loadedEvents);
+
+        const loadedRooms = (roomsBody.rooms ?? []).filter((room) => typeof room === "string" && room.trim().length > 0);
+        if (loadedRooms.length > 0) {
+          setRoomCatalog(loadedRooms);
+        }
+
+        setSelectedEventId(null);
+        setIsEditMode(false);
+        setEditError(null);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "No se pudo eliminar la clase en base de datos";
+        setEditError(message);
+        window.alert(message);
+      }
+    })();
+  };
+
+  const canConfirmDeleteAll = deleteAllConfirmText.trim().toLowerCase() === "confirmar";
+
+  const confirmDeleteAllSchedules = async () => {
+    if (!canConfirmDeleteAll || isDeletingAll) return;
+
+    setIsDeletingAll(true);
+    setDeleteAllError(null);
+
+    try {
+      await fetchApiJson<{ message: string }>("/api/schedules/all", {
+        method: "DELETE",
+      });
+
+      setEvents([]);
+      setSelectedEventId(null);
+      setIsEditMode(false);
+      setDeleteAllConfirmText("");
+      setIsDeleteAllOpen(false);
+    } catch (error) {
+      setDeleteAllError(error instanceof Error ? error.message : "No se pudo eliminar el horario");
+    } finally {
+      setIsDeletingAll(false);
+    }
   };
 
   return (
@@ -1173,8 +1567,8 @@ export default function SchedulesPage() {
         </div>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[1fr_330px]">
-        <section className="relative isolate overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      <div className="grid gap-4 xl:grid-cols-[1fr_330px] xl:items-start">
+        <section className="relative isolate self-start overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
           <div ref={gridScrollRef} className="overflow-auto" style={{ maxHeight: "75vh" }}>
             <div
               className="relative min-w-max"
@@ -1195,6 +1589,7 @@ export default function SchedulesPage() {
                   <div
                     key={`header-${room}-${roomIndex}`}
                     className="sticky top-0 z-20 border-r border-b border-slate-200 bg-white px-3 py-2"
+                    suppressHydrationWarning
                   >
                     <p className="line-clamp-2 text-xs font-semibold text-slate-700">{room}</p>
                   </div>
@@ -1299,7 +1694,7 @@ export default function SchedulesPage() {
           </div>
         </section>
 
-        <div className="h-fit xl:sticky xl:top-24">
+        <div className="h-fit self-start xl:sticky xl:top-24">
           <button
             type="button"
             onClick={() => {
@@ -1492,6 +1887,95 @@ export default function SchedulesPage() {
               </div>
             )}
           </aside>
+
+          <aside className="mt-3 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h2 className="text-sm font-bold tracking-wide text-slate-500 uppercase">Leyenda de colores</h2>
+
+            <div className="mt-4 space-y-3">
+              <div>
+                <p className="mb-2 text-xs font-semibold text-slate-600 uppercase">Por facultad</p>
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    <div className="h-3 w-3 rounded border-2 border-emerald-700 bg-emerald-100" />
+                    <span className="text-xs text-slate-600">Administrativas y</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="h-3 w-3 rounded border-2 border-emerald-700 bg-teal-100" />
+                    <span className="text-xs text-slate-600">contables</span>
+                  </div>
+
+                  <div className="mt-2 flex items-center gap-2">
+                    <div className="h-3 w-3 rounded border-2 border-violet-700 bg-violet-100" />
+                    <span className="text-xs text-slate-600">Humanas y de la</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="h-3 w-3 rounded border-2 border-fuchsia-700 bg-fuchsia-100" />
+                    <span className="text-xs text-slate-600">educación</span>
+                  </div>
+
+                  <div className="mt-2 flex items-center gap-2">
+                    <div className="h-3 w-3 rounded border-2 border-rose-700 bg-rose-100" />
+                    <span className="text-xs text-slate-600">Ciencias de la</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="h-3 w-3 rounded border-2 border-pink-700 bg-pink-100" />
+                    <span className="text-xs text-slate-600">salud</span>
+                  </div>
+
+                  <div className="mt-2 flex items-center gap-2">
+                    <div className="h-3 w-3 rounded border-2 border-blue-700 bg-blue-100" />
+                    <span className="text-xs text-slate-600">Ingeniería (color</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="h-3 w-3 rounded border-2 border-sky-700 bg-sky-100" />
+                    <span className="text-xs text-slate-600">principal)</span>
+                  </div>
+
+                  <div className="mt-2 flex items-center gap-2">
+                    <div className="h-3 w-3 rounded border-2 border-amber-700 bg-amber-100" />
+                    <span className="text-xs text-slate-600">Teología y religión</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="h-3 w-3 rounded border-2 border-yellow-700 bg-yellow-100" />
+                    <span className="text-xs text-slate-600">(tonalidad)</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="border-t border-slate-200 pt-3">
+                <p className="mb-2 text-xs font-semibold text-slate-600 uppercase">Por tipo de reserva</p>
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <div className="h-5 w-8 rounded border-2 border-slate-400 bg-gradient-to-br from-blue-50 to-blue-100" />
+                    <span className="text-xs text-slate-600">Reserva semestre</span>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <div className="h-5 w-8 rounded border-2 border-dashed border-amber-700 bg-white" />
+                    <span className="text-xs text-slate-600">Reserva por día</span>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <div className="h-5 w-8 rounded border-2 border-slate-900 bg-white" />
+                    <span className="text-xs text-slate-600">Fuera del ámbito</span>
+                  </div>
+                  <div className="ml-10 text-xs text-slate-600">académico</div>
+                </div>
+              </div>
+            </div>
+          </aside>
+
+          <button
+            type="button"
+            onClick={() => {
+              setDeleteAllError(null);
+              setDeleteAllConfirmText("");
+              setIsDeleteAllOpen(true);
+            }}
+            className="mt-3 w-full rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700 shadow-sm hover:bg-red-100"
+          >
+            Eliminar horario completo
+          </button>
         </div>
       </div>
 
@@ -1709,6 +2193,52 @@ export default function SchedulesPage() {
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {isDeleteAllOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/45 p-4">
+          <div className="w-full max-w-md rounded-xl bg-white p-5 shadow-2xl">
+            <h3 className="text-lg font-bold text-slate-900">Eliminar todo el horario</h3>
+            <p className="mt-2 text-sm text-slate-600">
+              Esta accion elimina todos los eventos y bloques horarios actuales. Escribe <strong>confirmar</strong> para continuar.
+            </p>
+
+            <input
+              type="text"
+              value={deleteAllConfirmText}
+              onChange={(e) => setDeleteAllConfirmText(e.target.value)}
+              placeholder="Escribe confirmar"
+              className="mt-4 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+            />
+
+            {deleteAllError ? (
+              <p className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{deleteAllError}</p>
+            ) : null}
+
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (isDeletingAll) return;
+                  setIsDeleteAllOpen(false);
+                  setDeleteAllConfirmText("");
+                  setDeleteAllError(null);
+                }}
+                className="rounded-lg border border-slate-200 px-4 py-2 text-sm"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteAllSchedules}
+                disabled={!canConfirmDeleteAll || isDeletingAll}
+                className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isDeletingAll ? "Eliminando..." : "Confirmar eliminacion"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

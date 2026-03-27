@@ -49,6 +49,13 @@ const normalize = (value: string) =>
     .replace(/\s+/g, " ")
     .trim();
 
+const cleanText = (value: unknown) =>
+  String(value ?? "")
+    .replace(/[\u00A0\u2007\u202F]/g, " ")
+    .replace(/[\u200B-\u200D\uFEFF\uFFFD]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
 const pad2 = (value: number) => String(value).padStart(2, "0");
 
 const toIsoDate = (date: Date) => `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
@@ -125,7 +132,7 @@ const toRangeStartHHMM = (value: unknown): string => {
 };
 
 const normalizeDay = (value: string): string => {
-  const day = normalize(value);
+  const day = normalize(cleanText(value));
   if (day.startsWith("lun")) return "Lunes";
   if (day.startsWith("mar")) return "Martes";
   if (day.startsWith("mie")) return "Miercoles";
@@ -133,7 +140,7 @@ const normalizeDay = (value: string): string => {
   if (day.startsWith("vie")) return "Viernes";
   if (day.startsWith("sab")) return "Sabado";
   if (day.startsWith("dom")) return "Domingo";
-  return value.trim();
+  return cleanText(value);
 };
 
 const validDay = (value: string) =>
@@ -186,14 +193,14 @@ const parseNormalizedSheet = (sheet: XLSX.WorkSheet, sheetName: string): ParsedS
 
   return rawRows.map((row, idx) => {
     const parsed: ParsedScheduleRowPayload = {
-      faculty: String(row[columnMap.get("faculty")!] ?? "").trim(),
-      code: String(row[columnMap.get("code")!] ?? "").trim(),
-      subject: String(row[columnMap.get("subject")!] ?? "").trim(),
-      teacher: String(row[columnMap.get("teacher")!] ?? "").trim(),
+      faculty: cleanText(row[columnMap.get("faculty")!]),
+      code: cleanText(row[columnMap.get("code")!]),
+      subject: cleanText(row[columnMap.get("subject")!]),
+      teacher: cleanText(row[columnMap.get("teacher")!]),
       startDate: parseDateIso(row[columnMap.get("startDate")!]),
       endDate: parseDateIso(row[columnMap.get("endDate")!]),
-      day: normalizeDay(String(row[columnMap.get("day")!] ?? "")),
-      room: String(row[columnMap.get("room")!] ?? "").trim(),
+      day: normalizeDay(cleanText(row[columnMap.get("day")!])),
+      room: cleanText(row[columnMap.get("room")!]),
       startTime: toHHMM(row[columnMap.get("startTime")!]),
       endTime: toHHMM(row[columnMap.get("endTime")!]),
     };
@@ -213,7 +220,7 @@ const parseNormalizedSheet = (sheet: XLSX.WorkSheet, sheetName: string): ParsedS
 const parseCellClassValue = (value: string) => {
   const parts = value
     .split("|")
-    .map((part) => part.trim())
+    .map((part) => cleanText(part))
     .filter(Boolean);
 
   if (parts.length < 5) return null;
@@ -222,10 +229,10 @@ const parseCellClassValue = (value: string) => {
   const separatorIdx = head.indexOf(":");
   if (separatorIdx < 0) return null;
 
-  const faculty = head.slice(0, separatorIdx).trim();
-  const code = head.slice(separatorIdx + 1).trim();
-  const subject = (parts[1] ?? "").trim();
-  const teacher = (parts[2] ?? "").trim();
+  const faculty = cleanText(head.slice(0, separatorIdx));
+  const code = cleanText(head.slice(separatorIdx + 1));
+  const subject = cleanText(parts[1] ?? "");
+  const teacher = cleanText(parts[2] ?? "");
   const startDate = parts[3];
   const endDate = parts[4];
 
@@ -246,12 +253,16 @@ const detectMatrixFormat = (sheet: XLSX.WorkSheet) => {
     header: 1,
     defval: "",
     raw: true,
-    range: 0,
   });
 
-  const headerRow = grid[0] ?? [];
-  const normalizedHeaders = headerRow.map((cell) => normalize(String(cell ?? "")));
-  return normalizedHeaders.includes("hora");
+  const scanLimit = Math.min(grid.length, 20);
+  for (let rowIndex = 0; rowIndex < scanLimit; rowIndex++) {
+    const headerRow = grid[rowIndex] ?? [];
+    const normalizedHeaders = headerRow.map((cell) => normalize(String(cell ?? "")));
+    if (normalizedHeaders.includes("hora")) return true;
+  }
+
+  return false;
 };
 
 const parseMatrixSheet = (
@@ -267,7 +278,15 @@ const parseMatrixSheet = (
 
   if (grid.length < 2) return [];
 
-  const headerRow = grid[0] ?? [];
+  const headerRowIndex = grid.findIndex((candidateRow) =>
+    (candidateRow ?? []).map((cell) => normalize(String(cell ?? ""))).includes("hora")
+  );
+
+  if (headerRowIndex < 0) {
+    throw new Error(`La hoja '${sheetName}' no tiene fila de encabezado con HORA`);
+  }
+
+  const headerRow = grid[headerRowIndex] ?? [];
   const normalizedHeaders = headerRow.map((cell) => normalize(String(cell ?? "")));
   const hourColIndex = normalizedHeaders.findIndex((h) => h === "hora");
   if (hourColIndex < 0) throw new Error(`La hoja '${sheetName}' no tiene columna HORA`);
@@ -275,7 +294,7 @@ const parseMatrixSheet = (
   const day = normalizeSheetDay(sheetName, fallbackDay);
   const rows: ParsedScheduleRowPayload[] = [];
 
-  for (let rowIndex = 1; rowIndex < grid.length; rowIndex++) {
+  for (let rowIndex = headerRowIndex + 1; rowIndex < grid.length; rowIndex++) {
     const row = grid[rowIndex] ?? [];
     const startTimeRaw = row[hourColIndex];
     if (!String(startTimeRaw ?? "").trim()) continue;
@@ -292,10 +311,10 @@ const parseMatrixSheet = (
     const endTime = `${pad2(Math.floor(endMinutes / 60))}:${pad2(endMinutes % 60)}`;
 
     for (let col = hourColIndex + 1; col < headerRow.length; col++) {
-      const room = String(headerRow[col] ?? "").trim();
+      const room = cleanText(headerRow[col]);
       if (!room) continue;
 
-      const cellValue = String(row[col] ?? "").trim();
+      const cellValue = cleanText(row[col]);
       if (!cellValue || !cellValue.includes("|")) continue;
 
       const parsedClass = parseCellClassValue(cellValue);
@@ -323,19 +342,38 @@ export async function parseScheduleWorkbookClient(file: File, options?: { fallba
   }
 
   const allRows: ParsedScheduleRowPayload[] = [];
+  const fixedWeekDays = ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes"] as const;
+  const isExcel = /\.(xlsx|xls)$/i.test(file.name);
 
-  workbook.SheetNames.forEach((sheetName) => {
+  if (isExcel && workbook.SheetNames.length < 5) {
+    throw new Error("El Excel debe tener 5 hojas (Lunes, Martes, Miercoles, Jueves y Viernes).");
+  }
+
+  workbook.SheetNames.forEach((sheetName, sheetIndex) => {
     const sheet = workbook.Sheets[sheetName];
     if (!sheet) return;
 
+    if (isExcel) {
+      const normalizedSheetDay = normalizeDay(sheetName);
+      if (!validDay(normalizedSheetDay)) {
+        return;
+      }
+    }
+
+    const matrixFallbackDay =
+      isExcel && sheetIndex < fixedWeekDays.length ? fixedWeekDays[sheetIndex] : options?.fallbackDay;
+
     const rows = detectMatrixFormat(sheet)
-      ? parseMatrixSheet(sheet, sheetName, options?.fallbackDay)
+      ? parseMatrixSheet(sheet, sheetName, matrixFallbackDay)
       : parseNormalizedSheet(sheet, sheetName);
 
     allRows.push(...rows);
   });
 
   if (!allRows.length) {
+    if (isExcel) {
+      throw new Error("No se encontraron hojas validas con nombre de dia para importar.");
+    }
     throw new Error("No se encontraron clases validas para importar");
   }
 
