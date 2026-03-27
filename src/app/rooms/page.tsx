@@ -59,9 +59,7 @@ const FLOOR_ONE_ALLOWED = new Set([
   "sala informatica 2 bolivar",
 ]);
 
-const EXCLUDED_EXACT_ROOM_NAMES = new Set([
-  "Aula Foro Unac 102",
-]);
+const EXCLUDED_EXACT_ROOM_NAMES = new Set<string>();
 
 const EXCLUDED_NORMALIZED_ROOM_NAMES = new Set([
   "salon 200",
