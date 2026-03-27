@@ -30,12 +30,6 @@ const reservationTypeLabels: Record<ReservationType, string> = {
   iglesia: "Reserva iglesia",
 };
 
-const getReservationTypeColor = (type: ReservationType): ScheduleEvent["color"] => {
-  if (type === "momentanea") return "amber";
-  if (type === "iglesia") return "red";
-  return "blue";
-};
-
 type ScheduleSlotForm = {
   day: string;
   room: string;
@@ -315,54 +309,6 @@ const timeSlots = [
   "21:30-22:00",
 ];
 
-const initialEvents: ScheduleEvent[] = [
-  {
-    id: "ev-1",
-    day: "Lunes",
-    room: "Salon 301",
-    start: "08:00",
-    end: "10:00",
-    faculty: "Ingenieria",
-    code: "APH 23613",
-    subject: "SALVAMENTO Y RESCATE II",
-    teacher: "ESPINOSA ECHAVARRIA JESUS",
-    startDate: "2026-02-09",
-    endDate: "2026-06-12",
-    reservationType: "normal",
-    color: getReservationTypeColor("normal"),
-  },
-  {
-    id: "ev-2",
-    day: "Martes",
-    room: "Laboratorio de Desarrollo de Software (LDS)",
-    start: "10:00",
-    end: "12:00",
-    faculty: "Teologia y Religion",
-    code: "MERT-1101",
-    subject: "EL HECHO RELIGIOSO 1",
-    teacher: "DOCENTE PENDIENTE ASIGNAR FTR 2",
-    startDate: "2026-02-09",
-    endDate: "2026-06-12",
-    reservationType: "normal",
-    color: getReservationTypeColor("normal"),
-  },
-  {
-    id: "ev-3",
-    day: "Miercoles",
-    room: "Sala de Simulacion 2",
-    start: "14:00",
-    end: "15:30",
-    faculty: "Humanidades",
-    code: "HUM-203",
-    subject: "ETICA EN TECNOLOGIA",
-    teacher: "Prof. Jamila",
-    startDate: "2026-02-09",
-    endDate: "2026-06-12",
-    reservationType: "normal",
-    color: getReservationTypeColor("normal"),
-  },
-];
-
 const normalizeKey = (value: string) =>
   value
     .toLowerCase()
@@ -571,6 +517,13 @@ const formatWeekRangeLabel = (weekStart: Date) => {
 
 const isCacheFresh = (payload: SchedulesCachePayload) => Date.now() - payload.savedAt <= SCHEDULES_CACHE_TTL_MS;
 
+const getFastInitialSnapshot = (): SchedulesCachePayload | null => {
+  // Safe for hydration: this only uses in-memory cache populated after client runtime.
+  if (typeof window === "undefined") return null;
+  if (!inMemorySchedulesCache || !isCacheFresh(inMemorySchedulesCache)) return null;
+  return inMemorySchedulesCache;
+};
+
 const readSchedulesCache = (): SchedulesCachePayload | null => {
   if (inMemorySchedulesCache && isCacheFresh(inMemorySchedulesCache)) {
     return inMemorySchedulesCache;
@@ -629,8 +582,7 @@ const writeSchedulesCache = (events: ScheduleEvent[], cachedRooms: string[]) => 
 export default function SchedulesPage() {
   const weekPickerRef = useRef<HTMLDivElement>(null);
   const gridScrollRef = useRef<HTMLDivElement>(null);
-
-  const cachedSnapshot = readSchedulesCache();
+  const fastInitialSnapshot = getFastInitialSnapshot();
 
   const colombiaToday = useMemo(() => getColombiaToday(), []);
   const [selectedDay, setSelectedDay] = useState(getWeekdayName(colombiaToday));
@@ -640,9 +592,9 @@ export default function SchedulesPage() {
   const [pickerMonthCursor, setPickerMonthCursor] = useState(startOfMonth(colombiaToday));
   const [roomQuery, setRoomQuery] = useState("");
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
-  const [events, setEvents] = useState<ScheduleEvent[]>(cachedSnapshot?.events ?? []);
+  const [events, setEvents] = useState<ScheduleEvent[]>(fastInitialSnapshot?.events ?? []);
   const [roomCatalog, setRoomCatalog] = useState<string[]>(
-    cachedSnapshot?.rooms?.length ? cachedSnapshot.rooms : rooms
+    fastInitialSnapshot?.rooms?.length ? fastInitialSnapshot.rooms : rooms
   );
   const [remoteLoadError, setRemoteLoadError] = useState<string | null>(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -711,10 +663,11 @@ export default function SchedulesPage() {
     let cancelled = false;
 
     const cached = readSchedulesCache();
+    const fallbackRooms = cached?.rooms?.length ? cached.rooms : rooms;
     if (cached) {
-      setEvents(cached.events);
+      setEvents((prev) => (prev.length ? prev : cached.events));
       if (cached.rooms.length > 0) {
-        setRoomCatalog(cached.rooms);
+        setRoomCatalog((prev) => (prev.length && prev !== rooms ? prev : cached.rooms));
       }
     }
 
@@ -739,7 +692,7 @@ export default function SchedulesPage() {
           setRoomCatalog(loadedRooms);
           writeSchedulesCache(loadedEvents, loadedRooms);
         } else {
-          writeSchedulesCache(loadedEvents, roomCatalog);
+          writeSchedulesCache(loadedEvents, fallbackRooms);
         }
 
         console.info("[Schedules] API load success", {

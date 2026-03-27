@@ -646,6 +646,12 @@ const formatConflictsSummary = (detected: number, accepted: number, rejected: nu
   return `${detected} detectados | ${accepted} aceptados | ${rejected} rechazados`;
 };
 
+const formatImportStatus = (status: string) => {
+  if (status === "manual-clear") return "Horario Eliminado";
+  if (status === "success") return "Exitoso";
+  return status;
+};
+
 export default function ExcelImportPage() {
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -752,6 +758,8 @@ export default function ExcelImportPage() {
     return [...conflictClasses, ...nonConflictClasses].filter((item) => !unchangedClassKeys.has(item.key));
   }, [conflictClasses, nonConflictClasses, unchangedClassKeys]);
 
+  const latestImportsHistory = useMemo(() => importsHistory.slice(0, 10), [importsHistory]);
+
   const loadImportsHistory = async () => {
     try {
       const response = await fetchApiJson<ImportsHistoryResponse>("/api/schedules/imports-history");
@@ -762,7 +770,7 @@ export default function ExcelImportPage() {
   };
 
   useEffect(() => {
-    loadImportsHistory();
+    void loadImportsHistory();
   }, []);
 
   const analyzeRowsAgainstCurrentSchedule = async (parsedRows: ParsedScheduleRowPayload[]) => {
@@ -1323,7 +1331,7 @@ export default function ExcelImportPage() {
                   <p className="mb-3 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-700">{manualNotice}</p>
                 ) : null}
                 <p className="mb-3 text-sm text-amber-700">
-                  Completa las columnas faltantes aqui. Luego presiona "Confirm Schedule Import" para validar conflictos y guardar.
+                  Completa las columnas faltantes aqui. Luego presiona &quot;Confirm Schedule Import&quot; para validar conflictos y guardar.
                 </p>
                 <table className="w-full text-left text-sm">
                   <thead className="bg-slate-50 text-[10px] font-bold text-slate-500 uppercase dark:bg-slate-800/50 dark:text-slate-400">
@@ -1342,7 +1350,7 @@ export default function ExcelImportPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                    {manualRows.map((row, index) => (
+                    {manualRows.map((row) => (
                       <tr key={row.id}>
                         <td className="px-2 py-2"><input className="w-40 rounded border border-slate-300 px-2 py-1" value={row.faculty} onChange={(e) => setManualRows((all) => all.map((item) => item.id === row.id ? { ...item, faculty: e.target.value } : item))} /></td>
                         <td className="px-2 py-2"><input className="w-28 rounded border border-slate-300 px-2 py-1" value={row.code} onChange={(e) => setManualRows((all) => all.map((item) => item.id === row.id ? { ...item, code: e.target.value } : item))} /></td>
@@ -1580,8 +1588,8 @@ export default function ExcelImportPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {importsHistory.length ? (
-                  importsHistory.map((item) => (
+                {latestImportsHistory.length ? (
+                  latestImportsHistory.map((item) => (
                     <tr key={item.id}>
                       <td className="px-6 py-4 text-slate-500">{formatHistoryDate(item.imported_at)}</td>
                       <td className="px-6 py-4">{item.source_file}</td>
@@ -1595,7 +1603,7 @@ export default function ExcelImportPage() {
                       </td>
                       <td className="px-6 py-4">
                         <span className="rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-bold text-green-700 uppercase dark:bg-green-900/30 dark:text-green-400">
-                          {item.status}
+                          {formatImportStatus(item.status)}
                         </span>
                       </td>
                     </tr>
