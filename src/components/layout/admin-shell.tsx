@@ -16,6 +16,8 @@ const navItems: NavItem[] = [
   { label: "Schedules", icon: "calendar_today", href: "/schedules", isRoute: true },
   { label: "Rooms", icon: "meeting_room", href: "/rooms", isRoute: true },
   { label: "Auditorio", icon: "theater_comedy", href: "/auditorio", isRoute: true },
+  { label: "Staff", icon: "groups", href: "/staff", isRoute: true },
+  { label: "Inventory", icon: "inventory_2", href: "/inventory", isRoute: true },
   { label: "Excel Import", icon: "upload_file", href: "/excel-import", isRoute: true },
 ];
 
