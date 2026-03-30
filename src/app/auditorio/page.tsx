@@ -1,6 +1,10 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { fetchApiJson } from "@/lib/api-client";
+import { useWebSocketSchedules } from "@/lib/use-websocket-schedules";
+
+type AuditorioEstado = "Pendiente" | "Aprobada" | "Cancelada";
 
 type ScheduleBlock = {
   id: string;
@@ -13,6 +17,9 @@ type AuditoriumEvent = {
   id: string;
   title: string;
   organizer: string;
+  periodStartDate: string;
+  periodEndDate: string;
+  status: AuditorioEstado;
   attendees: number;
   needsScreen: boolean;
   needsSound: boolean;
@@ -21,17 +28,40 @@ type AuditoriumEvent = {
   scheduleBlocks: ScheduleBlock[];
 };
 
+type AuditorioReservaApi = {
+  id: string;
+  nombreEvento: string;
+  organizador: string;
+  fechaInicioPeriodo: string;
+  fechaFinPeriodo: string;
+  numeroAsistentes: number;
+  requierePantalla: boolean;
+  requiereSonido: boolean;
+  observaciones: string | null;
+  estado: AuditorioEstado;
+  fechaCreacion: string;
+  horarios: Array<{
+    id: string;
+    fechaEspecifica: string;
+    horaInicio: string;
+    horaFin: string;
+  }>;
+};
+
 type NewEventFormState = {
   title: string;
   organizer: string;
   startDate: string;
   endDate: string;
+  status: AuditorioEstado;
   attendees: string;
   needsScreen: boolean;
   needsSound: boolean;
   observations: string;
   scheduleBlocks: ScheduleBlock[];
 };
+
+type FormFieldErrors = Record<string, string>;
 
 type WeekSegment = {
   event: AuditoriumEvent;
@@ -63,46 +93,6 @@ const eventStyles: Record<AuditoriumEvent["color"], string> = {
   emerald: "bg-emerald-100 text-emerald-900",
   amber: "bg-amber-100 text-amber-900",
 };
-
-const initialEvents: AuditoriumEvent[] = [
-  {
-    id: "aud-1",
-    title: "Congreso de Innovacion Educativa",
-    organizer: "Vicerrectoria Academica",
-    attendees: 240,
-    needsScreen: true,
-    needsSound: true,
-    observations: "Se requiere prueba tecnica el dia anterior.",
-    color: "blue",
-    scheduleBlocks: [
-      { id: "aud-1-b1", date: "2026-03-18", startTime: "08:00", endTime: "12:00" },
-      { id: "aud-1-b2", date: "2026-03-19", startTime: "13:00", endTime: "17:00" },
-      { id: "aud-1-b3", date: "2026-03-20", startTime: "08:00", endTime: "10:30" },
-    ],
-  },
-  {
-    id: "aud-2",
-    title: "Ensayo Coral UNAC",
-    organizer: "Bienestar Universitario",
-    attendees: 90,
-    needsScreen: false,
-    needsSound: true,
-    observations: "Montaje de microfonos inalambricos.",
-    color: "emerald",
-    scheduleBlocks: [{ id: "aud-2-b1", date: "2026-04-09", startTime: "16:00", endTime: "18:30" }],
-  },
-  {
-    id: "aud-3",
-    title: "Charla Chapman Tech Talks",
-    organizer: "Facultad de Ingenieria",
-    attendees: 160,
-    needsScreen: true,
-    needsSound: true,
-    observations: "Se solicita grabacion de la jornada.",
-    color: "amber",
-    scheduleBlocks: [{ id: "aud-3-b1", date: "2026-05-15", startTime: "10:00", endTime: "12:00" }],
-  },
-];
 
 function parseISODate(isoDate: string) {
   const [year, month, day] = isoDate.split("-").map(Number);
@@ -197,6 +187,46 @@ function getEventScheduleSummary(event: AuditoriumEvent) {
     .join(" | ");
 }
 
+function toMinutes(value: string) {
+  const [hour, minute] = value.split(":").map(Number);
+  return (hour ?? 0) * 60 + (minute ?? 0);
+}
+
+function overlapsByTime(startA: string, endA: string, startB: string, endB: string) {
+  return toMinutes(startA) < toMinutes(endB) && toMinutes(startB) < toMinutes(endA);
+}
+
+function colorFromEstado(estado: AuditorioEstado): AuditoriumEvent["color"] {
+  if (estado === "Aprobada") return "emerald";
+  if (estado === "Pendiente") return "amber";
+  return "blue";
+}
+
+function mapReservaToEvent(reserva: AuditorioReservaApi): AuditoriumEvent {
+  return {
+    id: reserva.id,
+    title: reserva.nombreEvento,
+    organizer: reserva.organizador,
+    periodStartDate: reserva.fechaInicioPeriodo,
+    periodEndDate: reserva.fechaFinPeriodo,
+    status: reserva.estado,
+    attendees: reserva.numeroAsistentes,
+    needsScreen: reserva.requierePantalla,
+    needsSound: reserva.requiereSonido,
+    observations: reserva.observaciones ?? "",
+    color: colorFromEstado(reserva.estado),
+    scheduleBlocks: reserva.horarios
+      .slice()
+      .sort((a, b) => a.fechaEspecifica.localeCompare(b.fechaEspecifica) || a.horaInicio.localeCompare(b.horaInicio))
+      .map((block) => ({
+        id: block.id,
+        date: block.fechaEspecifica,
+        startTime: block.horaInicio,
+        endTime: block.horaFin,
+      })),
+  };
+}
+
 function getWeekSegments(week: Date[], events: AuditoriumEvent[]) {
   if (week.length < 7) return [];
 
@@ -259,12 +289,13 @@ function getWeekSegments(week: Date[], events: AuditoriumEvent[]) {
   return positioned;
 }
 
-function createEmptyFormState(): NewEventFormState {
+function createEmptyFormState(defaultDate: string): NewEventFormState {
   return {
     title: "",
     organizer: "",
-    startDate: "2026-03-17",
-    endDate: "2026-03-17",
+    startDate: defaultDate,
+    endDate: defaultDate,
+    status: "Pendiente",
     attendees: "",
     needsScreen: false,
     needsSound: false,
@@ -272,7 +303,7 @@ function createEmptyFormState(): NewEventFormState {
     scheduleBlocks: [
       {
         id: "new-b1",
-        date: "2026-03-17",
+        date: defaultDate,
         startTime: "08:00",
         endTime: "10:00",
       },
@@ -284,14 +315,98 @@ export default function AuditorioPage() {
   const monthPickerRef = useRef<HTMLDivElement>(null);
 
   const colombiaToday = useMemo(() => getColombiaToday(), []);
-  const [events, setEvents] = useState<AuditoriumEvent[]>(initialEvents);
-  const [selectedEventId, setSelectedEventId] = useState<string | null>("aud-1");
-  const [monthCursor, setMonthCursor] = useState(new Date(2026, 2, 1));
+  const defaultDateKey = useMemo(() => toDateKey(colombiaToday), [colombiaToday]);
+
+  const [events, setEvents] = useState<AuditoriumEvent[]>([]);
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
+  const [monthCursor, setMonthCursor] = useState(startOfMonth(colombiaToday));
   const [dragOverDateKey, setDragOverDateKey] = useState<string | null>(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
-  const [formState, setFormState] = useState<NewEventFormState>(createEmptyFormState());
+  const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<FormFieldErrors>({});
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [editingEventId, setEditingEventId] = useState<string | null>(null);
+  const [formState, setFormState] = useState<NewEventFormState>(createEmptyFormState(defaultDateKey));
   const [isMonthPickerOpen, setIsMonthPickerOpen] = useState(false);
-  const [pickerYear, setPickerYear] = useState(2026);
+  const [pickerYear, setPickerYear] = useState(colombiaToday.getFullYear());
+
+  const syncReservas = useCallback(async () => {
+    const response = await fetchApiJson<{ reservas?: AuditorioReservaApi[] }>("/api/auditorio/reservas", {
+      cache: "no-store",
+    });
+
+    const loaded = (response.reservas ?? []).map(mapReservaToEvent);
+    setEvents(loaded);
+
+    setSelectedEventId((current) => {
+      if (current && loaded.some((event) => event.id === current)) {
+        return current;
+      }
+      return loaded[0]?.id ?? null;
+    });
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const run = async () => {
+      try {
+        setIsLoading(true);
+        setLoadError(null);
+        await syncReservas();
+      } catch (error) {
+        if (!isMounted) return;
+        const message = error instanceof Error ? error.message : "No se pudo cargar reservas del auditorio";
+        setLoadError(message);
+      } finally {
+        if (isMounted) {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    void run();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [syncReservas]);
+
+  const handleRealtimeRefresh = useCallback(() => {
+    syncReservas().catch((error) => {
+      const message = error instanceof Error ? error.message : "No se pudo actualizar auditorio en tiempo real";
+      setLoadError(message);
+    });
+  }, [syncReservas]);
+
+  useWebSocketSchedules({
+    onScheduleRefresh: handleRealtimeRefresh,
+  });
+
+  // Fallback de auto-actualizacion para no depender solo del socket.
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      handleRealtimeRefresh();
+    }, 15000);
+
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") {
+        handleRealtimeRefresh();
+      }
+    };
+
+    window.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", handleRealtimeRefresh);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", handleRealtimeRefresh);
+    };
+  }, [handleRealtimeRefresh]);
 
   // Close month picker when clicking outside
   useEffect(() => {
@@ -328,8 +443,99 @@ export default function AuditorioPage() {
   const periodLabel = `${monthNames[monthsToShow[0].getMonth()]} ${monthsToShow[0].getFullYear()} - ${monthNames[monthsToShow[1].getMonth()]} ${monthsToShow[1].getFullYear()}`;
   const selectedEvent = events.find((event) => event.id === selectedEventId) ?? null;
 
+  const formatOverlapMessage = (detail: {
+    title: string;
+    date: string;
+    startTime: string;
+    endTime: string;
+  }) => {
+    const readableDate = formatDateLabel(parseISODate(detail.date));
+    return `No pudimos guardar esta reserva porque el auditorio ya esta ocupado.\n\nCoincide con: ${detail.title}\nFecha: ${readableDate}\nHorario: ${detail.startTime} - ${detail.endTime}\n\nElige otro horario o ajusta la reserva existente.`;
+  };
+
+  const hasOverlapWithOtherEvents = (
+    scheduleBlocks: ScheduleBlock[],
+    ignoreEventId: string | null = null
+  ) => {
+    for (const block of scheduleBlocks) {
+      for (const existing of events) {
+        if (ignoreEventId && existing.id === ignoreEventId) continue;
+
+        for (const existingBlock of existing.scheduleBlocks) {
+          if (existingBlock.date !== block.date) continue;
+          if (overlapsByTime(block.startTime, block.endTime, existingBlock.startTime, existingBlock.endTime)) {
+            return {
+              title: existing.title,
+              date: existingBlock.date,
+              startTime: existingBlock.startTime,
+              endTime: existingBlock.endTime,
+            };
+          }
+        }
+      }
+    }
+
+    return null;
+  };
+
+  const mapFormToPayload = (state: NewEventFormState) => ({
+    nombreEvento: state.title.trim(),
+    organizador: state.organizer.trim(),
+    fechaInicioPeriodo: state.startDate,
+    fechaFinPeriodo: state.endDate,
+    numeroAsistentes: Number(state.attendees) || 1,
+    requierePantalla: state.needsScreen,
+    requiereSonido: state.needsSound,
+    observaciones: state.observations.trim() || null,
+    estado: state.status,
+    horarios: state.scheduleBlocks
+      .slice()
+      .sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime))
+      .map((block) => ({
+        fechaEspecifica: block.date,
+        horaInicio: block.startTime,
+        horaFin: block.endTime,
+      })),
+  });
+
+  const clearFieldError = (key: string) => {
+    setFieldErrors((current) => {
+      if (!current[key]) return current;
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
+  };
+
+  const openEditModal = () => {
+    if (!selectedEvent) return;
+
+    setEditingEventId(selectedEvent.id);
+    setFormError(null);
+    setFieldErrors({});
+    setFormState({
+      title: selectedEvent.title,
+      organizer: selectedEvent.organizer,
+      startDate: selectedEvent.periodStartDate,
+      endDate: selectedEvent.periodEndDate,
+      status: selectedEvent.status,
+      attendees: String(selectedEvent.attendees),
+      needsScreen: selectedEvent.needsScreen,
+      needsSound: selectedEvent.needsSound,
+      observations: selectedEvent.observations,
+      scheduleBlocks: selectedEvent.scheduleBlocks.map((block, index) => ({
+        ...block,
+        id: `edit-b${index + 1}-${Date.now()}`,
+      })),
+    });
+    setIsCreateOpen(true);
+  };
+
   function openCreateModal() {
-    setFormState(createEmptyFormState());
+    setEditingEventId(null);
+    setFormError(null);
+    setFieldErrors({});
+    setFormState(createEmptyFormState(defaultDateKey));
     setIsCreateOpen(true);
   }
 
@@ -339,35 +545,93 @@ export default function AuditorioPage() {
   }
 
   function closeCreateModal() {
+    if (isSaving) return;
     setIsCreateOpen(false);
+    setEditingEventId(null);
+    setFormError(null);
+    setFieldErrors({});
   }
 
   function moveEventToDate(eventId: string, newStartDate: Date) {
+    const sourceEvent = events.find((event) => event.id === eventId);
+    if (!sourceEvent) return;
+
+    const originalDates = sourceEvent.scheduleBlocks
+      .map((block) => parseISODate(block.date))
+      .sort((a, b) => a.getTime() - b.getTime());
+
+    if (originalDates.length === 0) return;
+
+    const delta = diffDays(newStartDate, originalDates[0]);
+    const shiftedBlocks = sourceEvent.scheduleBlocks.map((block) => ({
+      ...block,
+      date: toDateKey(addDays(parseISODate(block.date), delta)),
+    }));
+    const shiftedPeriodStart = toDateKey(addDays(parseISODate(sourceEvent.periodStartDate), delta));
+    const shiftedPeriodEnd = toDateKey(addDays(parseISODate(sourceEvent.periodEndDate), delta));
+
+    const overlapWith = hasOverlapWithOtherEvents(shiftedBlocks, eventId);
+    if (overlapWith) {
+      window.alert(formatOverlapMessage(overlapWith));
+      return;
+    }
+
+    const previousEvents = events;
     setEvents((current) =>
-      current.map((event) => {
-        if (event.id !== eventId) return event;
-
-        const originalDates = event.scheduleBlocks
-          .map((block) => parseISODate(block.date))
-          .sort((a, b) => a.getTime() - b.getTime());
-
-        if (originalDates.length === 0) return event;
-
-        const originalStart = originalDates[0];
-        const delta = diffDays(newStartDate, originalStart);
-
-        return {
-          ...event,
-          scheduleBlocks: event.scheduleBlocks.map((block) => ({
-            ...block,
-            date: toDateKey(addDays(parseISODate(block.date), delta)),
-          })),
-        };
-      })
+      current.map((event) =>
+        event.id === eventId
+          ? {
+              ...event,
+              periodStartDate: shiftedPeriodStart,
+              periodEndDate: shiftedPeriodEnd,
+              scheduleBlocks: shiftedBlocks,
+            }
+          : event
+      )
     );
+
+    void (async () => {
+      try {
+        await fetchApiJson<{ message: string }>(`/api/auditorio/reservas/${eventId}`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            nombreEvento: sourceEvent.title,
+            organizador: sourceEvent.organizer,
+            fechaInicioPeriodo: shiftedPeriodStart,
+            fechaFinPeriodo: shiftedPeriodEnd,
+            numeroAsistentes: sourceEvent.attendees,
+            requierePantalla: sourceEvent.needsScreen,
+            requiereSonido: sourceEvent.needsSound,
+            observaciones: sourceEvent.observations || null,
+            estado: sourceEvent.status,
+            horarios: shiftedBlocks.map((block) => ({
+              fechaEspecifica: block.date,
+              horaInicio: block.startTime,
+              horaFin: block.endTime,
+            })),
+          }),
+        });
+
+        setLoadError(null);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "No se pudo mover la reserva";
+        setLoadError(message);
+        window.alert(message);
+        setEvents(previousEvents);
+      }
+    })();
   }
 
   function updateScheduleBlock(blockId: string, field: keyof ScheduleBlock, value: string) {
+    clearFieldError("scheduleBlocks");
+    if (field === "date") clearFieldError(`block-${blockId}-date`);
+    if (field === "startTime") clearFieldError(`block-${blockId}-startTime`);
+    if (field === "endTime") clearFieldError(`block-${blockId}-endTime`);
+    clearFieldError(`block-${blockId}-range`);
+
     setFormState((current) => ({
       ...current,
       scheduleBlocks: current.scheduleBlocks.map((block) =>
@@ -382,13 +646,14 @@ export default function AuditorioPage() {
   }
 
   function addScheduleBlock() {
+    clearFieldError("scheduleBlocks");
     setFormState((current) => ({
       ...current,
       scheduleBlocks: [
         ...current.scheduleBlocks,
         {
           id: `new-b${current.scheduleBlocks.length + 1}-${Date.now()}`,
-          date: current.startDate || "2026-03-17",
+          date: current.startDate || defaultDateKey,
           startTime: "08:00",
           endTime: "10:00",
         },
@@ -397,6 +662,11 @@ export default function AuditorioPage() {
   }
 
   function removeScheduleBlock(blockId: string) {
+    clearFieldError("scheduleBlocks");
+    clearFieldError(`block-${blockId}-date`);
+    clearFieldError(`block-${blockId}-startTime`);
+    clearFieldError(`block-${blockId}-endTime`);
+    clearFieldError(`block-${blockId}-range`);
     setFormState((current) => {
       if (current.scheduleBlocks.length === 1) return current;
       return {
@@ -406,44 +676,143 @@ export default function AuditorioPage() {
     });
   }
 
-  function handleCreateEventSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleCreateEventSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (isSaving) return;
+
+    setFormError(null);
+
+    const errors: FormFieldErrors = {};
+
+    if (!formState.title.trim()) {
+      errors.title = "Ingresa el nombre del evento.";
+    }
+
+    if (!formState.organizer.trim()) {
+      errors.organizer = "Ingresa quién organiza el evento.";
+    }
+
+    if (!formState.startDate) {
+      errors.startDate = "Selecciona la fecha de inicio.";
+    }
+
+    if (!formState.endDate) {
+      errors.endDate = "Selecciona la fecha de fin.";
+    }
+
+    if (formState.startDate && formState.endDate && formState.endDate < formState.startDate) {
+      errors.endDate = "La fecha de fin debe ser igual o posterior a la fecha de inicio.";
+    }
+
+    const attendees = Number(formState.attendees);
+    if (!Number.isFinite(attendees) || attendees < 1) {
+      errors.attendees = "El número de asistentes debe ser mayor que 0.";
+    }
+
+    formState.scheduleBlocks.forEach((block, index) => {
+      const label = `Bloque ${index + 1}`;
+
+      if (!block.date) {
+        errors[`block-${block.id}-date`] = `${label}: selecciona una fecha.`;
+      }
+
+      if (!block.startTime) {
+        errors[`block-${block.id}-startTime`] = `${label}: selecciona hora de inicio.`;
+      }
+
+      if (!block.endTime) {
+        errors[`block-${block.id}-endTime`] = `${label}: selecciona hora de fin.`;
+      }
+
+      if (block.startTime && block.endTime && block.endTime <= block.startTime) {
+        errors[`block-${block.id}-range`] = `${label}: la hora de fin debe ser mayor a la hora de inicio.`;
+      }
+
+      if (
+        block.date &&
+        formState.startDate &&
+        formState.endDate &&
+        (block.date < formState.startDate || block.date > formState.endDate)
+      ) {
+        errors[`block-${block.id}-date`] = `${label}: la fecha debe estar dentro del periodo general.`;
+      }
+    });
 
     const validBlocks = formState.scheduleBlocks.filter(
       (block) => block.date && block.startTime && block.endTime && block.endTime > block.startTime
     );
 
-    if (!formState.title.trim() || !formState.organizer.trim() || validBlocks.length === 0) {
-      alert("Completa nombre, organizador y al menos un horario valido.");
+    if (validBlocks.length === 0) {
+      errors.scheduleBlocks = "Agrega al menos un bloque de horario válido para continuar.";
+    }
+
+    const duplicateOverlap = hasOverlapWithOtherEvents(validBlocks, editingEventId);
+    if (duplicateOverlap) {
+      errors.scheduleBlocks = formatOverlapMessage(duplicateOverlap);
+    }
+
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors);
+      setFormError("Revisa los campos marcados en rojo.");
       return;
     }
 
-    const colorPalette: AuditoriumEvent["color"][] = ["blue", "emerald", "amber"];
-    const nextColor = colorPalette[events.length % colorPalette.length];
+    setFieldErrors({});
+    setIsSaving(true);
 
-    const normalizedBlocks = validBlocks
-      .slice()
-      .sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime))
-      .map((block, index) => ({
-        ...block,
-        id: `evt-${Date.now()}-b${index + 1}`,
-      }));
+    try {
+      const payload = mapFormToPayload({ ...formState, scheduleBlocks: validBlocks });
 
-    const newEvent: AuditoriumEvent = {
-      id: `evt-${Date.now()}`,
-      title: formState.title.trim(),
-      organizer: formState.organizer.trim(),
-      attendees: Number(formState.attendees) || 0,
-      needsScreen: formState.needsScreen,
-      needsSound: formState.needsSound,
-      observations: formState.observations.trim(),
-      color: nextColor,
-      scheduleBlocks: normalizedBlocks,
-    };
+      if (editingEventId) {
+        await fetchApiJson<{ message: string }>(`/api/auditorio/reservas/${editingEventId}`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+        });
+      } else {
+        await fetchApiJson<{ message: string; reservaId: string }>("/api/auditorio/reservas", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+        });
+      }
 
-    setEvents((current) => [...current, newEvent]);
-    setSelectedEventId(newEvent.id);
-    setIsCreateOpen(false);
+      await syncReservas();
+      setIsCreateOpen(false);
+      setEditingEventId(null);
+      setFormError(null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "No se pudo guardar la reserva";
+      setFormError(message);
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  const deleteSelectedEvent = async () => {
+    if (!selectedEvent || isDeleting) return;
+
+    const accepted = window.confirm(`Eliminar la reserva "${selectedEvent.title}"?`);
+    if (!accepted) return;
+
+    setIsDeleting(true);
+    try {
+      await fetchApiJson<{ message: string }>(`/api/auditorio/reservas/${selectedEvent.id}`, {
+        method: "DELETE",
+      });
+
+      await syncReservas();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "No se pudo eliminar la reserva";
+      setLoadError(message);
+      window.alert(message);
+    } finally {
+      setIsDeleting(false);
+    }
   }
 
   return (
@@ -456,6 +825,18 @@ export default function AuditorioPage() {
           </div>
         </div>
       </div>
+
+      {loadError ? (
+        <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {loadError}
+        </div>
+      ) : null}
+
+      {isLoading ? (
+        <div className="mb-4 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600 shadow-sm">
+          Cargando reservas del auditorio...
+        </div>
+      ) : null}
 
       <div className="grid gap-4 xl:grid-cols-[1fr_300px]">
         <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -689,6 +1070,9 @@ export default function AuditorioPage() {
                   <span className="font-semibold">Titulo:</span> {selectedEvent.title}
                 </p>
                 <p>
+                  <span className="font-semibold">Estado:</span> {selectedEvent.status}
+                </p>
+                <p>
                   <span className="font-semibold">Organiza:</span> {selectedEvent.organizer}
                 </p>
                 <p>
@@ -711,6 +1095,24 @@ export default function AuditorioPage() {
                   <span className="font-semibold">Observaciones:</span> {selectedEvent.observations || "Sin observaciones"}
                 </p>
                 <p className="text-xs text-slate-500">Tip: arrastra la barra del evento y sueltala en otro dia para moverla.</p>
+
+                <div className="grid grid-cols-2 gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={openEditModal}
+                    className="rounded-lg bg-[#295786] px-3 py-2 text-sm font-semibold text-white"
+                  >
+                    Editar
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isDeleting}
+                    onClick={() => void deleteSelectedEvent()}
+                    className="rounded-lg bg-red-600 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70"
+                  >
+                    {isDeleting ? "Eliminando..." : "Eliminar"}
+                  </button>
+                </div>
               </div>
             ) : (
               <p className="mt-3 text-sm text-slate-500">Selecciona un evento para ver sus detalles.</p>
@@ -723,15 +1125,24 @@ export default function AuditorioPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
           <div className="max-h-[90vh] w-full max-w-3xl overflow-auto rounded-xl border border-slate-200 bg-white p-5 shadow-xl">
             <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-lg font-bold text-slate-900">Agregar evento al auditorio</h2>
+              <h2 className="text-lg font-bold text-slate-900">
+                {editingEventId ? "Editar evento del auditorio" : "Agregar evento al auditorio"}
+              </h2>
               <button
                 type="button"
                 onClick={closeCreateModal}
+                disabled={isSaving}
                 className="rounded-md border border-slate-200 px-3 py-1 text-sm text-slate-600 hover:bg-slate-50"
               >
                 Cerrar
               </button>
             </div>
+
+            {formError ? (
+              <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                {formError}
+              </div>
+            ) : null}
 
             <form className="space-y-4" onSubmit={handleCreateEventSubmit}>
               <div className="grid gap-3 md:grid-cols-2">
@@ -740,10 +1151,14 @@ export default function AuditorioPage() {
                   <input
                     type="text"
                     value={formState.title}
-                    onChange={(event) => setFormState((current) => ({ ...current, title: event.target.value }))}
-                    className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                    onChange={(event) => {
+                      clearFieldError("title");
+                      setFormState((current) => ({ ...current, title: event.target.value }));
+                    }}
+                    className={`mt-1 w-full rounded-md border px-3 py-2 text-sm ${fieldErrors.title ? "border-red-400 bg-red-50" : "border-slate-300"}`}
                     required
                   />
+                  {fieldErrors.title ? <p className="mt-1 text-xs text-red-600">{fieldErrors.title}</p> : null}
                 </label>
 
                 <label className="text-sm text-slate-700">
@@ -751,10 +1166,14 @@ export default function AuditorioPage() {
                   <input
                     type="text"
                     value={formState.organizer}
-                    onChange={(event) => setFormState((current) => ({ ...current, organizer: event.target.value }))}
-                    className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                    onChange={(event) => {
+                      clearFieldError("organizer");
+                      setFormState((current) => ({ ...current, organizer: event.target.value }));
+                    }}
+                    className={`mt-1 w-full rounded-md border px-3 py-2 text-sm ${fieldErrors.organizer ? "border-red-400 bg-red-50" : "border-slate-300"}`}
                     required
                   />
+                  {fieldErrors.organizer ? <p className="mt-1 text-xs text-red-600">{fieldErrors.organizer}</p> : null}
                 </label>
               </div>
 
@@ -764,9 +1183,13 @@ export default function AuditorioPage() {
                   <input
                     type="date"
                     value={formState.startDate}
-                    onChange={(event) => setFormState((current) => ({ ...current, startDate: event.target.value }))}
-                    className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                    onChange={(event) => {
+                      clearFieldError("startDate");
+                      setFormState((current) => ({ ...current, startDate: event.target.value }));
+                    }}
+                    className={`mt-1 w-full rounded-md border px-3 py-2 text-sm ${fieldErrors.startDate ? "border-red-400 bg-red-50" : "border-slate-300"}`}
                   />
+                  {fieldErrors.startDate ? <p className="mt-1 text-xs text-red-600">{fieldErrors.startDate}</p> : null}
                 </label>
 
                 <label className="text-sm text-slate-700">
@@ -774,20 +1197,46 @@ export default function AuditorioPage() {
                   <input
                     type="date"
                     value={formState.endDate}
-                    onChange={(event) => setFormState((current) => ({ ...current, endDate: event.target.value }))}
-                    className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                    onChange={(event) => {
+                      clearFieldError("endDate");
+                      setFormState((current) => ({ ...current, endDate: event.target.value }));
+                    }}
+                    className={`mt-1 w-full rounded-md border px-3 py-2 text-sm ${fieldErrors.endDate ? "border-red-400 bg-red-50" : "border-slate-300"}`}
                   />
+                  {fieldErrors.endDate ? <p className="mt-1 text-xs text-red-600">{fieldErrors.endDate}</p> : null}
+                </label>
+
+                <label className="text-sm text-slate-700">
+                  Estado
+                  <select
+                    value={formState.status}
+                    onChange={(event) =>
+                      setFormState((current) => ({
+                        ...current,
+                        status: event.target.value as AuditorioEstado,
+                      }))
+                    }
+                    className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                  >
+                    <option value="Pendiente">Pendiente</option>
+                    <option value="Aprobada">Aprobada</option>
+                    <option value="Cancelada">Cancelada</option>
+                  </select>
                 </label>
 
                 <label className="text-sm text-slate-700">
                   Numero de asistentes
                   <input
                     type="number"
-                    min={0}
+                    min={1}
                     value={formState.attendees}
-                    onChange={(event) => setFormState((current) => ({ ...current, attendees: event.target.value }))}
-                    className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                    onChange={(event) => {
+                      clearFieldError("attendees");
+                      setFormState((current) => ({ ...current, attendees: event.target.value }));
+                    }}
+                    className={`mt-1 w-full rounded-md border px-3 py-2 text-sm ${fieldErrors.attendees ? "border-red-400 bg-red-50" : "border-slate-300"}`}
                   />
+                  {fieldErrors.attendees ? <p className="mt-1 text-xs text-red-600">{fieldErrors.attendees}</p> : null}
                 </label>
               </div>
 
@@ -826,36 +1275,54 @@ export default function AuditorioPage() {
                 </div>
 
                 <div className="space-y-2">
-                  {formState.scheduleBlocks.map((block) => (
-                    <div key={block.id} className="grid gap-2 rounded-md border border-slate-200 p-2 md:grid-cols-[1fr_1fr_1fr_auto]">
-                      <input
-                        type="date"
-                        value={block.date}
-                        onChange={(event) => updateScheduleBlock(block.id, "date", event.target.value)}
-                        className="rounded-md border border-slate-300 px-2 py-1.5 text-sm"
-                      />
-                      <input
-                        type="time"
-                        value={block.startTime}
-                        onChange={(event) => updateScheduleBlock(block.id, "startTime", event.target.value)}
-                        className="rounded-md border border-slate-300 px-2 py-1.5 text-sm"
-                      />
-                      <input
-                        type="time"
-                        value={block.endTime}
-                        onChange={(event) => updateScheduleBlock(block.id, "endTime", event.target.value)}
-                        className="rounded-md border border-slate-300 px-2 py-1.5 text-sm"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => removeScheduleBlock(block.id)}
-                        className="rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
-                      >
-                        Quitar
-                      </button>
-                    </div>
-                  ))}
+                  {formState.scheduleBlocks.map((block, index) => {
+                    const blockDateError = fieldErrors[`block-${block.id}-date`];
+                    const blockStartError = fieldErrors[`block-${block.id}-startTime`];
+                    const blockEndError = fieldErrors[`block-${block.id}-endTime`];
+                    const blockRangeError = fieldErrors[`block-${block.id}-range`];
+
+                    return (
+                      <div key={block.id} className="rounded-md border border-slate-200 p-2">
+                        <div className="grid gap-2 md:grid-cols-[1fr_1fr_1fr_auto]">
+                          <input
+                            type="date"
+                            value={block.date}
+                            onChange={(event) => updateScheduleBlock(block.id, "date", event.target.value)}
+                            className={`rounded-md border px-2 py-1.5 text-sm ${blockDateError ? "border-red-400 bg-red-50" : "border-slate-300"}`}
+                          />
+                          <input
+                            type="time"
+                            value={block.startTime}
+                            onChange={(event) => updateScheduleBlock(block.id, "startTime", event.target.value)}
+                            className={`rounded-md border px-2 py-1.5 text-sm ${blockStartError || blockRangeError ? "border-red-400 bg-red-50" : "border-slate-300"}`}
+                          />
+                          <input
+                            type="time"
+                            value={block.endTime}
+                            onChange={(event) => updateScheduleBlock(block.id, "endTime", event.target.value)}
+                            className={`rounded-md border px-2 py-1.5 text-sm ${blockEndError || blockRangeError ? "border-red-400 bg-red-50" : "border-slate-300"}`}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => removeScheduleBlock(block.id)}
+                            className="rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
+                          >
+                            Quitar
+                          </button>
+                        </div>
+                        {blockDateError || blockStartError || blockEndError || blockRangeError ? (
+                          <p className="mt-1 text-xs text-red-600">
+                            {blockDateError ?? blockStartError ?? blockEndError ?? blockRangeError}
+                          </p>
+                        ) : null}
+                        {index < formState.scheduleBlocks.length - 1 ? <div className="mt-2 border-t border-slate-100" /> : null}
+                      </div>
+                    );
+                  })}
                 </div>
+                {fieldErrors.scheduleBlocks ? (
+                  <p className="mt-2 text-xs text-red-600 whitespace-pre-line">{fieldErrors.scheduleBlocks}</p>
+                ) : null}
               </div>
 
               <label className="block text-sm text-slate-700">
@@ -871,12 +1338,17 @@ export default function AuditorioPage() {
                 <button
                   type="button"
                   onClick={closeCreateModal}
+                  disabled={isSaving}
                   className="rounded-md border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
                 >
                   Cancelar
                 </button>
-                <button type="submit" className="rounded-md bg-[#295786] px-4 py-2 text-sm font-semibold text-white hover:bg-[#1f466d]">
-                  Guardar
+                <button
+                  type="submit"
+                  disabled={isSaving}
+                  className="rounded-md bg-[#295786] px-4 py-2 text-sm font-semibold text-white hover:bg-[#1f466d] disabled:cursor-not-allowed disabled:opacity-70"
+                >
+                  {isSaving ? "Guardando..." : editingEventId ? "Guardar cambios" : "Guardar"}
                 </button>
               </div>
             </form>

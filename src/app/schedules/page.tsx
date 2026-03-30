@@ -146,6 +146,19 @@ const normalizeLoadedRooms = (incomingRooms: string[]) => {
   return output;
 };
 
+const resolveRoomFromCatalog = (room: string, catalog: string[]) => {
+  if (!room) return "";
+
+  if (catalog.includes(room)) {
+    return room;
+  }
+
+  const canonicalTarget = canonicalizeRoomName(room);
+  const canonicalMatch = catalog.find((candidate) => canonicalizeRoomName(candidate) === canonicalTarget);
+
+  return canonicalMatch ?? canonicalTarget;
+};
+
 function getColombiaTodayIsoDate() {
   const formatter = new Intl.DateTimeFormat("en-CA", {
     timeZone: "America/Bogota",
@@ -489,6 +502,18 @@ const getCurrentTimeSlotIndex = (slots: string[]) => {
 
 const dateValue = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
 
+const rangesOverlap = (aStart: number, aEnd: number, bStart: number, bEnd: number) =>
+  aStart <= bEnd && bStart <= aEnd;
+
+const dateRangesOverlap = (aStart: string, aEnd: string, bStart: string, bEnd: string) => {
+  const aStartValue = dateValue(parseIsoDateToLocal(aStart));
+  const aEndValue = dateValue(parseIsoDateToLocal(aEnd));
+  const bStartValue = dateValue(parseIsoDateToLocal(bStart));
+  const bEndValue = dateValue(parseIsoDateToLocal(bEnd));
+
+  return rangesOverlap(aStartValue, aEndValue, bStartValue, bEndValue);
+};
+
 const startOfMonth = (date: Date) => new Date(date.getFullYear(), date.getMonth(), 1);
 
 const endOfMonth = (date: Date) => new Date(date.getFullYear(), date.getMonth() + 1, 0);
@@ -599,8 +624,10 @@ export default function SchedulesPage() {
   const [remoteLoadError, setRemoteLoadError] = useState<string | null>(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [isCreatingEvent, setIsCreatingEvent] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [isDeleteAllOpen, setIsDeleteAllOpen] = useState(false);
   const [deleteAllConfirmText, setDeleteAllConfirmText] = useState("");
   const [isDeletingAll, setIsDeletingAll] = useState(false);
@@ -729,6 +756,7 @@ export default function SchedulesPage() {
 
   const resetCreateForm = () => {
     setCreateError(null);
+    setIsCreatingEvent(false);
     setNewEvent(getInitialNewEvent());
   };
 
@@ -972,6 +1000,17 @@ export default function SchedulesPage() {
   const createEvent = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
+    if (isCreatingEvent) {
+      return;
+    }
+
+    setCreateError(null);
+
+    const candidateStartDate =
+      newEvent.reservationType === "momentanea" ? newEvent.oneDayDate : newEvent.startDate;
+    const candidateEndDate =
+      newEvent.reservationType === "momentanea" ? newEvent.oneDayDate : newEvent.endDate;
+
     if (!newEvent.slots.length) {
       const message = "Debes agregar al menos un horario.";
       setCreateError(message);
@@ -1022,6 +1061,14 @@ export default function SchedulesPage() {
 
       const overlappingClass = events.find((existing) => {
         if (existing.day !== slot.day || existing.room !== slot.room) {
+          return false;
+        }
+
+        if (
+          candidateStartDate &&
+          candidateEndDate &&
+          !dateRangesOverlap(candidateStartDate, candidateEndDate, existing.startDate, existing.endDate)
+        ) {
           return false;
         }
 
@@ -1124,6 +1171,8 @@ export default function SchedulesPage() {
           ? newEvent.teacher || "Reserva temporal"
           : newEvent.churchContact;
 
+    setIsCreatingEvent(true);
+
     try {
       await fetchApiJson<{ message: string; eventId: string }>("/api/schedules/events", {
         method: "POST",
@@ -1182,11 +1231,15 @@ export default function SchedulesPage() {
       const message = error instanceof Error ? error.message : "No se pudo crear la clase en base de datos";
       setCreateError(message);
       window.alert(message);
+    } finally {
+      setIsCreatingEvent(false);
     }
   };
 
   const startEditEvent = () => {
     if (!selectedEvent) return;
+
+    const resolvedRoom = resolveRoomFromCatalog(selectedEvent.room, roomCatalog);
 
     setEditEvent({
       faculty: selectedEvent.faculty,
@@ -1196,19 +1249,25 @@ export default function SchedulesPage() {
       startDate: selectedEvent.startDate,
       endDate: selectedEvent.endDate,
       day: selectedEvent.day,
-      room: selectedEvent.room,
+      room: resolvedRoom,
       start: selectedEvent.start,
       end: selectedEvent.end,
     });
     setEditError(null);
+    setIsSavingEdit(false);
     setIsEditMode(true);
   };
 
   const saveEditEvent = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!selectedEvent) return;
+    if (isSavingEdit) return;
 
-    if (!roomCatalog.includes(editEvent.room)) {
+    setEditError(null);
+
+    const resolvedEditRoom = resolveRoomFromCatalog(editEvent.room, roomCatalog);
+
+    if (!roomCatalog.includes(resolvedEditRoom)) {
       const message = "Salon invalido: debes seleccionar un salon de la lista disponible.";
       setEditError(message);
       window.alert(message);
@@ -1227,7 +1286,11 @@ export default function SchedulesPage() {
 
     const overlappingClass = events.find((existing) => {
       if (existing.id === selectedEvent.id) return false;
-      if (existing.day !== editEvent.day || existing.room !== editEvent.room) return false;
+      if (existing.day !== editEvent.day || existing.room !== resolvedEditRoom) return false;
+
+      if (!dateRangesOverlap(editEvent.startDate, editEvent.endDate, existing.startDate, existing.endDate)) {
+        return false;
+      }
 
       const existingStart = startToIndex[existing.start] ?? -1;
       const existingEnd = endToExclusiveIndex[existing.end] ?? -1;
@@ -1237,7 +1300,7 @@ export default function SchedulesPage() {
     });
 
     if (overlappingClass) {
-      const message = `Conflicto detectado: ya existe "${overlappingClass.code} | ${overlappingClass.subject}" en ${editEvent.room} para ese horario.`;
+      const message = `Conflicto detectado: ya existe "${overlappingClass.code} | ${overlappingClass.subject}" en ${resolvedEditRoom} para ese horario.`;
       setEditError(message);
       window.alert(message);
       return;
@@ -1252,6 +1315,8 @@ export default function SchedulesPage() {
       window.alert(message);
       return;
     }
+
+    setIsSavingEdit(true);
 
     void (async () => {
       try {
@@ -1268,7 +1333,7 @@ export default function SchedulesPage() {
             startDate: editEvent.startDate,
             endDate: editEvent.endDate,
             day: editEvent.day,
-            room: editEvent.room,
+            room: resolvedEditRoom,
             start: editEvent.start,
             end: editEvent.end,
           }),
@@ -1292,7 +1357,9 @@ export default function SchedulesPage() {
         }));
         setEvents(loadedEvents);
 
-        const loadedRooms = (roomsBody.rooms ?? []).filter((room) => typeof room === "string" && room.trim().length > 0);
+        const loadedRooms = normalizeLoadedRooms(
+          (roomsBody.rooms ?? []).filter((room) => typeof room === "string" && room.trim().length > 0)
+        );
         if (loadedRooms.length > 0) {
           setRoomCatalog(loadedRooms);
         }
@@ -1300,11 +1367,13 @@ export default function SchedulesPage() {
         setSelectedDay(editEvent.day);
         setSelectedEventId(null);
         setEditError(null);
+        setIsSavingEdit(false);
         setIsEditMode(false);
       } catch (error) {
         const message = error instanceof Error ? error.message : "No se pudo modificar la clase en base de datos";
         setEditError(message);
         window.alert(message);
+        setIsSavingEdit(false);
       }
     })();
   };
@@ -1699,27 +1768,42 @@ export default function SchedulesPage() {
                   </>
                 ) : (
                   <form className="space-y-3" onSubmit={saveEditEvent}>
+                  {isSavingEdit && (
+                    <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-700">
+                      Guardando cambios, por favor espera...
+                    </div>
+                  )}
+
                   {editError && (
                     <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
                       {editError}
                     </div>
                   )}
 
-                  <select
-                    required
-                    value={editEvent.faculty}
-                    onChange={(e) => setEditEvent((s) => ({ ...s, faculty: e.target.value }))}
-                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-                  >
-                    {!faculties.includes(editEvent.faculty) ? (
-                      <option value={editEvent.faculty}>{editEvent.faculty}</option>
-                    ) : null}
-                    {faculties.map((faculty) => (
-                      <option key={`edit-faculty-${faculty}`} value={faculty}>
-                        {faculty}
-                      </option>
-                    ))}
-                  </select>
+                  {selectedReservationType === "normal" ? (
+                    <select
+                      required
+                      value={editEvent.faculty}
+                      onChange={(e) => setEditEvent((s) => ({ ...s, faculty: e.target.value }))}
+                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                    >
+                      {!faculties.includes(editEvent.faculty) ? (
+                        <option value={editEvent.faculty}>{editEvent.faculty}</option>
+                      ) : null}
+                      {faculties.map((faculty) => (
+                        <option key={`edit-faculty-${faculty}`} value={faculty}>
+                          {faculty}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      readOnly
+                      value={reservationTypeLabels[selectedReservationType ?? "normal"]}
+                      className="w-full cursor-not-allowed rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600"
+                      aria-label="Tipo de reserva"
+                    />
+                  )}
                   <input
                     required
                     value={editEvent.code}
@@ -1810,23 +1894,32 @@ export default function SchedulesPage() {
                   </div>
 
                   <div className="grid grid-cols-3 gap-2 pt-1">
-                    <button type="submit" className="rounded-lg bg-[#295786] px-3 py-2 text-sm font-semibold text-white">
-                      Guardar
+                    <button
+                      type="submit"
+                      disabled={isSavingEdit}
+                      className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#295786] px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70"
+                    >
+                      {isSavingEdit ? (
+                        <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/60 border-t-white" aria-hidden="true" />
+                      ) : null}
+                      {isSavingEdit ? "Guardando..." : "Guardar"}
                     </button>
                     <button
                       type="button"
+                      disabled={isSavingEdit}
                       onClick={() => {
                         setIsEditMode(false);
                         setEditError(null);
                       }}
-                      className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                      className="rounded-lg border border-slate-200 px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       Cancelar
                     </button>
                     <button
                       type="button"
+                      disabled={isSavingEdit}
                       onClick={deleteSelectedEvent}
-                      className="rounded-lg bg-red-600 px-3 py-2 text-sm font-semibold text-white"
+                      className="rounded-lg bg-red-600 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70"
                     >
                       Eliminar
                     </button>
@@ -1934,11 +2027,18 @@ export default function SchedulesPage() {
 
       {isCreateOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
-          <form onSubmit={createEvent} className="w-full max-w-2xl rounded-xl bg-white p-5 shadow-2xl">
+          <form onSubmit={createEvent} aria-busy={isCreatingEvent} className="w-full max-w-2xl rounded-xl bg-white p-5 shadow-2xl">
             <h3 className="text-lg font-bold text-slate-900">Agregar nueva clase</h3>
             <p className="mt-1 text-sm text-slate-500">
               Formato antiguo: Facultad : CODIGO | MATERIA | DOCENTE | FECHA INICIO | FECHA FIN
             </p>
+
+            {isCreatingEvent && (
+              <div className="mt-3 flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-700">
+                <span className="h-4 w-4 animate-spin rounded-full border-2 border-blue-300 border-t-blue-700" aria-hidden="true" />
+                Guardando clase, por favor espera...
+              </div>
+            )}
 
             {createError && (
               <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -2133,7 +2233,8 @@ export default function SchedulesPage() {
             <div className="mt-5 flex justify-end gap-2">
               <button
                 type="button"
-                className="rounded-lg border border-slate-200 px-4 py-2 text-sm"
+                disabled={isCreatingEvent}
+                className="rounded-lg border border-slate-200 px-4 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
                 onClick={() => {
                   resetCreateForm();
                   setIsCreateOpen(false);
@@ -2141,8 +2242,15 @@ export default function SchedulesPage() {
               >
                 Cancelar
               </button>
-              <button type="submit" className="rounded-lg bg-[#295786] px-4 py-2 text-sm font-semibold text-white">
-                Guardar clase
+              <button
+                type="submit"
+                disabled={isCreatingEvent}
+                className="inline-flex items-center gap-2 rounded-lg bg-[#295786] px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                {isCreatingEvent ? (
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/60 border-t-white" aria-hidden="true" />
+                ) : null}
+                {isCreatingEvent ? "Guardando..." : "Guardar clase"}
               </button>
             </div>
           </form>

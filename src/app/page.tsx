@@ -1,6 +1,7 @@
 "use client";
 
 import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   Line,
   LineChart,
@@ -309,10 +310,14 @@ const scoreMatch = (item: ScheduleItem, query: string) => {
 };
 
 export default function Home() {
+  const router = useRouter();
   const [query, setQuery] = useState("");
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
   const [submittedQuery, setSubmittedQuery] = useState("");
-  const [filterType, setFilterType] = useState<"all" | "empty" | "professors" | "rooms">("all");
+  const [quickMode, setQuickMode] = useState<"class" | "professor" | "availableRooms">("class");
+  const [roomCheckDay, setRoomCheckDay] = useState<ScheduleItem["day"]>("Monday");
+  const [roomCheckTime, setRoomCheckTime] = useState("08:00");
+  const [submittedRoomCheck, setSubmittedRoomCheck] = useState<{ day: ScheduleItem["day"]; time: string } | null>(null);
   const [scheduleItems, setScheduleItems] = useState<ScheduleItem[]>([]);
   const [importsHistory, setImportsHistory] = useState<ImportHistoryItem[]>([]);
   const [roomsCatalog, setRoomsCatalog] = useState<string[]>([]);
@@ -401,6 +406,11 @@ export default function Home() {
   const currentMinutes = bogotaNow.currentMinutes;
   const todayIso = bogotaNow.dateIso;
   const todayDay = bogotaNow.dayEn;
+  const currentHourLabel = useMemo(() => {
+    const currentHour = Math.floor(currentMinutes / 60);
+    if (!HOURS.includes(currentHour)) return null;
+    return `${String(currentHour).padStart(2, "0")}:00`;
+  }, [currentMinutes]);
 
   const roomUniverse = useMemo(() => {
     if (roomsCatalog.length > 0) return roomsCatalog;
@@ -756,17 +766,77 @@ export default function Home() {
 
   const normalizedSubmittedQuery = normalizeText(submittedQuery);
 
-  const searchResults = useMemo(() => {
-    const scored = scheduleItems.map((item) => ({ item, score: scoreMatch(item, normalizedSubmittedQuery) }))
-      .filter((entry) => entry.score > 0)
-      .sort((a, b) => b.score - a.score || a.item.day.localeCompare(b.item.day) || a.item.start.localeCompare(b.item.start));
+  const classSearchResults = useMemo(() => {
+    if (!normalizedSubmittedQuery || quickMode !== "class") return [];
 
-    if (!normalizedSubmittedQuery) return [];
-    return scored.slice(0, 12);
-  }, [normalizedSubmittedQuery, scheduleItems]);
+    const tokens = normalizedSubmittedQuery.split(" ").filter(Boolean);
+    return scheduleItems
+      .map((item) => ({
+        item,
+        score: scoreMatch(item, normalizedSubmittedQuery),
+        searchable: normalizeText(`${item.subject} ${item.code}`),
+      }))
+      .filter((entry) => tokens.every((token) => entry.searchable.includes(token)))
+      .sort((a, b) => b.score - a.score || a.item.day.localeCompare(b.item.day) || a.item.start.localeCompare(b.item.start))
+      .slice(0, 20);
+  }, [normalizedSubmittedQuery, scheduleItems, quickMode]);
+
+  const professorSearchResults = useMemo(() => {
+    if (!normalizedSubmittedQuery || quickMode !== "professor") return [];
+
+    const tokens = normalizedSubmittedQuery.split(" ").filter(Boolean);
+    return scheduleItems
+      .map((item) => ({
+        item,
+        score: scoreMatch(item, normalizedSubmittedQuery),
+        searchable: normalizeText(item.professor),
+      }))
+      .filter((entry) => tokens.every((token) => entry.searchable.includes(token)))
+      .sort((a, b) => b.score - a.score || a.item.day.localeCompare(b.item.day) || a.item.start.localeCompare(b.item.start))
+      .slice(0, 20);
+  }, [normalizedSubmittedQuery, scheduleItems, quickMode]);
+
+  const availableRoomsResult = useMemo(() => {
+    if (!submittedRoomCheck || quickMode !== "availableRooms") return null;
+
+    const checkMinutes = toMinutes(submittedRoomCheck.time);
+
+    const occupiedRooms = new Set(
+      scheduleItems
+        .filter((item) => {
+          if (item.day !== submittedRoomCheck.day) return false;
+          if (!(item.startDate <= todayIso && todayIso <= item.endDate)) return false;
+          return toMinutes(item.start) <= checkMinutes && checkMinutes < toMinutes(item.end);
+        })
+        .map((item) => item.room)
+    );
+
+    const availableRooms = roomUniverse.filter((room) => !occupiedRooms.has(room));
+
+    return {
+      availableRooms,
+      occupiedRooms: [...occupiedRooms].sort((a, b) => a.localeCompare(b)),
+      totalRooms: roomUniverse.length,
+      day: submittedRoomCheck.day,
+      time: submittedRoomCheck.time,
+    };
+  }, [submittedRoomCheck, quickMode, scheduleItems, roomUniverse, todayIso]);
 
   const handleSearchSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+
+    if (quickMode === "availableRooms") {
+      if (!roomCheckTime) {
+        setIsSearchModalOpen(false);
+        return;
+      }
+
+      setSubmittedRoomCheck({ day: roomCheckDay, time: roomCheckTime });
+      setSubmittedQuery("");
+      setIsSearchModalOpen(true);
+      return;
+    }
+
     const trimmed = query.trim();
     if (!trimmed) {
       setIsSearchModalOpen(false);
@@ -775,18 +845,7 @@ export default function Home() {
     }
 
     setSubmittedQuery(trimmed);
-    setIsSearchModalOpen(true);
-  };
-
-  const handleQuickFilter = (type: "empty" | "professors" | "rooms") => {
-    setFilterType(type);
-    const queries = {
-      empty: "available",
-      professors: "free professor",
-      rooms: "room available",
-    };
-    setQuery(queries[type]);
-    setSubmittedQuery(queries[type]);
+    setSubmittedRoomCheck(null);
     setIsSearchModalOpen(true);
   };
 
@@ -838,46 +897,80 @@ export default function Home() {
                     <span className="material-symbols-outlined">person_search</span>
                   </div>
                   <div>
-                    <p className="text-sm font-bold text-slate-900 dark:text-slate-100">Search Rooms / Professors</p>
-                    <p className="text-xs text-slate-500">Busca por clase, profesor, salon, dia u hora. Incluye coincidencias similares.</p>
+                    <p className="text-sm font-bold text-slate-900 dark:text-slate-100">Search Actions</p>
+                    <p className="text-xs text-slate-500">Elige una opcion: Clase, Profesor o Salones Disponibles.</p>
                   </div>
                 </div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setQuickMode("class");
+                      setSubmittedRoomCheck(null);
+                    }}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${quickMode === "class" ? "bg-[#295786] text-white" : "border border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"}`}
+                  >
+                    <span className="material-symbols-outlined text-xs align-text-bottom">menu_book</span> Clase
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setQuickMode("professor");
+                      setSubmittedRoomCheck(null);
+                    }}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${quickMode === "professor" ? "bg-[#295786] text-white" : "border border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"}`}
+                  >
+                    <span className="material-symbols-outlined text-xs align-text-bottom">person_search</span> Profesor
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setQuickMode("availableRooms");
+                      setQuery("");
+                    }}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${quickMode === "availableRooms" ? "bg-[#295786] text-white" : "border border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"}`}
+                  >
+                    <span className="material-symbols-outlined text-xs align-text-bottom">meeting_room</span> Salones Disponibles
+                  </button>
+                </div>
                 <form onSubmit={handleSearchSubmit} className="mt-1 flex flex-col gap-1 sm:flex-row sm:items-center">
-                  <input
-                    value={query}
-                    onChange={(event) => setQuery(event.target.value)}
-                    placeholder="Ej: Programming, Mendez, Room 405, Tuesday 10:00"
-                    className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-800 outline-none ring-[#295786]/30 transition focus:ring-4 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
-                  />
+                  {quickMode !== "availableRooms" ? (
+                    <input
+                      value={query}
+                      onChange={(event) => setQuery(event.target.value)}
+                      placeholder={quickMode === "class" ? "Ej: Programacion I, Calculo II" : "Ej: Perez, Mendez"}
+                      className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-800 outline-none ring-[#295786]/30 transition focus:ring-4 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+                    />
+                  ) : (
+                    <>
+                      <select
+                        value={roomCheckDay}
+                        onChange={(event) => setRoomCheckDay(event.target.value as ScheduleItem["day"])}
+                        className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none ring-[#295786]/30 transition focus:ring-4 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 sm:w-auto"
+                      >
+                        {ALL_DAYS.map((day) => (
+                          <option key={day} value={day}>{DAY_EN_TO_ES[day]}</option>
+                        ))}
+                      </select>
+                      <input
+                        type="time"
+                        value={roomCheckTime}
+                        onChange={(event) => setRoomCheckTime(event.target.value)}
+                        className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none ring-[#295786]/30 transition focus:ring-4 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 sm:w-auto"
+                      />
+                    </>
+                  )}
                   <button
                     type="submit"
                     className="rounded-xl bg-[#295786] px-4 py-2.5 text-sm font-bold text-white transition hover:brightness-110"
                   >
-                    Search
+                    Buscar
                   </button>
                 </form>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  <button
-                    onClick={() => handleQuickFilter("empty")}
-                    className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${filterType === "empty" ? "bg-[#295786] text-white" : "border border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"}`}
-                  >
-                    <span className="material-symbols-outlined text-xs align-text-bottom">event_busy</span> Empty Classes
-                  </button>
-                  <button
-                    onClick={() => handleQuickFilter("professors")}
-                    className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${filterType === "professors" ? "bg-[#295786] text-white" : "border border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"}`}
-                  >
-                    <span className="material-symbols-outlined text-xs align-text-bottom">person_check</span> Free Professors
-                  </button>
-                  <button
-                    onClick={() => handleQuickFilter("rooms")}
-                    className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${filterType === "rooms" ? "bg-[#295786] text-white" : "border border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"}`}
-                  >
-                    <span className="material-symbols-outlined text-xs align-text-bottom">room</span> Available Rooms
-                  </button>
-                </div>
                 <p className="mt-1 text-xs text-slate-500">
-                  Los resultados se muestran en un modal al ejecutar la busqueda.
+                  {quickMode === "availableRooms"
+                    ? "Selecciona dia y hora para validar disponibilidad de salones en el modal."
+                    : "Escribe y busca para ver resultados en un modal."}
                 </p>
               </div>
             </div>
@@ -933,16 +1026,44 @@ export default function Home() {
                     }}
                   />
                   {ALL_DAYS.map((day) => (
-                    <Line
-                      key={day}
-                      type="monotone"
-                      dataKey={day}
-                      name={DAY_LABELS[day]}
-                      stroke={DAY_COLORS[day]}
-                      strokeWidth={2.2}
-                      dot={false}
-                      activeDot={{ r: 4 }}
-                    />
+                    (() => {
+                      const isTodayLine = todayDay === day;
+
+                      return (
+                        <Line
+                          key={day}
+                          type="monotone"
+                          dataKey={day}
+                          name={DAY_LABELS[day]}
+                          stroke={DAY_COLORS[day]}
+                          strokeWidth={isTodayLine ? 3.6 : 2.2}
+                          strokeOpacity={isTodayLine ? 1 : 0.35}
+                          dot={
+                            isTodayLine
+                              ? (props) => {
+                                  const payload = props.payload as { hour?: string };
+                                  if (!currentHourLabel || payload.hour !== currentHourLabel) return null;
+
+                                  const dotKey = `current-dot-${day}-${payload.hour ?? "na"}-${String(props.cx)}-${String(props.cy)}`;
+
+                                  return (
+                                    <circle
+                                      key={dotKey}
+                                      cx={props.cx}
+                                      cy={props.cy}
+                                      r={6}
+                                      fill={DAY_COLORS[day]}
+                                      stroke="#ffffff"
+                                      strokeWidth={2}
+                                    />
+                                  );
+                                }
+                              : false
+                          }
+                          activeDot={{ r: isTodayLine ? 6 : 4 }}
+                        />
+                      );
+                    })()
                   ))}
                 </LineChart>
               </ResponsiveContainer>
@@ -1101,7 +1222,11 @@ export default function Home() {
               <span className="text-xs font-medium text-slate-600">Starting Soon</span>
             </div>
           </div>
-          <button className="w-full rounded-xl bg-[#295786] px-6 py-2.5 text-sm font-bold text-white shadow-lg shadow-[#295786]/20 transition-all hover:scale-105 active:scale-95 sm:w-auto">
+          <button
+            type="button"
+            onClick={() => router.push("/rooms")}
+            className="w-full rounded-xl bg-[#295786] px-6 py-2.5 text-sm font-bold text-white shadow-lg shadow-[#295786]/20 transition-all hover:scale-105 active:scale-95 sm:w-auto"
+          >
             Open Full Building Map
           </button>
         </div>
@@ -1117,8 +1242,20 @@ export default function Home() {
           <div className="relative z-10 max-h-[85vh] w-full max-w-2xl overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900">
             <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4 dark:border-slate-700">
               <div>
-                <p className="text-sm font-bold text-slate-900 dark:text-slate-100">Search Results</p>
-                <p className="text-xs text-slate-500">Query: {submittedQuery}</p>
+                <p className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                  {quickMode === "class"
+                    ? "Resultados por Clase"
+                    : quickMode === "professor"
+                      ? "Resultados por Profesor"
+                      : "Disponibilidad de Salones"}
+                </p>
+                {quickMode !== "availableRooms" ? (
+                  <p className="text-xs text-slate-500">Busqueda: {submittedQuery}</p>
+                ) : (
+                  <p className="text-xs text-slate-500">
+                    Consulta: {submittedRoomCheck ? `${DAY_EN_TO_ES[submittedRoomCheck.day]} ${submittedRoomCheck.time}` : "N/A"}
+                  </p>
+                )}
               </div>
               <button
                 type="button"
@@ -1129,18 +1266,62 @@ export default function Home() {
               </button>
             </div>
             <div className="max-h-[68vh] space-y-3 overflow-y-auto p-5">
-              {searchResults.length === 0 && (
+              {quickMode === "class" && classSearchResults.length === 0 && (
                 <p className="rounded-xl bg-slate-100 p-4 text-sm text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                  No encontramos coincidencias para esa busqueda.
+                  No encontramos clases para esa busqueda.
                 </p>
               )}
-              {searchResults.map(({ item }) => (
+              {quickMode === "class" && classSearchResults.map(({ item }) => (
                 <div key={item.id} className="rounded-xl border border-slate-200 p-4 dark:border-slate-700">
-                  <p className="text-sm font-bold text-slate-900 dark:text-slate-100">{item.subject}</p>
+                  <p className="text-sm font-bold text-slate-900 dark:text-slate-100">{item.code} • {item.subject}</p>
                   <p className="text-xs text-slate-600 dark:text-slate-300">{item.professor} • {item.room}</p>
-                  <p className="mt-1 text-xs font-medium text-[#295786]">{item.day} • {item.start} - {item.end}</p>
+                  <p className="mt-1 text-xs font-medium text-[#295786]">{item.dayEs} • {item.start} - {item.end}</p>
                 </div>
               ))}
+
+              {quickMode === "professor" && professorSearchResults.length === 0 && (
+                <p className="rounded-xl bg-slate-100 p-4 text-sm text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                  No encontramos clases asociadas a ese profesor.
+                </p>
+              )}
+              {quickMode === "professor" && professorSearchResults.map(({ item }) => (
+                <div key={item.id} className="rounded-xl border border-slate-200 p-4 dark:border-slate-700">
+                  <p className="text-sm font-bold text-slate-900 dark:text-slate-100">{item.professor}</p>
+                  <p className="text-xs text-slate-600 dark:text-slate-300">{item.code} • {item.subject}</p>
+                  <p className="mt-1 text-xs font-medium text-[#295786]">{item.dayEs} • {item.start} - {item.end} • {item.room}</p>
+                </div>
+              ))}
+
+              {quickMode === "availableRooms" && availableRoomsResult && (
+                <>
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-800/40 dark:bg-emerald-900/20">
+                    <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-300">
+                      Disponibles: {availableRoomsResult.availableRooms.length} de {availableRoomsResult.totalRooms}
+                    </p>
+                    <p className="mt-1 text-xs text-emerald-700/90 dark:text-emerald-200/90">
+                      Dia: {DAY_EN_TO_ES[availableRoomsResult.day]} • Hora: {availableRoomsResult.time}
+                    </p>
+                  </div>
+
+                  <div className="rounded-xl border border-slate-200 p-4 dark:border-slate-700">
+                    <p className="mb-2 text-xs font-bold tracking-wider text-slate-500 uppercase">Salones Disponibles</p>
+                    {availableRoomsResult.availableRooms.length === 0 ? (
+                      <p className="text-sm text-slate-500">No hay salones disponibles en ese horario.</p>
+                    ) : (
+                      <p className="text-sm text-slate-700 dark:text-slate-200">{availableRoomsResult.availableRooms.join(", ")}</p>
+                    )}
+                  </div>
+
+                  <div className="rounded-xl border border-slate-200 p-4 dark:border-slate-700">
+                    <p className="mb-2 text-xs font-bold tracking-wider text-slate-500 uppercase">Salones Ocupados</p>
+                    {availableRoomsResult.occupiedRooms.length === 0 ? (
+                      <p className="text-sm text-slate-500">Ninguno.</p>
+                    ) : (
+                      <p className="text-sm text-slate-700 dark:text-slate-200">{availableRoomsResult.occupiedRooms.join(", ")}</p>
+                    )}
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>
