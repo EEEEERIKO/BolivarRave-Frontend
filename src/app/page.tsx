@@ -108,7 +108,7 @@ const DAY_LABELS: Record<ScheduleItem["day"], string> = {
 };
 
 const ALL_DAYS: ScheduleItem["day"][] = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
-const HOURS = Array.from({ length: 14 }, (_, idx) => 7 + idx);
+const HOURS = Array.from({ length: 17 }, (_, idx) => 6 + idx);
 const DASHBOARD_CACHE_KEY = "dashboard_cache_v1";
 const DASHBOARD_CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -557,7 +557,7 @@ export default function Home() {
 
   const peakToday = useMemo(() => {
     if (!todayDay) return "N/A";
-    let bestHour = "07:00";
+    let bestHour = "06:00";
     let maxRooms = -1;
 
     occupancyByHour.forEach((row) => {

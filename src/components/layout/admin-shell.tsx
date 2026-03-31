@@ -90,15 +90,15 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
 
-      <main className="ml-64 min-h-screen flex-1">
-        <header className="sticky top-0 z-40 flex h-20 items-center justify-between border-b border-slate-200 bg-white/80 px-8 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/80">
-          <div className="flex items-center gap-6">
-            <div className="flex flex-col">
+      <main className="ml-64 min-h-screen min-w-0 flex-1 overflow-x-hidden">
+        <header className="sticky top-0 z-40 flex min-h-20 items-center justify-between gap-4 border-b border-slate-200 bg-white/80 px-4 backdrop-blur-md sm:px-6 lg:px-8 dark:border-slate-800 dark:bg-slate-900/80">
+          <div className="flex min-w-0 flex-1 items-center gap-4 sm:gap-6">
+            <div className="flex shrink-0 flex-col">
               <h2 className="text-lg leading-tight font-bold text-slate-900 dark:text-white">Bolivar Building</h2>
               <p className="text-xs font-medium text-[#295786]">Semester 2026-1</p>
             </div>
-            <div className="h-8 w-px bg-slate-200 dark:bg-slate-800" />
-            <div className="relative w-96">
+            <div className="hidden h-8 w-px bg-slate-200 dark:bg-slate-800 md:block" />
+            <div className="relative hidden min-w-0 flex-1 md:block md:max-w-[28rem]">
               <span className="material-symbols-outlined absolute top-1/2 left-3 -translate-y-1/2 text-slate-400">search</span>
               <input
                 className="w-full rounded-xl border-none bg-slate-100 py-2 pr-4 pl-10 text-sm transition-all focus:ring-2 focus:ring-[#295786]/20 dark:bg-slate-800"
@@ -107,7 +107,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
               />
             </div>
           </div>
-          <button className="relative flex size-10 items-center justify-center rounded-full bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+          <button className="relative flex size-10 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">
             <span className="material-symbols-outlined">notifications</span>
             <span className="absolute top-2 right-2.5 size-2 rounded-full border-2 border-white bg-red-500 dark:border-slate-900" />
           </button>

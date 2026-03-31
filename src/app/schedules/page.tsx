@@ -65,6 +65,12 @@ type EditEventForm = {
   end: string;
 };
 
+type AvailableRoomResult = {
+  room: string;
+  capacity: number;
+  floor: number;
+};
+
 type SchedulesCachePayload = {
   savedAt: number;
   events: ScheduleEvent[];
@@ -616,6 +622,16 @@ export default function SchedulesPage() {
   const [isWeekPickerOpen, setIsWeekPickerOpen] = useState(false);
   const [pickerMonthCursor, setPickerMonthCursor] = useState(startOfMonth(colombiaToday));
   const [roomQuery, setRoomQuery] = useState("");
+  const [isAvailableSearchOpen, setIsAvailableSearchOpen] = useState(false);
+  const [isSearchingAvailableRooms, setIsSearchingAvailableRooms] = useState(false);
+  const [availableRoomsError, setAvailableRoomsError] = useState<string | null>(null);
+  const [availableRoomsResult, setAvailableRoomsResult] = useState<AvailableRoomResult[]>([]);
+  const [availableRoomForm, setAvailableRoomForm] = useState({
+    date: getColombiaTodayIsoDate(),
+    start: "08:00",
+    end: "10:00",
+    capacity: "20",
+  });
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [events, setEvents] = useState<ScheduleEvent[]>(fastInitialSnapshot?.events ?? []);
   const [roomCatalog, setRoomCatalog] = useState<string[]>(
@@ -1435,6 +1451,42 @@ export default function SchedulesPage() {
 
   const canConfirmDeleteAll = deleteAllConfirmText.trim().toLowerCase() === "confirmar";
 
+  const searchAvailableRooms = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    const requestedCapacity = Number(availableRoomForm.capacity);
+    if (!Number.isFinite(requestedCapacity) || requestedCapacity <= 0) {
+      setAvailableRoomsError("Debes ingresar una capacidad valida.");
+      return;
+    }
+
+    if (availableRoomForm.end <= availableRoomForm.start) {
+      setAvailableRoomsError("La hora fin debe ser mayor a la hora inicio.");
+      return;
+    }
+
+    setIsSearchingAvailableRooms(true);
+    setAvailableRoomsError(null);
+
+    try {
+      const params = new URLSearchParams({
+        date: availableRoomForm.date,
+        start: availableRoomForm.start,
+        end: availableRoomForm.end,
+        capacity: String(requestedCapacity),
+      });
+
+      const response = await fetchApiJson<{ rooms?: AvailableRoomResult[] }>(`/api/schedules/rooms/available?${params.toString()}`);
+      const rooms = Array.isArray(response.rooms) ? response.rooms : [];
+      setAvailableRoomsResult(rooms);
+    } catch (error) {
+      setAvailableRoomsError(error instanceof Error ? error.message : "No se pudo buscar salones disponibles.");
+      setAvailableRoomsResult([]);
+    } finally {
+      setIsSearchingAvailableRooms(false);
+    }
+  };
+
   const confirmDeleteAllSchedules = async () => {
     if (!canConfirmDeleteAll || isDeletingAll) return;
 
@@ -1578,13 +1630,26 @@ export default function SchedulesPage() {
               })}
             </div>
 
-            <input
-              type="text"
-              value={roomQuery}
-              onChange={(e) => setRoomQuery(e.target.value)}
-              placeholder="Filtrar salon..."
-              className="h-10 w-56 rounded-lg border border-slate-200 px-3 text-sm outline-none ring-[#295786]/30 focus:ring"
-            />
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={roomQuery}
+                onChange={(e) => setRoomQuery(e.target.value)}
+                placeholder="Filtrar salón..."
+                className="h-10 w-56 rounded-lg border border-slate-200 px-3 text-sm outline-none ring-[#295786]/30 focus:ring"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  setAvailableRoomsError(null);
+                  setAvailableRoomsResult([]);
+                  setIsAvailableSearchOpen(true);
+                }}
+                className="h-10 rounded-lg border border-[#295786]/25 bg-[#295786] px-3 text-xs font-semibold text-white transition hover:bg-[#1f456a]"
+              >
+                Buscar salón disponible
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -2254,6 +2319,103 @@ export default function SchedulesPage() {
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {isAvailableSearchOpen && (
+        <div className="fixed inset-0 z-[55] flex items-center justify-center bg-slate-900/45 p-4">
+          <div className="w-full max-w-2xl rounded-xl bg-white p-5 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-lg font-bold text-slate-900">Buscar salón disponible</h3>
+                <p className="mt-1 text-sm text-slate-600">Indica día, rango de horas y cantidad de personas.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsAvailableSearchOpen(false)}
+                className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+              >
+                Cerrar
+              </button>
+            </div>
+
+            <form onSubmit={searchAvailableRooms} className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-4">
+              <input
+                type="date"
+                required
+                value={availableRoomForm.date}
+                onChange={(e) => setAvailableRoomForm((prev) => ({ ...prev, date: e.target.value }))}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
+              />
+              <input
+                type="time"
+                required
+                value={availableRoomForm.start}
+                onChange={(e) => setAvailableRoomForm((prev) => ({ ...prev, start: e.target.value }))}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
+              />
+              <input
+                type="time"
+                required
+                value={availableRoomForm.end}
+                onChange={(e) => setAvailableRoomForm((prev) => ({ ...prev, end: e.target.value }))}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
+              />
+              <input
+                type="number"
+                min={1}
+                required
+                value={availableRoomForm.capacity}
+                onChange={(e) => setAvailableRoomForm((prev) => ({ ...prev, capacity: e.target.value }))}
+                placeholder="Personas"
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
+              />
+
+              <div className="sm:col-span-4 flex justify-end">
+                <button
+                  type="submit"
+                  disabled={isSearchingAvailableRooms}
+                  className="inline-flex items-center gap-2 rounded-lg bg-[#295786] px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70"
+                >
+                  {isSearchingAvailableRooms ? (
+                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/60 border-t-white" aria-hidden="true" />
+                  ) : null}
+                  {isSearchingAvailableRooms ? "Buscando..." : "Buscar"}
+                </button>
+              </div>
+            </form>
+
+            {availableRoomsError ? (
+              <p className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{availableRoomsError}</p>
+            ) : null}
+
+            <div className="mt-4 max-h-64 space-y-2 overflow-y-auto pr-1">
+              {availableRoomsResult.length === 0 ? (
+                <p className="rounded-lg border border-dashed border-slate-300 px-3 py-4 text-sm text-slate-500">
+                  {isSearchingAvailableRooms ? "Buscando salones..." : "Aun no hay resultados. Ejecuta una busqueda."}
+                </p>
+              ) : (
+                availableRoomsResult.map((room) => (
+                  <div key={`${room.room}-${room.floor}`} className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-800">{room.room}</p>
+                      <p className="text-xs text-slate-500">Piso {room.floor > 0 ? room.floor : "N/D"} • Capacidad {room.capacity}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRoomQuery(room.room);
+                        setIsAvailableSearchOpen(false);
+                      }}
+                      className="rounded-md border border-[#295786]/30 px-3 py-1.5 text-xs font-semibold text-[#295786] hover:bg-[#295786]/10"
+                    >
+                      Filtrar este salón
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
         </div>
       )}
 
