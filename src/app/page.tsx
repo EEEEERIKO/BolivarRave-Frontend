@@ -131,6 +131,66 @@ const DAY_EN_TO_ES: Record<ScheduleItem["day"], string> = {
   Friday: "Viernes",
 };
 
+const FLOOR_ONE_ALLOWED = new Set([
+  "aula foro union 101",
+  "aula foro unac 102",
+  "sala informatica 1 bolivar",
+  "sala informatica 2 bolivar",
+]);
+
+const EXCLUDED_EXACT_ROOM_NAMES = new Set<string>();
+
+const EXCLUDED_NORMALIZED_ROOM_NAMES = new Set([
+  "salon 200",
+  "salon academia de musica 200",
+  "salon 205 - sillas",
+  "salon 206 - sillas",
+  "salon 305",
+  "laboratorio de simulacion financiera 403",
+  "501",
+  "502",
+  "503",
+  "503 - p",
+]);
+
+const normalizeRoomName = (name: string) =>
+  name
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+
+const extractRoomNumber = (roomName: string) => {
+  const match = roomName.match(/(\d{3})/);
+  return match?.[1] ? parseInt(match[1], 10) : 9999;
+};
+
+const getEffectiveFloor = (room: { nombre: string; piso: number | null }) => {
+  const roomNumber = extractRoomNumber(room.nombre);
+  if (roomNumber !== 9999) {
+    const floorFromNumber = Math.floor(roomNumber / 100);
+    if (floorFromNumber > 0) return floorFromNumber;
+  }
+  return room.piso;
+};
+
+const isRoomVisible = (room: { nombre: string; piso: number | null }) => {
+  const effectiveFloor = getEffectiveFloor(room);
+  if (effectiveFloor === null) return false;
+  if (EXCLUDED_EXACT_ROOM_NAMES.has(room.nombre.trim())) return false;
+
+  const normalized = normalizeRoomName(room.nombre);
+  if (EXCLUDED_NORMALIZED_ROOM_NAMES.has(normalized)) return false;
+
+  if (effectiveFloor === 1) {
+    return FLOOR_ONE_ALLOWED.has(normalized);
+  }
+
+  const roomNumber = extractRoomNumber(room.nombre);
+  if (roomNumber === 9999) return false;
+  return Math.floor(roomNumber / 100) === effectiveFloor;
+};
+
 const toMinutes = (time: string) => {
   const [hour = "0", minute = "0"] = time.split(":");
   return Number(hour) * 60 + Number(minute);
@@ -239,7 +299,7 @@ const getBogotaNow = () => {
 
   const dayEn =
     weekday === "Monday" || weekday === "Tuesday" || weekday === "Wednesday" || weekday === "Thursday" || weekday === "Friday"
-      ? weekday
+      ? (weekday as ScheduleItem["day"])
       : null;
 
   return {
@@ -413,9 +473,20 @@ export default function Home() {
   }, [currentMinutes]);
 
   const roomUniverse = useMemo(() => {
+    const roomsFromInfo = Array.from(
+      new Set(roomsByFloor.flatMap((entry) => entry.rooms).filter(isRoomVisible).map((room) => room.nombre.trim()).filter(Boolean)),
+    ).sort((a, b) => a.localeCompare(b));
+
+    if (roomsFromInfo.length > 0) return roomsFromInfo;
     if (roomsCatalog.length > 0) return roomsCatalog;
+
     return Array.from(new Set(scheduleItems.map((item) => item.room))).sort();
-  }, [roomsCatalog, scheduleItems]);
+  }, [roomsByFloor, roomsCatalog, scheduleItems]);
+
+  const roomUniverseNormalized = useMemo(
+    () => new Set(roomUniverse.map((room) => normalizeRoomName(room))),
+    [roomUniverse],
+  );
 
   const totalRooms = roomUniverse.length;
 
@@ -430,11 +501,12 @@ export default function Home() {
             item.startDate <= todayIso &&
             todayIso <= item.endDate &&
             toMinutes(item.start) <= currentMinutes &&
-            currentMinutes < toMinutes(item.end)
+            currentMinutes < toMinutes(item.end) &&
+            roomUniverseNormalized.has(normalizeRoomName(item.room))
         )
         .map((item) => item.room)
     );
-  }, [todayDay, scheduleItems, currentMinutes, todayIso]);
+  }, [todayDay, scheduleItems, currentMinutes, todayIso, roomUniverseNormalized]);
 
   const roomsInClassNow = activeRoomsNow.size;
   const roomsAvailableNow = Math.max(totalRooms - roomsInClassNow, 0);
@@ -851,13 +923,27 @@ export default function Home() {
 
   return (
     <div className="mx-auto max-w-7xl space-y-8 p-8">
+      {isLoadingData ? (
+        <section className="rounded-2xl border border-[#295786]/20 bg-[#295786]/5 p-4">
+          <div className="flex items-center gap-3 text-[#295786]">
+            <span className="material-symbols-outlined animate-spin text-base">progress_activity</span>
+            <div>
+              <p className="text-sm font-bold">Cargando dashboard...</p>
+              <p className="text-xs opacity-80">Puedes navegar la pagina mientras se actualizan los datos.</p>
+            </div>
+          </div>
+        </section>
+      ) : null}
+
       <section className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
         {kpis.map((kpi) => (
           <div key={kpi.title} className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
             <p className="mb-2 text-xs font-medium tracking-wider text-slate-500 uppercase">{kpi.title}</p>
             <div className="flex items-end justify-between">
-              <h3 className="text-3xl font-bold text-slate-900 dark:text-white">{kpi.value}</h3>
-              <span className={`rounded px-2 py-1 text-xs font-bold ${kpi.chipClasses}`}>{kpi.chip}</span>
+              <h3 className="text-3xl font-bold text-slate-900 dark:text-white">{isLoadingData ? "..." : kpi.value}</h3>
+              <span className={`rounded px-2 py-1 text-xs font-bold ${isLoadingData ? "bg-slate-100 text-slate-500" : kpi.chipClasses}`}>
+                {isLoadingData ? "Cargando" : kpi.chip}
+              </span>
             </div>
           </div>
         ))}
@@ -1010,8 +1096,13 @@ export default function Home() {
           <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900 lg:col-span-8">
             <div className="mb-3 flex items-center justify-between">
               <h4 className="text-sm font-bold tracking-wider text-slate-800 uppercase dark:text-slate-200">Hourly Room Occupancy</h4>
-              <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-bold tracking-wider text-slate-600 uppercase dark:bg-slate-800 dark:text-slate-300">Live Data</span>
+              <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-bold tracking-wider text-slate-600 uppercase dark:bg-slate-800 dark:text-slate-300">
+                {isLoadingData ? "Cargando" : "Live Data"}
+              </span>
             </div>
+            {isLoadingData ? (
+              <p className="mb-2 text-xs text-slate-500">Actualizando ocupacion por hora...</p>
+            ) : null}
             <div className="h-72 w-full">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={occupancyByHour}>
@@ -1025,46 +1116,47 @@ export default function Home() {
                       fontSize: 12,
                     }}
                   />
-                  {ALL_DAYS.map((day) => (
-                    (() => {
-                      const isTodayLine = todayDay === day;
+                  {ALL_DAYS.map((day) => {
+                    const isTodayLine = todayDay === day;
 
-                      return (
-                        <Line
-                          key={day}
-                          type="monotone"
-                          dataKey={day}
-                          name={DAY_LABELS[day]}
-                          stroke={DAY_COLORS[day]}
-                          strokeWidth={isTodayLine ? 3.6 : 2.2}
-                          strokeOpacity={isTodayLine ? 1 : 0.35}
-                          dot={
-                            isTodayLine
-                              ? (props) => {
-                                  const payload = props.payload as { hour?: string };
-                                  if (!currentHourLabel || payload.hour !== currentHourLabel) return null;
-
-                                  const dotKey = `current-dot-${day}-${payload.hour ?? "na"}-${String(props.cx)}-${String(props.cy)}`;
-
-                                  return (
-                                    <circle
-                                      key={dotKey}
-                                      cx={props.cx}
-                                      cy={props.cy}
-                                      r={6}
-                                      fill={DAY_COLORS[day]}
-                                      stroke="#ffffff"
-                                      strokeWidth={2}
-                                    />
-                                  );
+                    return (
+                      <Line
+                        key={day}
+                        type="monotone"
+                        dataKey={day}
+                        name={DAY_LABELS[day]}
+                        stroke={DAY_COLORS[day]}
+                        strokeWidth={isTodayLine ? 3.6 : 2.2}
+                        strokeOpacity={isTodayLine ? 1 : 0.35}
+                        dot={
+                          isTodayLine
+                            ? (props) => {
+                                const payload = props.payload as { hour?: string };
+                                if (!currentHourLabel || payload.hour !== currentHourLabel) {
+                                  const emptyDotKey = `empty-dot-${day}-${payload.hour ?? "na"}-${String(props.cx)}-${String(props.cy)}`;
+                                  return <g key={emptyDotKey} />;
                                 }
-                              : false
-                          }
-                          activeDot={{ r: isTodayLine ? 6 : 4 }}
-                        />
-                      );
-                    })()
-                  ))}
+
+                                const dotKey = `current-dot-${day}-${payload.hour ?? "na"}-${String(props.cx)}-${String(props.cy)}`;
+
+                                return (
+                                  <circle
+                                    key={dotKey}
+                                    cx={props.cx}
+                                    cy={props.cy}
+                                    r={6}
+                                    fill={DAY_COLORS[day]}
+                                    stroke="#ffffff"
+                                    strokeWidth={2}
+                                  />
+                                );
+                              }
+                            : undefined
+                        }
+                        activeDot={{ r: isTodayLine ? 6 : 4 }}
+                      />
+                    );
+                  })}
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -1122,7 +1214,9 @@ export default function Home() {
               </div>
             ))}
             {nextClasses.length === 0 && (
-              <div className="p-4 text-sm text-slate-500">No classes starting in the next 30 minutes.</div>
+              <div className="p-4 text-sm text-slate-500">
+                {isLoadingData ? "Cargando proximas clases..." : "No classes starting in the next 30 minutes."}
+              </div>
             )}
           </div>
         </div>
@@ -1163,7 +1257,9 @@ export default function Home() {
                 </div>
               ))}
               {recentActivity.length === 0 && (
-                <div className="p-4 text-sm text-slate-500">No import activity recorded yet.</div>
+                <div className="p-4 text-sm text-slate-500">
+                  {isLoadingData ? "Cargando actividad reciente..." : "No import activity recorded yet."}
+                </div>
               )}
             </div>
           </div>
@@ -1202,7 +1298,7 @@ export default function Home() {
           ))}
           {miniMapRooms.length === 0 && (
             <div className="col-span-2 rounded-xl border border-slate-200 p-4 text-sm text-slate-500 md:col-span-4 lg:col-span-6">
-              No room data available for this floor.
+              {isLoadingData ? "Cargando mapa de salones..." : "No room data available for this floor."}
             </div>
           )}
         </div>

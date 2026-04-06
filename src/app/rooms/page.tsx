@@ -94,8 +94,20 @@ function parseTimeToMinutes(isoTime: string): number {
   return hours * 60 + minutes;
 }
 
+function getEffectiveFloor(room: { nombre: string; piso: number | null }): number | null {
+  const roomNumber = extractRoomNumber(room.nombre);
+  if (roomNumber !== 9999) {
+    const floorFromNumber = Math.floor(roomNumber / 100);
+    if (floorFromNumber > 0) {
+      return floorFromNumber;
+    }
+  }
+
+  return room.piso;
+}
+
 function buildRoomMergeKey(salon: ApiSalon): string {
-  const piso = salon.piso ?? 0;
+  const piso = getEffectiveFloor(salon) ?? 0;
   const roomNumber = extractRoomNumber(salon.nombre);
 
   if (piso > 0 && roomNumber !== 9999) {
@@ -111,19 +123,20 @@ function getTodayName(): string {
 }
 
 function isRoomVisible(room: { nombre: string; piso: number | null }): boolean {
-  if (room.piso === null) return false;
+  const effectiveFloor = getEffectiveFloor(room);
+  if (effectiveFloor === null) return false;
   if (EXCLUDED_EXACT_ROOM_NAMES.has(room.nombre.trim())) return false;
 
   const normalized = normalizeRoomName(room.nombre);
   if (EXCLUDED_NORMALIZED_ROOM_NAMES.has(normalized)) return false;
 
-  if (room.piso === 1) {
+  if (effectiveFloor === 1) {
     return FLOOR_ONE_ALLOWED.has(normalized);
   }
 
   const roomNumber = extractRoomNumber(room.nombre);
   if (roomNumber === 9999) return false;
-  return Math.floor(roomNumber / 100) === room.piso;
+  return Math.floor(roomNumber / 100) === effectiveFloor;
 }
 
 function getStatusMeta(status: RoomStatus) {
@@ -316,7 +329,7 @@ export default function RoomsPage() {
             rooms.push({
               id: salon.id,
               nombre: salon.nombre,
-              piso: salon.piso,
+              piso: getEffectiveFloor(salon),
               capacidad: salon.capacidad,
               status,
               cardDetail,

@@ -2,7 +2,7 @@
 "use client";
 
 import { fetchApiJson } from "@/lib/api-client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type StaffView = "directory" | "schedule";
 type ContractPlan = "Plan 1" | "Plan 2" | "Plan 3" | "Plan Monitoria" | "Plan Especial";
@@ -47,15 +47,27 @@ type StaffApi = {
   }>;
 };
 
-type ScheduleRow = {
+type WorkWeekDay = WeekDay | "Domingo";
+
+type StaffJornadaItem = {
   id: string;
-  name: string;
-  role: string;
-  staffNumber: number;
-  shiftLabel: string;
-  shiftLeft: string;
-  shiftRight: string;
-  note?: string;
+  staffId: string;
+  diaSemana: WorkWeekDay;
+  horaEntrada: string;
+  horaSalida: string;
+  totalHorasDia: number;
+};
+
+type StaffJornadaResponse = {
+  jornadas?: StaffJornadaItem[];
+};
+
+type EditableJornadaItem = {
+  id: string;
+  diaSemana: WorkWeekDay | "";
+  horaEntrada: string;
+  horaSalida: string;
+  totalHorasDia: string;
 };
 
 const HOURS = [
@@ -75,9 +87,22 @@ const HOURS = [
   "19:00",
   "20:00",
   "21:00",
+  "22:00",
 ];
 
+const TIMELINE_START_MINUTES = 6 * 60;
+const TIMELINE_END_MINUTES = 22 * 60;
+const TIMELINE_TOTAL_MINUTES = TIMELINE_END_MINUTES - TIMELINE_START_MINUTES;
+
 const WEEK_DAYS: WeekDay[] = ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado"];
+
+function calculateHoursDifference(startTime: string, endTime: string): number {
+  if (!startTime || !endTime) return 0;
+  const start = timeToMinutes(startTime);
+  const end = timeToMinutes(endTime);
+  if (start < 0 || end < 0 || end <= start) return 0;
+  return Number(((end - start) / 60).toFixed(1));
+}
 
 const ACADEMIC_DAY_COLUMNS = [
   { key: "lunes", label: "L", dayName: "Lunes" },
@@ -196,52 +221,276 @@ const accessRoleLabelById: Record<StaffAccessRoleId, string> = {
   3: "Colaborador",
 };
 
-const SCHEDULE_ROWS: ScheduleRow[] = [
-  {
-    id: "aris",
-    name: "Dr. Aris Thorne",
-    role: "Research Lead • Fl 4",
-    staffNumber: 1,
-    shiftLabel: "Working Shift (08:00 - 16:00)",
-    shiftLeft: "left-[12.5%]",
-    shiftRight: "right-[37.5%]",
-    note: "Academic Unavailability 06:00 - 08:00",
-  },
-  {
-    id: "julian",
-    name: "Julian Vane",
-    role: "Security Supervisor • Fl 1",
-    staffNumber: 2,
-    shiftLabel: "Security Patrol (10:00 - 18:00)",
-    shiftLeft: "left-[25%]",
-    shiftRight: "right-[12.5%]",
-  },
-  {
-    id: "elena",
-    name: "Elena Rossi",
-    role: "Lab Technician • Fl 3",
-    staffNumber: 3,
-    shiftLabel: "Evening Shift (13:00 - 22:00)",
-    shiftLeft: "left-[43.75%]",
-    shiftRight: "right-[0%]",
-  },
-  {
-    id: "kent",
-    name: "Officer Kent",
-    role: "Gate Security • Fl G",
-    staffNumber: 4,
-    shiftLabel: "Morning Watch (06:00 - 12:00)",
-    shiftLeft: "left-[0%]",
-    shiftRight: "right-[62.5%]",
-    note: "Coverage gap after 20:00",
-  },
+const MASTER_WEEK_DAYS: WorkWeekDay[] = [
+  "Lunes",
+  "Martes",
+  "Miercoles",
+  "Jueves",
+  "Viernes",
+  "Sabado",
+  "Domingo",
 ];
 
-function StaffScheduleBoard() {
+function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi[]; isLoadingStaff: boolean }) {
+  const [jornadaByStaffId, setJornadaByStaffId] = useState<Record<string, StaffJornadaItem[]>>({});
+  const [isLoadingJornadas, setIsLoadingJornadas] = useState(false);
+  const [scheduleError, setScheduleError] = useState<string | null>(null);
+  const [isEditorOpen, setIsEditorOpen] = useState(false);
+  const [editingStaff, setEditingStaff] = useState<StaffApi | null>(null);
+  const [editorRows, setEditorRows] = useState<EditableJornadaItem[]>([]);
+  const [isSavingJornada, setIsSavingJornada] = useState(false);
+  const leftColumnRef = useRef<HTMLDivElement>(null);
+  const rightColumnRef = useRef<HTMLDivElement>(null);
+
+  // Sync vertical scrolls between left and right columns
+  useEffect(() => {
+    const leftCol = leftColumnRef.current;
+    const rightCol = rightColumnRef.current;
+    if (!leftCol || !rightCol) return;
+
+    const handleLeftScroll = () => {
+      rightCol.scrollTop = leftCol.scrollTop;
+    };
+    const handleRightScroll = () => {
+      leftCol.scrollTop = rightCol.scrollTop;
+    };
+
+    leftCol.addEventListener("scroll", handleLeftScroll);
+    rightCol.addEventListener("scroll", handleRightScroll);
+    return () => {
+      leftCol.removeEventListener("scroll", handleLeftScroll);
+      rightCol.removeEventListener("scroll", handleRightScroll);
+    };
+  }, []);
+
+  const activeStaffCount = staffList.filter((staff) => staff.estado === "Active").length;
   const hourCells = useMemo(
-    () => HOURS.map((hour) => <div key={hour} className="p-4 text-center text-[10px] font-bold text-[#566166]">{hour}</div>),
+    () =>
+      HOURS.map((hour) => (
+        <div key={hour} className="flex h-[56px] items-center justify-center px-4 text-center text-[10px] font-bold text-[#566166]">
+          {hour}
+        </div>
+      )),
     [],
   );
+  const staffWithSchedule = staffList.filter((staff) => (jornadaByStaffId[staff.id]?.length ?? 0) > 0).length;
+  const withoutScheduleCount = Math.max(staffList.length - staffWithSchedule, 0);
+  const totalHoursScheduled = staffList.reduce((sum, staff) => {
+    const total = (jornadaByStaffId[staff.id] ?? []).reduce((acc, row) => acc + row.totalHorasDia, 0);
+    return sum + total;
+  }, 0);
+
+  const loadJornadas = async () => {
+    if (staffList.length === 0) {
+      setJornadaByStaffId({});
+      return;
+    }
+
+    try {
+      setIsLoadingJornadas(true);
+      setScheduleError(null);
+
+      const results = await Promise.all(
+        staffList.map(async (staff) => {
+          const response = await fetchApiJson<StaffJornadaResponse>(`/api/staff/${staff.id}/jornada-semanal`, {
+            cache: "no-store",
+          }).catch(() => ({ jornadas: [] }));
+          return {
+            staffId: staff.id,
+            jornadas: Array.isArray(response.jornadas) ? response.jornadas : [],
+          };
+        }),
+      );
+
+      const nextMap: Record<string, StaffJornadaItem[]> = {};
+      for (const result of results) {
+        nextMap[result.staffId] = result.jornadas;
+      }
+
+      setJornadaByStaffId(nextMap);
+    } catch (error) {
+      setScheduleError(error instanceof Error ? error.message : "No se pudo cargar la jornada semanal.");
+    } finally {
+      setIsLoadingJornadas(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadJornadas();
+  }, [staffList]);
+
+  const getDefaultRows = () => [
+    {
+      id: `jornada-${Date.now()}-1`,
+      diaSemana: "",
+      horaEntrada: "07:00",
+      horaSalida: "12:00",
+      totalHorasDia: "5",
+    },
+  ] as EditableJornadaItem[];
+
+  const openEditor = (staff: StaffApi) => {
+    const current = jornadaByStaffId[staff.id] ?? [];
+    const mappedRows: EditableJornadaItem[] = current.length > 0
+      ? current.map((row, index) => ({
+        id: row.id || `row-${index}`,
+        diaSemana: row.diaSemana,
+        horaEntrada: row.horaEntrada,
+        horaSalida: row.horaSalida,
+        totalHorasDia: String(row.totalHorasDia),
+      }))
+      : getDefaultRows();
+
+    setEditingStaff(staff);
+    setEditorRows(mappedRows);
+    setIsEditorOpen(true);
+    setScheduleError(null);
+  };
+
+  const closeEditor = () => {
+    setIsEditorOpen(false);
+    setEditingStaff(null);
+    setEditorRows([]);
+  };
+
+  const addEditorRow = () => {
+    setEditorRows((prev) => [
+      ...prev,
+      {
+        id: `jornada-${Date.now()}-${prev.length + 1}`,
+        diaSemana: "",
+        horaEntrada: "07:00",
+        horaSalida: "12:00",
+        totalHorasDia: "5",
+      },
+    ]);
+  };
+
+  const removeEditorRow = (rowId: string) => {
+    setEditorRows((prev) => prev.filter((row) => row.id !== rowId));
+  };
+
+  const updateEditorRow = (rowId: string, field: keyof Omit<EditableJornadaItem, "id">, value: string) => {
+    setEditorRows((prev) =>
+      prev.map((row) => {
+        if (row.id !== rowId) return row;
+        const updated = { ...row, [field]: value };
+        // Auto-calculate totalHorasDia when times change
+        if (field === "horaEntrada" || field === "horaSalida") {
+          updated.totalHorasDia = String(calculateHoursDifference(updated.horaEntrada, updated.horaSalida));
+        }
+        return updated;
+      })
+    );
+  };
+
+  const validateEditorRows = () => {
+    if (editorRows.length === 0) {
+      return "Debes agregar al menos un bloque de jornada.";
+    }
+
+    const seenDays = new Set<string>();
+
+    for (const row of editorRows) {
+      if (!row.diaSemana || !row.horaEntrada || !row.horaSalida || !row.totalHorasDia) {
+        return "Completa todos los campos de cada bloque de jornada.";
+      }
+
+      if (seenDays.has(row.diaSemana)) {
+        return `No puedes repetir el dia ${row.diaSemana} en la jornada.`;
+      }
+
+      seenDays.add(row.diaSemana);
+
+      const start = timeToMinutes(row.horaEntrada);
+      const end = timeToMinutes(row.horaSalida);
+      const totalHoras = Number(row.totalHorasDia);
+
+      if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+        return `Rango horario invalido en ${row.diaSemana}.`;
+      }
+
+      if (!Number.isFinite(totalHoras) || totalHoras < 0) {
+        return `Total de horas invalido en ${row.diaSemana}.`;
+      }
+
+      const bruto = (end - start) / 60;
+      if (totalHoras > bruto + 0.01) {
+        return `El total de horas excede el rango bruto en ${row.diaSemana}.`;
+      }
+    }
+
+    return null;
+  };
+
+  const saveJornada = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!editingStaff) {
+      return;
+    }
+
+    const validationError = validateEditorRows();
+    if (validationError) {
+      alert(validationError);
+      return;
+    }
+
+    try {
+      setIsSavingJornada(true);
+
+      await fetchApiJson<{ message: string; staffId: string }>(`/api/staff/${editingStaff.id}/jornada-semanal`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jornadas: editorRows.map((row) => ({
+            diaSemana: row.diaSemana,
+            horaEntrada: row.horaEntrada,
+            horaSalida: row.horaSalida,
+            totalHorasDia: Number(row.totalHorasDia),
+          })),
+        }),
+      });
+
+      await loadJornadas();
+      closeEditor();
+      alert("Horario laboral actualizado correctamente.");
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "No se pudo guardar la jornada semanal.");
+    } finally {
+      setIsSavingJornada(false);
+    }
+  };
+
+  const compactDayLabel = (rows: StaffJornadaItem[]) => {
+    const days = rows.map((row) => row.diaSemana);
+    return days.join(", ");
+  };
+
+  const getBandStyle = (jornada: StaffJornadaItem[]) => {
+    if (jornada.length === 0) {
+      return { left: "0%", right: "68%" };
+    }
+
+    const start = jornada
+      .map((row) => timeToMinutes(row.horaEntrada))
+      .filter((value) => value >= 0)
+      .sort((left, right) => left - right)[0] ?? TIMELINE_START_MINUTES;
+    const end = jornada
+      .map((row) => timeToMinutes(row.horaSalida))
+      .filter((value) => value >= 0)
+      .sort((left, right) => right - left)[0] ?? TIMELINE_START_MINUTES + 60;
+
+    const normalizedStart = Math.max(start, TIMELINE_START_MINUTES);
+    const normalizedEnd = Math.min(end, TIMELINE_END_MINUTES);
+    const leftPct = ((normalizedStart - TIMELINE_START_MINUTES) / TIMELINE_TOTAL_MINUTES) * 100;
+    const rightPct = ((TIMELINE_END_MINUTES - normalizedEnd) / TIMELINE_TOTAL_MINUTES) * 100;
+
+    return {
+      left: `${Math.max(0, leftPct)}%`,
+      right: `${Math.max(0, rightPct)}%`,
+    };
+  };
 
   return (
     <div className="space-y-6">
@@ -263,81 +512,231 @@ function StaffScheduleBoard() {
         <div className="rounded-xl border border-slate-200 bg-white p-5">
           <p className="text-[10px] font-bold tracking-widest text-[#566166] uppercase">Active Staff</p>
           <div className="mt-1 flex items-baseline gap-2">
-            <span className="text-2xl font-black text-[#2a3439]">42</span>
-            <span className="text-xs font-bold text-[#3a5f94]">/ 48 Total</span>
+            <span className="text-2xl font-black text-[#2a3439]">{activeStaffCount}</span>
+            <span className="text-xs font-bold text-[#3a5f94]">/ {staffList.length} Total</span>
           </div>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white p-5">
-          <p className="text-[10px] font-bold tracking-widest text-[#566166] uppercase">Coverage Gap</p>
+          <p className="text-[10px] font-bold tracking-widest text-[#566166] uppercase">Sin Horario</p>
           <div className="mt-1 flex items-baseline gap-2">
-            <span className="text-2xl font-black text-[#9f403d]">2h</span>
-            <span className="text-xs font-medium text-[#566166]">Tonight (Floor 2)</span>
+            <span className="text-2xl font-black text-[#9f403d]">{withoutScheduleCount}</span>
+            <span className="text-xs font-medium text-[#566166]">pendientes de asignacion</span>
           </div>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white p-5">
-          <p className="text-[10px] font-bold tracking-widest text-[#566166] uppercase">On Break</p>
+          <p className="text-[10px] font-bold tracking-widest text-[#566166] uppercase">Con Horario</p>
           <div className="mt-1 flex items-baseline gap-2">
-            <span className="text-2xl font-black text-[#2a3439]">6</span>
-            <span className="text-xs font-medium text-[#566166]">Currently</span>
+            <span className="text-2xl font-black text-[#2a3439]">{staffWithSchedule}</span>
+            <span className="text-xs font-medium text-[#566166]">trabajadores</span>
           </div>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white p-5">
-          <p className="text-[10px] font-bold tracking-widest text-[#566166] uppercase">Total Hours</p>
+          <p className="text-[10px] font-bold tracking-widest text-[#566166] uppercase">Horas Semanales</p>
           <div className="mt-1 flex items-baseline gap-2">
-            <span className="text-2xl font-black text-[#2a3439]">1,840</span>
-            <span className="text-xs font-medium text-[#566166]">This Week</span>
+            <span className="text-2xl font-black text-[#2a3439]">{totalHoursScheduled.toFixed(1)}</span>
+            <span className="text-xs font-medium text-[#566166]">programadas</span>
           </div>
         </div>
       </div>
+
+      {scheduleError ? <p className="text-sm font-medium text-[#9f403d]">{scheduleError}</p> : null}
 
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="flex border-b border-slate-200">
-          <div className="flex w-64 shrink-0 items-center gap-2 border-r border-slate-200 bg-[#f0f4f7] p-4 text-xs font-bold tracking-wider text-[#2a3439] uppercase">
-            <span className="material-symbols-outlined text-sm">badge</span>
-            Staff Member
-          </div>
-          <div className="flex-1 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
-            <div className="grid min-w-[1120px] bg-[#f0f4f7] divide-x divide-slate-200" style={{ gridTemplateColumns: "repeat(16, minmax(0, 1fr))" }}>
-              {hourCells}
+        <div className="flex h-[696px]">
+          {/* Fixed left column: Staff names */}
+          <div className="w-64 border-r border-slate-200 flex flex-col">
+            <div className="flex h-[56px] items-center gap-2 border-b border-slate-200 bg-[#f0f4f7] px-4 text-xs font-bold tracking-wider text-[#2a3439] uppercase shadow-[6px_0_12px_rgba(15,23,42,0.04)]">
+              <span className="material-symbols-outlined text-sm">badge</span>
+              Staff Member
             </div>
-          </div>
-        </div>
 
-        <div className="max-h-[600px] divide-y divide-slate-200 overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
-          {SCHEDULE_ROWS.map((row) => (
-            <div className="flex" key={row.id}>
-              <div className="flex w-64 shrink-0 items-center gap-3 border-r border-slate-200 p-4">
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#e8eff3] text-xs font-black text-[#375c91]">
-                  N.{row.staffNumber}
-                </div>
-                <div>
-                  <p className="text-sm font-bold text-[#2a3439]">{row.name}</p>
-                  <p className="text-[10px] text-[#566166]">{row.role}</p>
-                </div>
-              </div>
+            <div className="flex-1 divide-y divide-slate-200 overflow-y-auto" ref={leftColumnRef}>
+              {isLoadingStaff || isLoadingJornadas ? (
+                <p className="p-4 text-sm text-[#566166]">Cargando horario maestro...</p>
+              ) : staffList.length === 0 ? (
+                <p className="p-4 text-sm text-[#566166]">No hay staff registrado.</p>
+              ) : (
+                staffList.map((staff) => {
+                  const jornada = jornadaByStaffId[staff.id] ?? [];
+                  const hasJornada = jornada.length > 0;
 
-              <div className="relative flex-1 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
-                <div className="relative grid min-h-[74px] min-w-[1120px] divide-x divide-slate-200/60" style={{ gridTemplateColumns: "repeat(16, minmax(0, 1fr))" }}>
-                  {HOURS.map((hour) => (
-                    <div key={`${row.id}-${hour}`} className="h-full" />
-                  ))}
-
-                  <div className={`absolute inset-y-2 ${row.shiftLeft} ${row.shiftRight} flex items-center rounded-r-md border-l-4 border-[#3a5f94] bg-[#3a5f94]/10 px-4`}>
-                    <div className="flex items-center gap-2 overflow-hidden">
-                      <div className="h-2 w-2 shrink-0 rounded-full bg-[#3a5f94]" />
-                      <span className="truncate text-[10px] font-bold text-[#3a5f94]">{row.shiftLabel}</span>
+                  return (
+                    <div className="flex h-[74px] items-center gap-3 bg-white px-4" key={staff.id}>
+                      <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#e8eff3] text-xs font-black text-[#375c91]">
+                        N.{staff.numeroStaff}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-bold text-[#2a3439]">
+                          {staff.nombres} {staff.apellidos}
+                        </p>
+                        <p className="truncate text-[10px] text-[#566166]">{staff.rol}</p>
+                      </div>
+                      <button
+                        aria-label={hasJornada ? "Editar horario" : "Asignar horario"}
+                        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-white text-[#3a5f94] transition hover:bg-[#3a5f94] hover:text-white"
+                        onClick={() => openEditor(staff)}
+                        type="button"
+                        title={hasJornada ? "Editar horario" : "Asignar horario"}
+                      >
+                        <span className="material-symbols-outlined text-[17px]">edit_calendar</span>
+                      </button>
                     </div>
-                  </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
 
-                  {row.note ? (
-                    <div className="absolute top-2 right-3 rounded-md bg-amber-50 px-2 py-1 text-[9px] font-bold text-amber-700">{row.note}</div>
-                  ) : null}
+          {/* Scrollable right column: Schedule timeline */}
+          <div className="flex-1 flex flex-col overflow-hidden">
+            <div className="flex-1 overflow-x-auto overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden" ref={rightColumnRef}>
+              <div className="w-max">
+                {/* Header with hours - sticky at top */}
+                <div className="sticky top-0 z-10 grid bg-[#f0f4f7] divide-x divide-slate-200" style={{ gridTemplateColumns: "repeat(17, minmax(80px, 1fr))" }}>
+                  {hourCells}
+                </div>
+
+                {/* Staff rows with schedule bands */}
+                <div className="divide-y divide-slate-200">
+              {isLoadingStaff || isLoadingJornadas ? (
+                <p className="p-4 text-sm text-[#566166]">Cargando horario maestro...</p>
+              ) : staffList.length === 0 ? (
+                <p className="p-4 text-sm text-[#566166]">No hay staff registrado.</p>
+              ) : (
+                staffList.map((staff) => {
+                  const jornada = jornadaByStaffId[staff.id] ?? [];
+                  const hasJornada = jornada.length > 0;
+                  const firstStart = hasJornada ? jornada.map((row) => row.horaEntrada).sort()[0] : null;
+                  const lastEnd = hasJornada ? jornada.map((row) => row.horaSalida).sort().slice(-1)[0] : null;
+                  const bandStyle = getBandStyle(jornada);
+
+                  return (
+                    <div className="relative h-[74px] bg-white" key={staff.id}>
+                      <div className="absolute inset-0 grid divide-x divide-slate-200/60" style={{ gridTemplateColumns: "repeat(17, minmax(80px, 1fr))" }}>
+                        {HOURS.map((hour) => (
+                          <div key={`${staff.id}-${hour}`} className="h-full" />
+                        ))}
+                      </div>
+
+                      <div className="absolute inset-y-2 rounded-r-md border-l-4 border-[#3a5f94] bg-[#3a5f94]/10 px-4" style={bandStyle}>
+                        <div className="flex h-full items-center gap-2 overflow-hidden">
+                          <div className="h-2 w-2 shrink-0 rounded-full bg-[#3a5f94]" />
+                          <span className="truncate text-[10px] font-bold text-[#3a5f94]">
+                            {hasJornada
+                              ? `Jornada ${firstStart} - ${lastEnd} • ${jornada.length} bloque(s)`
+                              : "Sin horario asignado"}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="absolute top-2 right-3 flex items-center gap-2">
+                        {hasJornada ? (
+                          <div className="rounded-md bg-emerald-50 px-2 py-1 text-[9px] font-bold text-emerald-700" title={compactDayLabel(jornada)}>
+                            {compactDayLabel(jornada)}
+                          </div>
+                        ) : (
+                          <div className="rounded-md bg-amber-50 px-2 py-1 text-[9px] font-bold text-amber-700">Sin horario</div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
                 </div>
               </div>
             </div>
-          ))}
+          </div>
         </div>
       </div>
+
+      {isEditorOpen && editingStaff ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="mb-4 flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-xl font-black text-[#2a3439]">Horario de Trabajo</h3>
+                <p className="text-sm text-[#566166]">
+                  {editingStaff.nombres} {editingStaff.apellidos} • N.{editingStaff.numeroStaff}
+                </p>
+              </div>
+              <button className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-[#566166]" onClick={closeEditor} type="button">
+                Cerrar
+              </button>
+            </div>
+
+            <form className="space-y-3" onSubmit={saveJornada}>
+              {editorRows.map((row, index) => (
+                <div className="grid grid-cols-1 gap-2 rounded-xl border border-slate-200 p-3 md:grid-cols-[1fr_1fr_1fr_1fr_auto]" key={row.id}>
+                  <select
+                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                    onChange={(event) => updateEditorRow(row.id, "diaSemana", event.target.value)}
+                    value={row.diaSemana}
+                  >
+                    <option value="">Dia</option>
+                    {MASTER_WEEK_DAYS.map((day) => (
+                      <option key={day} value={day}>
+                        {day}
+                      </option>
+                    ))}
+                  </select>
+
+                  <input
+                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                    onChange={(event) => updateEditorRow(row.id, "horaEntrada", event.target.value)}
+                    type="time"
+                    value={row.horaEntrada}
+                  />
+
+                  <input
+                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                    onChange={(event) => updateEditorRow(row.id, "horaSalida", event.target.value)}
+                    type="time"
+                    value={row.horaSalida}
+                  />
+
+                  <div className="flex items-center rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-[#566166]">
+                    <span className="font-medium">{row.totalHorasDia || "0"} h</span>
+                  </div>
+
+                  <button
+                    className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold text-[#9f403d]"
+                    onClick={() => removeEditorRow(row.id)}
+                    type="button"
+                  >
+                    Quitar
+                  </button>
+
+                  <p className="text-[10px] text-[#566166] md:col-span-5">Bloque {index + 1} de jornada semanal</p>
+                </div>
+              ))}
+
+              <div className="border-t border-slate-200 pt-4">
+                <div className="mb-4 flex items-center justify-between rounded-lg bg-blue-50 p-3">
+                  <span className="text-xs font-bold text-[#2a3439]">Horas totales por semana:</span>
+                  <span className="text-lg font-black text-[#3a5f94]">
+                    {editorRows.reduce((sum, row) => sum + parseFloat(row.totalHorasDia || "0"), 0).toFixed(1)} h
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap justify-between gap-2">
+                  <button className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-bold text-[#566166]" onClick={addEditorRow} type="button">
+                    + Agregar bloque
+                  </button>
+
+                  <div className="flex gap-2">
+                  <button className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-bold text-[#566166]" onClick={closeEditor} type="button">
+                    Cancelar
+                  </button>
+                    <button className="rounded-lg bg-[#3a5f94] px-4 py-2 text-xs font-bold text-white disabled:opacity-60" disabled={isSavingJornada} type="submit">
+                      {isSavingJornada ? "Guardando..." : "Guardar horario"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1444,7 +1843,7 @@ export default function StaffPage() {
       </div>
 
       {view === "schedule" ? (
-        <StaffScheduleBoard />
+        <StaffScheduleBoard isLoadingStaff={isLoadingStaff} staffList={staffList} />
       ) : (
         <main className="flex min-h-[calc(100vh-7rem)] gap-8 overflow-hidden">
         <div className="flex min-w-0 flex-1 flex-col gap-6">
