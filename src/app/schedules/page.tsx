@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Rnd, RndDragCallback, RndResizeCallback } from "react-rnd";
 import { fetchApiJson } from "@/lib/api-client";
 import { useWebSocketSchedules } from "@/lib/use-websocket-schedules";
@@ -563,7 +563,7 @@ const readSchedulesCache = (): SchedulesCachePayload | null => {
   if (typeof window === "undefined") return null;
 
   try {
-    const raw = window.sessionStorage.getItem(SCHEDULES_CACHE_KEY);
+    const raw = window.localStorage.getItem(SCHEDULES_CACHE_KEY);
     if (!raw) return null;
 
     const parsed = JSON.parse(raw) as SchedulesCachePayload;
@@ -572,7 +572,7 @@ const readSchedulesCache = (): SchedulesCachePayload | null => {
     }
 
     if (!isCacheFresh(parsed)) {
-      window.sessionStorage.removeItem(SCHEDULES_CACHE_KEY);
+      window.localStorage.removeItem(SCHEDULES_CACHE_KEY);
       return null;
     }
 
@@ -604,7 +604,7 @@ const writeSchedulesCache = (events: ScheduleEvent[], cachedRooms: string[]) => 
   if (typeof window === "undefined") return;
 
   try {
-    window.sessionStorage.setItem(SCHEDULES_CACHE_KEY, JSON.stringify(payload));
+    window.localStorage.setItem(SCHEDULES_CACHE_KEY, JSON.stringify(payload));
   } catch {
     // Ignore storage failures (private mode, quota, etc.) and keep memory cache only.
   }
@@ -702,17 +702,24 @@ export default function SchedulesPage() {
     return () => clearInterval(timer);
   }, []);
 
+  // Hydrate from cache before paint so the grid appears instantly while API revalidates.
+  useLayoutEffect(() => {
+    const cached = readSchedulesCache();
+    if (!cached) return;
+
+    const cachedEvents = normalizeLoadedEvents(cached.events, normalizeColor);
+    setEvents((prev) => (prev.length ? prev : cachedEvents));
+
+    if (cached.rooms.length > 0) {
+      setRoomCatalog((prev) => (prev.length && prev !== rooms ? prev : cached.rooms));
+    }
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
 
     const cached = readSchedulesCache();
-    const fallbackRooms = cached?.rooms?.length ? cached.rooms : rooms;
-    if (cached) {
-      setEvents((prev) => (prev.length ? prev : cached.events));
-      if (cached.rooms.length > 0) {
-        setRoomCatalog((prev) => (prev.length && prev !== rooms ? prev : cached.rooms));
-      }
-    }
+    const fallbackRooms = cached?.rooms?.length ? cached.rooms : roomCatalog;
 
     const loadFromApi = async () => {
       try {
@@ -735,7 +742,7 @@ export default function SchedulesPage() {
           setRoomCatalog(loadedRooms);
           writeSchedulesCache(loadedEvents, loadedRooms);
         } else {
-          writeSchedulesCache(loadedEvents, fallbackRooms);
+          writeSchedulesCache(loadedEvents, fallbackRooms.length > 0 ? fallbackRooms : rooms);
         }
 
         console.info("[Schedules] API load success", {

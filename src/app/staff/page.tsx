@@ -62,12 +62,33 @@ type StaffJornadaResponse = {
   jornadas?: StaffJornadaItem[];
 };
 
+type StaffPausaItem = {
+  id: string;
+  staffId: string;
+  diaSemana: WorkWeekDay;
+  tipoPausa: "Comida" | "Descanso";
+  horaInicio: string;
+  horaFin: string;
+};
+
+type StaffPausaResponse = {
+  pausas?: StaffPausaItem[];
+};
+
 type EditableJornadaItem = {
   id: string;
   diaSemana: WorkWeekDay | "";
   horaEntrada: string;
   horaSalida: string;
   totalHorasDia: string;
+};
+
+type EditablePausaItem = {
+  id: string;
+  diaSemana: WorkWeekDay | "";
+  tipoPausa: "Comida" | "Descanso";
+  horaInicio: string;
+  horaFin: string;
 };
 
 const HOURS = [
@@ -231,6 +252,23 @@ const MASTER_WEEK_DAYS: WorkWeekDay[] = [
   "Domingo",
 ];
 
+const PAUSA_TIPOS: Array<"Comida" | "Descanso"> = ["Comida", "Descanso"];
+const WORK_DAY_ORDER: Record<WorkWeekDay, number> = {
+  Lunes: 1,
+  Martes: 2,
+  Miercoles: 3,
+  Jueves: 4,
+  Viernes: 5,
+  Sabado: 6,
+  Domingo: 7,
+};
+
+const getCurrentWorkWeekDay = (): WorkWeekDay => {
+  const currentDay = new Date().getDay();
+  const dayMap: WorkWeekDay[] = ["Domingo", "Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado"];
+  return dayMap[currentDay] ?? "Lunes";
+};
+
 function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi[]; isLoadingStaff: boolean }) {
   const [jornadaByStaffId, setJornadaByStaffId] = useState<Record<string, StaffJornadaItem[]>>({});
   const [isLoadingJornadas, setIsLoadingJornadas] = useState(false);
@@ -239,6 +277,7 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
   const [editingStaff, setEditingStaff] = useState<StaffApi | null>(null);
   const [editorRows, setEditorRows] = useState<EditableJornadaItem[]>([]);
   const [isSavingJornada, setIsSavingJornada] = useState(false);
+  const [selectedScheduleDay, setSelectedScheduleDay] = useState<WorkWeekDay>(() => getCurrentWorkWeekDay());
   const leftColumnRef = useRef<HTMLDivElement>(null);
   const rightColumnRef = useRef<HTMLDivElement>(null);
 
@@ -279,6 +318,8 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
     const total = (jornadaByStaffId[staff.id] ?? []).reduce((acc, row) => acc + row.totalHorasDia, 0);
     return sum + total;
   }, 0);
+
+  const formatDayHoursLabel = (rows: StaffJornadaItem[]) => `${rows.reduce((sum, row) => sum + row.totalHorasDia, 0).toFixed(1)} h`;
 
   const loadJornadas = async () => {
     if (staffList.length === 0) {
@@ -332,13 +373,23 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
   const openEditor = (staff: StaffApi) => {
     const current = jornadaByStaffId[staff.id] ?? [];
     const mappedRows: EditableJornadaItem[] = current.length > 0
-      ? current.map((row, index) => ({
-        id: row.id || `row-${index}`,
-        diaSemana: row.diaSemana,
-        horaEntrada: row.horaEntrada,
-        horaSalida: row.horaSalida,
-        totalHorasDia: String(row.totalHorasDia),
-      }))
+      ? [...current]
+        .sort((left, right) => {
+          const dayDelta = (WORK_DAY_ORDER[left.diaSemana] ?? 99) - (WORK_DAY_ORDER[right.diaSemana] ?? 99);
+          if (dayDelta !== 0) return dayDelta;
+
+          const timeDelta = timeToMinutes(left.horaEntrada) - timeToMinutes(right.horaEntrada);
+          if (timeDelta !== 0) return timeDelta;
+
+          return left.id.localeCompare(right.id);
+        })
+        .map((row, index) => ({
+          id: row.id || `row-${index}`,
+          diaSemana: row.diaSemana,
+          horaEntrada: row.horaEntrada,
+          horaSalida: row.horaSalida,
+          totalHorasDia: String(row.totalHorasDia),
+        }))
       : getDefaultRows();
 
     setEditingStaff(staff);
@@ -389,34 +440,60 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
       return "Debes agregar al menos un bloque de jornada.";
     }
 
-    const seenDays = new Set<string>();
+    for (const [index, row] of editorRows.entries()) {
+      const blockLabel = `Bloque ${index + 1}`;
 
-    for (const row of editorRows) {
-      if (!row.diaSemana || !row.horaEntrada || !row.horaSalida || !row.totalHorasDia) {
-        return "Completa todos los campos de cada bloque de jornada.";
+      if (!row.diaSemana) {
+        return `${blockLabel}: debes seleccionar un dia.`;
       }
 
-      if (seenDays.has(row.diaSemana)) {
-        return `No puedes repetir el dia ${row.diaSemana} en la jornada.`;
+      if (!row.horaEntrada) {
+        return `${blockLabel} (${row.diaSemana}): falta la hora de entrada.`;
       }
 
-      seenDays.add(row.diaSemana);
+      if (!row.horaSalida) {
+        return `${blockLabel} (${row.diaSemana}): falta la hora de salida.`;
+      }
+
+      if (!row.totalHorasDia) {
+        return `${blockLabel} (${row.diaSemana}): no se pudo calcular el total de horas.`;
+      }
 
       const start = timeToMinutes(row.horaEntrada);
       const end = timeToMinutes(row.horaSalida);
       const totalHoras = Number(row.totalHorasDia);
 
       if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
-        return `Rango horario invalido en ${row.diaSemana}.`;
+        return `${blockLabel} (${row.diaSemana}): la hora de salida debe ser mayor a la hora de entrada.`;
       }
 
       if (!Number.isFinite(totalHoras) || totalHoras < 0) {
-        return `Total de horas invalido en ${row.diaSemana}.`;
+        return `${blockLabel} (${row.diaSemana}): total de horas invalido.`;
       }
 
       const bruto = (end - start) / 60;
       if (totalHoras > bruto + 0.01) {
-        return `El total de horas excede el rango bruto en ${row.diaSemana}.`;
+        return `${blockLabel} (${row.diaSemana}): el total de horas excede el rango horario.`;
+      }
+
+      for (let j = index + 1; j < editorRows.length; j += 1) {
+        const other = editorRows[j];
+        if (other.diaSemana !== row.diaSemana) continue;
+
+        const otherStart = timeToMinutes(other.horaEntrada);
+        const otherEnd = timeToMinutes(other.horaSalida);
+        if (!Number.isFinite(otherStart) || !Number.isFinite(otherEnd)) continue;
+
+        const otherLabel = `Bloque ${j + 1}`;
+        const isExactDuplicate = start === otherStart && end === otherEnd;
+        if (isExactDuplicate) {
+          return `${blockLabel} y ${otherLabel} (${row.diaSemana}): tienen el mismo horario duplicado.`;
+        }
+
+        const overlaps = start < otherEnd && otherStart < end;
+        if (overlaps) {
+          return `${blockLabel} y ${otherLabel} (${row.diaSemana}): los horarios se solapan.`;
+        }
       }
     }
 
@@ -497,14 +574,22 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
           <h2 className="text-2xl font-bold tracking-tight text-[#2a3439]">Staff Master Weekly Schedule</h2>
-          <p className="mt-1 text-sm text-[#566166]">Academic Week 34 • Central Facility Coverage</p>
+          <p className="mt-1 text-sm text-[#566166]">Vista diaria • {selectedScheduleDay}</p>
         </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center rounded-lg bg-[#f0f4f7] p-1">
-            <button className="rounded-md bg-white px-4 py-1.5 text-xs font-bold text-[#3a5f94] shadow-sm">Week</button>
-            <button className="rounded-md px-4 py-1.5 text-xs font-medium text-[#566166]">Month</button>
-          </div>
-          <button className="rounded-lg bg-[#3a5f94] px-4 py-2 text-xs font-bold text-white">Assign Shift</button>
+        <div className="flex flex-wrap items-center gap-2 rounded-lg bg-[#f0f4f7] p-1">
+          {MASTER_WEEK_DAYS.map((day) => {
+            const isSelected = day === selectedScheduleDay;
+            return (
+              <button
+                className={`rounded-md px-3 py-1.5 text-xs font-bold transition ${isSelected ? "bg-white text-[#3a5f94] shadow-sm" : "text-[#566166] hover:bg-white/70"}`}
+                key={day}
+                onClick={() => setSelectedScheduleDay(day)}
+                type="button"
+              >
+                {day}
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -558,7 +643,8 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
               ) : (
                 staffList.map((staff) => {
                   const jornada = jornadaByStaffId[staff.id] ?? [];
-                  const hasJornada = jornada.length > 0;
+                  const jornadaForSelectedDay = jornada.filter((row) => row.diaSemana === selectedScheduleDay);
+                  const hasJornada = jornadaForSelectedDay.length > 0;
 
                   return (
                     <div className="flex h-[74px] items-center gap-3 bg-white px-4" key={staff.id}>
@@ -605,10 +691,11 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
               ) : (
                 staffList.map((staff) => {
                   const jornada = jornadaByStaffId[staff.id] ?? [];
-                  const hasJornada = jornada.length > 0;
-                  const firstStart = hasJornada ? jornada.map((row) => row.horaEntrada).sort()[0] : null;
-                  const lastEnd = hasJornada ? jornada.map((row) => row.horaSalida).sort().slice(-1)[0] : null;
-                  const bandStyle = getBandStyle(jornada);
+                  const jornadaForSelectedDay = jornada.filter((row) => row.diaSemana === selectedScheduleDay);
+                  const hasJornada = jornadaForSelectedDay.length > 0;
+                  const firstStart = hasJornada ? jornadaForSelectedDay.map((row) => row.horaEntrada).sort()[0] : null;
+                  const lastEnd = hasJornada ? jornadaForSelectedDay.map((row) => row.horaSalida).sort().slice(-1)[0] : null;
+                  const bandStyle = getBandStyle(jornadaForSelectedDay);
 
                   return (
                     <div className="relative h-[74px] bg-white" key={staff.id}>
@@ -623,20 +710,10 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
                           <div className="h-2 w-2 shrink-0 rounded-full bg-[#3a5f94]" />
                           <span className="truncate text-[10px] font-bold text-[#3a5f94]">
                             {hasJornada
-                              ? `Jornada ${firstStart} - ${lastEnd} • ${jornada.length} bloque(s)`
+                              ? `Jornada ${firstStart} - ${lastEnd} • ${formatDayHoursLabel(jornadaForSelectedDay)}`
                               : "Sin horario asignado"}
                           </span>
                         </div>
-                      </div>
-
-                      <div className="absolute top-2 right-3 flex items-center gap-2">
-                        {hasJornada ? (
-                          <div className="rounded-md bg-emerald-50 px-2 py-1 text-[9px] font-bold text-emerald-700" title={compactDayLabel(jornada)}>
-                            {compactDayLabel(jornada)}
-                          </div>
-                        ) : (
-                          <div className="rounded-md bg-amber-50 px-2 py-1 text-[9px] font-bold text-amber-700">Sin horario</div>
-                        )}
                       </div>
                     </div>
                   );

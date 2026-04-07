@@ -574,50 +574,66 @@ export default function TasksPage() {
 
   const reviewableCount = reviewQueue.length;
   const linkedSkillsCount = staffSkills.length;
+  const selectChevronStyle = {
+    appearance: "none",
+    WebkitAppearance: "none",
+    MozAppearance: "none",
+    backgroundImage:
+      "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23566166' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E\")",
+    backgroundRepeat: "no-repeat",
+    backgroundPosition: "left 0.7rem center",
+    backgroundSize: "16px 16px",
+    paddingLeft: "2.25rem",
+  } as const;
+  const primaryButtonClass =
+    "inline-flex items-center gap-2 rounded-md bg-[#3a5f94] px-4 py-2 text-[11px] font-bold tracking-[0.24em] text-white uppercase transition-transform hover:brightness-110 disabled:opacity-60";
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(23,37,84,0.18),_transparent_34%),linear-gradient(180deg,#f8fafc_0%,#eef2ff_100%)] text-slate-900">
-      <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
-        <section className="overflow-hidden rounded-[28px] border border-slate-200/80 bg-white/90 shadow-[0_24px_80px_rgba(15,23,42,0.10)] backdrop-blur-sm">
-          <div className="flex flex-col gap-6 bg-[linear-gradient(135deg,#16325c_0%,#1d4f91_58%,#3b82f6_100%)] px-6 py-6 text-white sm:px-8 lg:flex-row lg:items-end lg:justify-between">
-            <div className="max-w-3xl space-y-3">
-              <p className="text-[11px] font-bold tracking-[0.32em] text-white/70 uppercase">Tasks Control Center</p>
-              <h1 className="text-3xl font-black tracking-tight sm:text-4xl">Tareas reales, habilidades reales y revisiones rastreables.</h1>
-              <p className="max-w-2xl text-sm leading-6 text-white/80">
-                Crea habilidades, define catálogos, instancia tareas, asigna staff, inicia el flujo y aprueba o rechaza desde la misma pantalla.
+    <main className="min-h-screen bg-background text-on-surface">
+      <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-8 px-4 py-6 sm:px-6 lg:px-8">
+        <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
+          <div className="flex flex-col gap-6 bg-[linear-gradient(180deg,#f7f9fb_0%,#eef3f8_100%)] px-6 py-6 sm:px-8 lg:flex-row lg:items-end lg:justify-between">
+            <div className="max-w-3xl space-y-2">
+              <p className="text-[10px] font-black tracking-[0.34em] text-slate-500 uppercase">Institutional Intelligence</p>
+              <h1 className="text-3xl font-black tracking-tight text-slate-900 sm:text-4xl">Tasks Control Center</h1>
+              <p className="max-w-2xl text-sm leading-6 text-slate-600">
+                Real tasks, real skills, and traceable reviews.
               </p>
             </div>
 
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:min-w-[560px]">
               {[
-                { label: "Catalogo", value: catalog.length },
-                { label: "Instancias", value: instances.length },
-                { label: "Pendientes", value: pendingInstances.length },
-                { label: "Revision", value: reviewableCount },
+                { label: "Catalogo", value: catalog.length, tone: "bg-white/12" },
+                { label: "Instancias", value: instances.length, tone: "bg-white/12" },
+                { label: "Pendientes", value: pendingInstances.length, tone: "bg-white/12" },
+                { label: "Revision", value: reviewableCount, tone: "bg-white/12" },
               ].map((item) => (
-                <div key={item.label} className="rounded-2xl border border-white/15 bg-white/10 px-4 py-3 shadow-lg shadow-slate-950/10">
-                  <p className="text-[10px] font-bold tracking-[0.26em] text-white/65 uppercase">{item.label}</p>
-                  <p className="mt-2 text-2xl font-black">{item.value}</p>
+                <div key={item.label} className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
+                  <p className="text-[10px] font-bold tracking-[0.26em] text-slate-500 uppercase">{item.label}</p>
+                  <p className="mt-2 text-2xl font-black text-slate-900">{item.value}</p>
+                  <div className="mt-3 h-1.5 rounded-full bg-slate-100">
+                    <div className="h-full rounded-full bg-[#3a5f94]" style={{ width: `${Math.max(20, Math.min(100, item.value * 18))}%` }} />
+                  </div>
                 </div>
               ))}
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3 px-6 py-4 sm:px-8">
+          <div className="flex flex-wrap items-center gap-3 border-t border-slate-200 px-6 py-4 sm:px-8">
             <button
               type="button"
               onClick={() => void refresh()}
-              className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-[11px] font-bold tracking-[0.24em] text-white uppercase transition-transform hover:scale-[1.01] disabled:opacity-60"
+              className="inline-flex items-center gap-2 rounded-md bg-[#3a5f94] px-4 py-2 text-[11px] font-bold tracking-[0.24em] text-white uppercase transition-transform hover:brightness-110 disabled:opacity-60"
               disabled={refreshing}
             >
               <span className={`material-symbols-outlined text-[18px] ${refreshing ? "animate-spin" : ""}`}>refresh</span>
               {refreshing ? "Actualizando" : "Refrescar datos"}
             </button>
-            <div className="rounded-full bg-slate-100 px-4 py-2 text-[11px] font-semibold text-slate-600">
+            <div className="rounded-md bg-slate-100 px-4 py-2 text-[11px] font-semibold text-slate-600">
               {staff.filter((person) => eligibleStaffIds.has(person.id)).length} staff compatibles · {linkedSkillsCount} vinculaciones activas
             </div>
             {notice ? (
-              <div className={`rounded-full px-4 py-2 text-[11px] font-semibold ${notice.kind === "success" ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"}`}>
+              <div className={`rounded-md px-4 py-2 text-[11px] font-semibold ${notice.kind === "success" ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"}`}>
                 {notice.text}
               </div>
             ) : null}
@@ -632,15 +648,15 @@ export default function TasksPage() {
           </section>
         ) : null}
 
-        <section className="grid gap-4 xl:grid-cols-[1fr_0.9fr_0.9fr]">
-          <div className="grid gap-4 md:grid-cols-2">
-            <form onSubmit={submitSkill} className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="flex items-start justify-between gap-3">
+        <section className="grid gap-4 xl:grid-cols-[0.95fr_1.35fr]">
+          <div className="space-y-4">
+            <form onSubmit={submitSkill} className="rounded-xl border border-[#d3e4fe] bg-white p-5 shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
+              <div className="flex items-start gap-3">
+                <span className="material-symbols-outlined rounded-2xl bg-[#d5e3ff]/50 p-2 text-[#3a5f94]">psychology</span>
                 <div>
                   <p className="text-[10px] font-bold tracking-[0.26em] text-slate-500 uppercase">Habilidades</p>
-                  <h2 className="mt-1 text-lg font-black text-slate-900">Agregar habilidad</h2>
+                  <h2 className="mt-1 text-lg font-black text-slate-900">Skill Matrix</h2>
                 </div>
-                <span className="material-symbols-outlined rounded-2xl bg-slate-100 p-2 text-slate-600">badge</span>
               </div>
               <div className="mt-5 space-y-3">
                 <label className="block space-y-2">
@@ -648,14 +664,14 @@ export default function TasksPage() {
                   <input
                     value={skillName}
                     onChange={(event) => setSkillName(event.target.value)}
-                    className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-slate-400"
+                    className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-2.5 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                     placeholder="Electricidad, Limpieza, Soporte, etc."
                   />
                 </label>
                 <button
                   type="submit"
                   disabled={busyAction === "skill-create"}
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-bold text-white transition-transform hover:translate-y-[-1px] disabled:opacity-60"
+                  className={`${primaryButtonClass} w-full justify-center`}
                 >
                   <span className="material-symbols-outlined text-[18px]">add</span>
                   {busyAction === "skill-create" ? "Guardando..." : "Crear habilidad"}
@@ -663,21 +679,22 @@ export default function TasksPage() {
               </div>
             </form>
 
-            <form onSubmit={submitLinkSkill} className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="flex items-start justify-between gap-3">
+            <form onSubmit={submitLinkSkill} className="rounded-xl border border-[#d9e4ea] bg-white p-5 shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
+              <div className="flex items-start gap-3">
+                <span className="material-symbols-outlined rounded-2xl bg-[#d5e3ff]/50 p-2 text-[#3a5f94]">link</span>
                 <div>
                   <p className="text-[10px] font-bold tracking-[0.26em] text-slate-500 uppercase">Vinculos</p>
-                  <h2 className="mt-1 text-lg font-black text-slate-900">Asignar habilidad a staff</h2>
+                  <h2 className="mt-1 text-lg font-black text-slate-900">Skill Links</h2>
                 </div>
-                <span className="material-symbols-outlined rounded-2xl bg-slate-100 p-2 text-slate-600">group_add</span>
               </div>
               <div className="mt-5 grid gap-3">
                 <label className="block space-y-2">
                   <span className="text-xs font-bold text-slate-500">Staff</span>
                   <select
+                  style={selectChevronStyle}
                     value={linkSkillForm.staffId}
                     onChange={(event) => setLinkSkillForm((current) => ({ ...current, staffId: event.target.value }))}
-                    className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-slate-400"
+                    className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-2.5 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                   >
                     <option value="">Selecciona una persona</option>
                     {staff.map((person) => (
@@ -690,9 +707,10 @@ export default function TasksPage() {
                 <label className="block space-y-2">
                   <span className="text-xs font-bold text-slate-500">Habilidad</span>
                   <select
+                  style={selectChevronStyle}
                     value={linkSkillForm.habilidadId}
                     onChange={(event) => setLinkSkillForm((current) => ({ ...current, habilidadId: event.target.value }))}
-                    className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-slate-400"
+                    className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-2.5 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                   >
                     <option value="">Selecciona una habilidad</option>
                     {skills.map((skill) => (
@@ -705,22 +723,22 @@ export default function TasksPage() {
                 <button
                   type="submit"
                   disabled={busyAction === "skill-link"}
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-900 bg-white px-4 py-3 text-sm font-bold text-slate-900 transition-transform hover:translate-y-[-1px] disabled:opacity-60"
+                  className={`${primaryButtonClass} w-full justify-center`}
                 >
-                  <span className="material-symbols-outlined text-[18px]">link</span>
+                  <span className="material-symbols-outlined text-[18px]">group_add</span>
                   {busyAction === "skill-link" ? "Vinculando..." : "Vincular habilidad"}
                 </button>
               </div>
             </form>
           </div>
 
-          <form onSubmit={submitCatalog} className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="flex items-start justify-between gap-3">
+          <form onSubmit={submitCatalog} className="rounded-xl border border-[#d5e3ff] bg-white p-5 shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
+            <div className="flex items-start gap-3">
+              <span className="material-symbols-outlined rounded-2xl bg-[#d5e3ff]/50 p-2 text-[#3a5f94]">category</span>
               <div>
                 <p className="text-[10px] font-bold tracking-[0.26em] text-slate-500 uppercase">Catalogo</p>
-                <h2 className="mt-1 text-lg font-black text-slate-900">Crear tarea de catalogo</h2>
+                <h2 className="mt-1 text-lg font-black text-slate-900">Task Catalog</h2>
               </div>
-              <span className="material-symbols-outlined rounded-2xl bg-slate-100 p-2 text-slate-600">assignment_add</span>
             </div>
 
             <div className="mt-5 grid gap-3 sm:grid-cols-2">
@@ -729,7 +747,7 @@ export default function TasksPage() {
                 <input
                   value={catalogForm.nombre}
                   onChange={(event) => setCatalogForm((current) => ({ ...current, nombre: event.target.value }))}
-                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-slate-400"
+                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-2.5 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                   placeholder="Limpieza general del bloque norte"
                 />
               </label>
@@ -737,9 +755,10 @@ export default function TasksPage() {
               <label className="block space-y-2">
                 <span className="text-xs font-bold text-slate-500">Tipo</span>
                 <select
+                  style={selectChevronStyle}
                   value={catalogForm.tipo}
                   onChange={(event) => setCatalogForm((current) => ({ ...current, tipo: event.target.value as TaskType }))}
-                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-slate-400"
+                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-2.5 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                 >
                   {(["Recurrente", "Esporadica"] as TaskType[]).map((type) => (
                     <option key={type} value={type}>
@@ -752,9 +771,10 @@ export default function TasksPage() {
               <label className="block space-y-2">
                 <span className="text-xs font-bold text-slate-500">Habilidad requerida</span>
                 <select
+                  style={selectChevronStyle}
                   value={catalogForm.habilidadRequeridaId}
                   onChange={(event) => setCatalogForm((current) => ({ ...current, habilidadRequeridaId: event.target.value }))}
-                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-slate-400"
+                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-2.5 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                 >
                   <option value="">Sin habilidad obligatoria</option>
                   {skills.map((skill) => (
@@ -772,7 +792,7 @@ export default function TasksPage() {
                   min={1}
                   value={catalogForm.tiempoEstimadoMin}
                   onChange={(event) => setCatalogForm((current) => ({ ...current, tiempoEstimadoMin: event.target.value }))}
-                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-slate-400"
+                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-2.5 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                 />
               </label>
 
@@ -783,14 +803,14 @@ export default function TasksPage() {
                   min={0}
                   value={catalogForm.puntosOtorgados}
                   onChange={(event) => setCatalogForm((current) => ({ ...current, puntosOtorgados: event.target.value }))}
-                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-slate-400"
+                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-2.5 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                 />
               </label>
 
               <button
                 type="submit"
                 disabled={busyAction === "catalog-create"}
-                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-[linear-gradient(135deg,#0f172a_0%,#1d4ed8_100%)] px-4 py-3 text-sm font-bold text-white transition-transform hover:translate-y-[-1px] disabled:opacity-60 sm:col-span-2"
+                className={`${primaryButtonClass} justify-center sm:col-span-2`}
               >
                 <span className="material-symbols-outlined text-[18px]">add_circle</span>
                 {busyAction === "catalog-create" ? "Creando..." : "Crear catalogo de tarea"}
@@ -799,23 +819,24 @@ export default function TasksPage() {
           </form>
         </section>
 
-        <section className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
-          <form onSubmit={submitInstance} className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="flex items-start justify-between gap-3">
+        <section className="grid gap-4 xl:grid-cols-[1.25fr_0.75fr]">
+          <form onSubmit={submitInstance} className="rounded-xl border border-[#d9e4ea] bg-white p-5 shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
+            <div className="flex items-start gap-3">
+              <span className="material-symbols-outlined rounded-2xl bg-[#d5e3ff]/50 p-2 text-[#3a5f94]">calendar_add_on</span>
               <div>
                 <p className="text-[10px] font-bold tracking-[0.26em] text-slate-500 uppercase">Instancias</p>
-                <h2 className="mt-1 text-lg font-black text-slate-900">Programar nueva tarea</h2>
+                <h2 className="mt-1 text-lg font-black text-slate-900">Scheduling</h2>
               </div>
-              <span className="material-symbols-outlined rounded-2xl bg-slate-100 p-2 text-slate-600">calendar_add_on</span>
             </div>
 
             <div className="mt-5 grid gap-3 sm:grid-cols-2">
               <label className="block space-y-2 sm:col-span-2">
                 <span className="text-xs font-bold text-slate-500">Tarea de catalogo</span>
                 <select
+                  style={selectChevronStyle}
                   value={instanceForm.tareaCatalogoId}
                   onChange={(event) => setInstanceForm((current) => ({ ...current, tareaCatalogoId: event.target.value }))}
-                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-slate-400"
+                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-2.5 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                 >
                   <option value="">Selecciona un catalogo</option>
                   {catalog.map((task) => (
@@ -829,9 +850,10 @@ export default function TasksPage() {
               <label className="block space-y-2">
                 <span className="text-xs font-bold text-slate-500">Salon</span>
                 <select
+                  style={selectChevronStyle}
                   value={instanceForm.salonId}
                   onChange={(event) => setInstanceForm((current) => ({ ...current, salonId: event.target.value }))}
-                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-slate-400"
+                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-2.5 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                 >
                   <option value="">Sin salon asignado</option>
                   {rooms.map((room) => (
@@ -845,9 +867,10 @@ export default function TasksPage() {
               <label className="block space-y-2">
                 <span className="text-xs font-bold text-slate-500">Prioridad</span>
                 <select
+                  style={selectChevronStyle}
                   value={instanceForm.prioridad}
                   onChange={(event) => setInstanceForm((current) => ({ ...current, prioridad: event.target.value as TaskPriority }))}
-                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-slate-400"
+                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-2.5 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                 >
                   {(["Baja", "Media", "Alta", "Urgente"] as TaskPriority[]).map((priority) => (
                     <option key={priority} value={priority}>
@@ -863,7 +886,7 @@ export default function TasksPage() {
                   type="date"
                   value={instanceForm.fechaProgramada}
                   onChange={(event) => setInstanceForm((current) => ({ ...current, fechaProgramada: event.target.value }))}
-                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-slate-400"
+                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-2.5 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                 />
               </label>
 
@@ -873,11 +896,11 @@ export default function TasksPage() {
                   type="time"
                   value={instanceForm.horaProgramada}
                   onChange={(event) => setInstanceForm((current) => ({ ...current, horaProgramada: event.target.value }))}
-                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-slate-400"
+                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-2.5 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                 />
               </label>
 
-              <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 sm:col-span-2">
+              <label className="flex items-center gap-3 rounded-md border border-[#d9e4ea] bg-[#f0f4f7] px-4 py-2.5 sm:col-span-2">
                 <input
                   type="checkbox"
                   checked={instanceForm.asignacionAutomatica}
@@ -893,7 +916,7 @@ export default function TasksPage() {
                   value={instanceForm.detalleAdicional}
                   onChange={(event) => setInstanceForm((current) => ({ ...current, detalleAdicional: event.target.value }))}
                   rows={4}
-                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-slate-400"
+                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-2.5 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                   placeholder="Instrucciones, prioridad operativa, observaciones..."
                 />
               </label>
@@ -901,7 +924,7 @@ export default function TasksPage() {
               <button
                 type="submit"
                 disabled={busyAction === "instance-create"}
-                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-bold text-white transition-transform hover:translate-y-[-1px] disabled:opacity-60 sm:col-span-2"
+                className={`${primaryButtonClass} justify-center sm:col-span-2`}
               >
                 <span className="material-symbols-outlined text-[18px]">add_task</span>
                 {busyAction === "instance-create" ? "Programando..." : "Crear instancia"}
@@ -909,80 +932,79 @@ export default function TasksPage() {
             </div>
           </form>
 
-            <form onSubmit={submitTaskAssignment} className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm md:col-span-2">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-[10px] font-bold tracking-[0.26em] text-slate-500 uppercase">Asignaciones</p>
-                  <h2 className="mt-1 text-lg font-black text-slate-900">Asignar instancia a staff</h2>
-                </div>
-                <span className="material-symbols-outlined rounded-2xl bg-slate-100 p-2 text-slate-600">assignment_ind</span>
+          <div className="space-y-4">
+          <form onSubmit={submitTaskAssignment} className="rounded-xl border border-[#d9d7f8] bg-white p-5 shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
+            <div className="flex items-start gap-3">
+              <span className="material-symbols-outlined rounded-2xl bg-[#d5e3ff]/50 p-2 text-[#3a5f94]">assignment_ind</span>
+              <div>
+                <p className="text-[10px] font-bold tracking-[0.26em] text-slate-500 uppercase">Asignaciones</p>
+                <h2 className="mt-1 text-lg font-black text-slate-900">Operational Assignment</h2>
               </div>
-              <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                <label className="block space-y-2 sm:col-span-2">
-                  <span className="text-xs font-bold text-slate-500">Instancia</span>
-                  <select
-                    value={assignmentForm.tareaInstanciaId}
-                    onChange={(event) => setAssignmentForm((current) => ({ ...current, tareaInstanciaId: event.target.value }))}
-                    className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-slate-400"
-                  >
-                    <option value="">Selecciona una instancia</option>
-                    {instances.map((task) => (
-                      <option key={task.id} value={task.id}>
-                        {task.tareaNombre} · {task.estado} · {task.fechaProgramada}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+            </div>
 
-                <label className="block space-y-2 sm:col-span-2">
-                  <span className="text-xs font-bold text-slate-500">Staff</span>
-                  <select
-                    value={assignmentForm.staffId}
-                    onChange={(event) => setAssignmentForm((current) => ({ ...current, staffId: event.target.value }))}
-                    className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-slate-400"
-                  >
-                    <option value="">Selecciona un staff</option>
-                    {staff.map((person) => (
-                      <option key={person.id} value={person.id}>
-                        {staffLabel(person)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600 sm:col-span-2">
-                  {selectedAssignmentCatalogSkillId
-                    ? `La instancia seleccionada requiere ${skillById.get(selectedAssignmentCatalogSkillId)?.nombre ?? "una habilidad"}. ${assignmentEligibleStaffIds.size} staff cumplen el requisito.`
-                    : "La instancia seleccionada no requiere habilidad obligatoria."}
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={busyAction === "task-assign"}
-                  className="inline-flex items-center justify-center gap-2 rounded-2xl bg-[linear-gradient(135deg,#7c3aed_0%,#1d4ed8_100%)] px-4 py-3 text-sm font-bold text-white transition-transform hover:translate-y-[-1px] disabled:opacity-60 sm:col-span-2"
+            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+              <label className="block space-y-2 sm:col-span-2">
+                <span className="text-xs font-bold text-slate-500">Instancia</span>
+                <select
+                  style={selectChevronStyle}
+                  value={assignmentForm.tareaInstanciaId}
+                  onChange={(event) => setAssignmentForm((current) => ({ ...current, tareaInstanciaId: event.target.value }))}
+                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-2.5 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                 >
-                  <span className="material-symbols-outlined text-[18px]">assignment_ind</span>
-                  {busyAction === "task-assign" ? "Asignando..." : "Crear asignacion"}
-                </button>
-              </div>
-            </form>
+                  <option value="">Selecciona una instancia</option>
+                  {instances.map((task) => (
+                    <option key={task.id} value={task.id}>
+                      {task.tareaNombre} · {task.estado} · {task.fechaProgramada}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
-          <form onSubmit={submitReview} className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="flex items-start justify-between gap-3">
+              <label className="block space-y-2 sm:col-span-2">
+                <span className="text-xs font-bold text-slate-500">Staff</span>
+                <select
+                  style={selectChevronStyle}
+                  value={assignmentForm.staffId}
+                  onChange={(event) => setAssignmentForm((current) => ({ ...current, staffId: event.target.value }))}
+                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-2.5 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
+                >
+                  <option value="">Selecciona un staff</option>
+                  {staff.map((person) => (
+                    <option key={person.id} value={person.id}>
+                      {staffLabel(person)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <button
+                type="submit"
+                disabled={busyAction === "task-assign"}
+                className={`${primaryButtonClass} justify-center sm:col-span-2`}
+              >
+                <span className="material-symbols-outlined text-[18px]">assignment_ind</span>
+                {busyAction === "task-assign" ? "Asignando..." : "Crear asignacion"}
+              </button>
+            </div>
+          </form>
+
+          <form onSubmit={submitReview} className="rounded-xl border border-[#d3e4fe] bg-white p-5 shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
+            <div className="flex items-start gap-3">
+              <span className="material-symbols-outlined rounded-2xl bg-[#d5e3ff]/50 p-2 text-[#3a5f94]">fact_check</span>
               <div>
                 <p className="text-[10px] font-bold tracking-[0.26em] text-slate-500 uppercase">Revision</p>
-                <h2 className="mt-1 text-lg font-black text-slate-900">Aprobar o rechazar</h2>
+                <h2 className="mt-1 text-lg font-black text-slate-900">Quality Review</h2>
               </div>
-              <span className="material-symbols-outlined rounded-2xl bg-slate-100 p-2 text-slate-600">fact_check</span>
             </div>
 
             <div className="mt-5 grid gap-3 sm:grid-cols-2">
               <label className="block space-y-2 sm:col-span-2">
                 <span className="text-xs font-bold text-slate-500">Asignacion</span>
                 <select
+                  style={selectChevronStyle}
                   value={reviewForm.asignacionId}
                   onChange={(event) => setReviewForm((current) => ({ ...current, asignacionId: event.target.value }))}
-                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-slate-400"
+                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-2.5 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                 >
                   <option value="">Selecciona una asignacion</option>
                   {instances
@@ -998,9 +1020,10 @@ export default function TasksPage() {
               <label className="block space-y-2">
                 <span className="text-xs font-bold text-slate-500">Monitor revisor</span>
                 <select
+                  style={selectChevronStyle}
                   value={reviewForm.monitorId}
                   onChange={(event) => setReviewForm((current) => ({ ...current, monitorId: event.target.value }))}
-                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-slate-400"
+                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-2.5 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                 >
                   <option value="">Selecciona un monitor</option>
                   {staff
@@ -1016,9 +1039,10 @@ export default function TasksPage() {
               <label className="block space-y-2">
                 <span className="text-xs font-bold text-slate-500">Decision</span>
                 <select
+                  style={selectChevronStyle}
                   value={reviewForm.decision}
                   onChange={(event) => setReviewForm((current) => ({ ...current, decision: event.target.value as "aprobar" | "rechazar" }))}
-                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-slate-400"
+                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-2.5 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                 >
                   <option value="aprobar">Aprobar</option>
                   <option value="rechazar">Rechazar</option>
@@ -1028,9 +1052,10 @@ export default function TasksPage() {
               <label className="block space-y-2">
                 <span className="text-xs font-bold text-slate-500">Estado al rechazar</span>
                 <select
+                  style={selectChevronStyle}
                   value={reviewForm.rechazoEstado}
                   onChange={(event) => setReviewForm((current) => ({ ...current, rechazoEstado: event.target.value as "Corregir" | "Rechazada" }))}
-                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-slate-400"
+                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-2.5 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                 >
                   <option value="Corregir">Corregir</option>
                   <option value="Rechazada">Rechazada</option>
@@ -1043,7 +1068,7 @@ export default function TasksPage() {
                   value={reviewForm.observacionesRevision}
                   onChange={(event) => setReviewForm((current) => ({ ...current, observacionesRevision: event.target.value }))}
                   rows={4}
-                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-slate-400"
+                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-2.5 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                   placeholder="Motivo de rechazo, confirmacion o notas del monitor..."
                 />
               </label>
@@ -1051,23 +1076,24 @@ export default function TasksPage() {
               <button
                 type="submit"
                 disabled={busyAction === "task-review"}
-                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-[linear-gradient(135deg,#0f766e_0%,#115e59_100%)] px-4 py-3 text-sm font-bold text-white transition-transform hover:translate-y-[-1px] disabled:opacity-60 sm:col-span-2"
+                className={`${primaryButtonClass} justify-center sm:col-span-2`}
               >
                 <span className="material-symbols-outlined text-[18px]">verified</span>
                 {busyAction === "task-review" ? "Aplicando..." : "Aplicar revision"}
               </button>
             </div>
           </form>
+          </div>
         </section>
 
-        <section className="grid gap-4 xl:grid-cols-[1.12fr_0.88fr]">
-          <div className="rounded-[24px] border border-slate-200 bg-white shadow-sm">
-            <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
+        <section className="grid gap-4 xl:grid-cols-[1.18fr_0.82fr]">
+          <div className="rounded-xl border border-slate-200 bg-white shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
+            <div className="flex flex-col gap-3 border-b border-slate-200 bg-[#f0f4f7] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <p className="text-[10px] font-bold tracking-[0.26em] text-slate-500 uppercase">Catalogo activo</p>
+                <p className="text-[10px] font-bold tracking-[0.26em] text-slate-500 uppercase">Catálogo activo</p>
                 <h2 className="mt-1 text-lg font-black text-slate-900">Tareas definidas</h2>
               </div>
-              <span className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-600">
+              <span className="rounded-full bg-white px-3 py-1 text-[11px] font-semibold text-slate-600 shadow-sm">
                 {catalog.length} tareas
               </span>
             </div>
@@ -1110,7 +1136,7 @@ export default function TasksPage() {
             </div>
           </div>
 
-          <div className="rounded-[24px] border border-slate-200 bg-white shadow-sm">
+          <div className="rounded-xl border border-slate-200 bg-white shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
             <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
               <div>
                 <p className="text-[10px] font-bold tracking-[0.26em] text-slate-500 uppercase">Habilidades</p>
@@ -1120,7 +1146,7 @@ export default function TasksPage() {
                 {skills.length} habilidades
               </span>
             </div>
-            <div className="space-y-3 p-5">
+            <div className="space-y-4 p-5">
               <div className="grid gap-2 sm:grid-cols-2">
                 {skills.length === 0 ? (
                   <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500 sm:col-span-2">
@@ -1144,9 +1170,7 @@ export default function TasksPage() {
                       {staffLabel(person)}
                     </span>
                   ))}
-                  {eligibleStaffIds.size === 0 ? (
-                    <span className="text-sm text-slate-500">No hay staff compatible con el requisito seleccionado.</span>
-                  ) : null}
+                  {eligibleStaffIds.size === 0 ? <span className="text-sm text-slate-500">No hay staff compatible con el requisito seleccionado.</span> : null}
                 </div>
               </div>
 
@@ -1178,7 +1202,7 @@ export default function TasksPage() {
                               setBusyAction(null);
                             }
                           }}
-                          className="rounded-full bg-white px-3 py-1 text-[11px] font-bold text-rose-600 transition hover:bg-rose-50"
+                          className={primaryButtonClass}
                           disabled={busyAction === `unlink-${link.id}`}
                         >
                           Quitar
@@ -1193,11 +1217,11 @@ export default function TasksPage() {
         </section>
 
         <section className="grid gap-4 xl:grid-cols-[1.18fr_0.82fr]">
-          <div className="rounded-[24px] border border-slate-200 bg-white shadow-sm">
-            <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
+          <div className="rounded-xl border border-slate-200 bg-white shadow-[0_10px_30px_rgba(42,52,57,0.06)] overflow-hidden">
+            <div className="flex flex-col gap-3 border-b border-slate-200 bg-[#f0f4f7] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <p className="text-[10px] font-bold tracking-[0.26em] text-slate-500 uppercase">Instancias</p>
-                <h2 className="mt-1 text-lg font-black text-slate-900">Estado operativo</h2>
+                <p className="text-[10px] font-bold tracking-[0.26em] text-slate-500 uppercase">Estado operativo</p>
+                <h2 className="mt-1 text-lg font-black text-slate-900">Operational State</h2>
               </div>
               <div className="flex flex-wrap gap-2 text-[11px] font-semibold text-slate-600">
                 <span className="rounded-full bg-slate-100 px-3 py-1">Pendientes {pendingInstances.length}</span>
@@ -1234,18 +1258,16 @@ export default function TasksPage() {
                           <p className="mt-1 text-[11px] text-slate-500">
                             {task.salonNombre ? roomLabel(roomById.get(task.salonId ?? "") ?? { id: task.salonId ?? task.id, nombre: task.salonNombre, piso: null }) : "Sin salon"}
                           </p>
-                          <p className="mt-1 text-[11px] text-slate-500">{formatDateLabel(task.fechaProgramada)} · {formatTimeLabel(task.horaProgramada)}</p>
+                          <p className="mt-1 text-[11px] text-slate-500">
+                            {formatDateLabel(task.fechaProgramada)} · {formatTimeLabel(task.horaProgramada)}
+                          </p>
                           <p className="mt-1 text-[11px] text-slate-500">ID {task.id}</p>
                         </td>
                         <td className="px-5 py-4">
-                          <span className={`inline-flex rounded-full px-3 py-1 text-[11px] font-bold ${stateStyles[task.estado]}`}>
-                            {task.estado}
-                          </span>
+                          <span className={`inline-flex rounded-full px-3 py-1 text-[11px] font-bold ${stateStyles[task.estado]}`}>{task.estado}</span>
                         </td>
                         <td className="px-5 py-4">
-                          <span className={`inline-flex rounded-full px-3 py-1 text-[11px] font-bold ${priorityStyles[task.prioridad]}`}>
-                            {task.prioridad}
-                          </span>
+                          <span className={`inline-flex rounded-full px-3 py-1 text-[11px] font-bold ${priorityStyles[task.prioridad]}`}>{task.prioridad}</span>
                         </td>
                         <td className="px-5 py-4 text-sm text-slate-600">
                           <p>{formatDateLabel(task.fechaProgramada)}</p>
@@ -1263,7 +1285,7 @@ export default function TasksPage() {
                                   type="button"
                                   onClick={() => void startTask(task.asignacionId ?? "")}
                                   disabled={busyAction === `start-${task.asignacionId}`}
-                                  className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-bold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
+                                  className={primaryButtonClass}
                                 >
                                   Iniciar
                                 </button>
@@ -1271,14 +1293,14 @@ export default function TasksPage() {
                                   type="button"
                                   onClick={() => void sendToReview(task.asignacionId ?? "")}
                                   disabled={busyAction === `review-${task.asignacionId}`}
-                                  className="rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-[11px] font-bold text-indigo-700 transition hover:bg-indigo-100 disabled:opacity-60"
+                                  className={primaryButtonClass}
                                 >
                                   A revision
                                 </button>
                                 <button
                                   type="button"
                                   onClick={() => setReviewForm((current) => ({ ...current, asignacionId: task.asignacionId ?? current.asignacionId }))}
-                                  className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[11px] font-bold text-emerald-700 transition hover:bg-emerald-100"
+                                  className={primaryButtonClass}
                                 >
                                   Revisar
                                 </button>
@@ -1287,7 +1309,7 @@ export default function TasksPage() {
                               <button
                                 type="button"
                                 onClick={() => setInstanceForm((current) => ({ ...current, tareaCatalogoId: task.tareaCatalogoId }))}
-                                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-bold text-slate-700 transition hover:bg-slate-50"
+                                className={primaryButtonClass}
                               >
                                 Reusar catalogo
                               </button>
@@ -1302,14 +1324,12 @@ export default function TasksPage() {
                                 setReviewForm((current) => ({ ...current, asignacionId: task.asignacionId ?? current.asignacionId }));
                                 setNotice({ kind: "success", text: "La asignacion se cargo en el formulario de revision." });
                               }}
-                              className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-[11px] font-bold text-amber-700 transition hover:bg-amber-100"
+                              className={primaryButtonClass}
                             >
                               Cargar revision
                             </button>
                           </div>
-                          {task.observacionesRevision ? (
-                            <p className="mt-2 max-w-xs text-[11px] text-slate-500">{task.observacionesRevision}</p>
-                          ) : null}
+                          {task.observacionesRevision ? <p className="mt-2 max-w-xs text-[11px] text-slate-500">{task.observacionesRevision}</p> : null}
                         </td>
                       </tr>
                     ))
@@ -1320,7 +1340,7 @@ export default function TasksPage() {
           </div>
 
           <div className="space-y-4">
-            <div className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
               <p className="text-[10px] font-bold tracking-[0.26em] text-slate-500 uppercase">Resumen</p>
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
                 {[
@@ -1337,25 +1357,25 @@ export default function TasksPage() {
               </div>
             </div>
 
-            <div className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
               <p className="text-[10px] font-bold tracking-[0.26em] text-slate-500 uppercase">Linea de revision</p>
               <div className="mt-4 space-y-3">
                 {reviewQueue.length === 0 ? (
-                  <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
-                    No hay tareas en revision por ahora.
-                  </p>
+                  <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">No hay tareas en revision por ahora.</p>
                 ) : (
                   reviewQueue.map((task) => (
                     <button
                       key={task.id}
                       type="button"
                       onClick={() => setReviewForm((current) => ({ ...current, asignacionId: task.asignacionId ?? current.asignacionId }))}
-                      className="flex w-full items-start justify-between rounded-2xl border border-slate-200 bg-slate-50 p-4 text-left transition hover:border-slate-300 hover:bg-white"
+                      className={`${primaryButtonClass} flex w-full items-start justify-between rounded-md p-4 text-left`}
                     >
                       <div>
                         <p className="text-sm font-bold text-slate-900">{task.tareaNombre}</p>
                         <p className="mt-1 text-[11px] text-slate-500">{task.staffAsignadoNombre ?? "Sin staff"}</p>
-                        <p className="mt-1 text-[11px] text-slate-500">{task.fechaProgramada} · {task.horaProgramada}</p>
+                        <p className="mt-1 text-[11px] text-slate-500">
+                          {task.fechaProgramada} · {task.horaProgramada}
+                        </p>
                       </div>
                       <span className={`rounded-full px-3 py-1 text-[11px] font-bold ${stateStyles[task.estado]}`}>{task.estado}</span>
                     </button>
