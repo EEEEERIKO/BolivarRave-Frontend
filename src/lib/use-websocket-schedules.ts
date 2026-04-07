@@ -23,6 +23,12 @@ export const useWebSocketSchedules = ({
     const getServerUrl = () => {
       if (typeof window === "undefined") return "http://localhost:4000";
 
+      const fromEnv = (process.env.NEXT_PUBLIC_BACKEND_URL ?? process.env.NEXT_PUBLIC_API_BASE_URL ?? "").trim();
+      if (fromEnv) {
+        console.log("[WebSocket] Usando backend desde variable de entorno:", fromEnv);
+        return fromEnv;
+      }
+
       const devUrl = "http://localhost:4000";
 
       // En desarrollo local (localhost o 127.0.0.1)
@@ -36,9 +42,8 @@ export const useWebSocketSchedules = ({
         return devUrl;
       }
 
-      // En producción, usar el mismo host pero puerto 4000 (o el puerto del backend)
-      const { protocol, hostname } = window.location;
-      const productionUrl = `${protocol}//${hostname}:4000`;
+      // En producción, usar mismo host/origen por defecto (con proxy/rewrite)
+      const productionUrl = window.location.origin;
       console.log("[WebSocket] Detectado environment producción, usando:", productionUrl);
       return productionUrl;
     };
@@ -83,7 +88,7 @@ export const useWebSocketSchedules = ({
 
       // Limpiar caché para forzar recarga de datos
       if (typeof window !== "undefined") {
-        sessionStorage.removeItem("schedules-page-cache-v1");
+        localStorage.removeItem("schedules-page-cache-v1");
         console.log("🧹 Cache limpiado");
       }
 
@@ -97,7 +102,7 @@ export const useWebSocketSchedules = ({
 
       // Limpiar caché
       if (typeof window !== "undefined") {
-        sessionStorage.removeItem("schedules-page-cache-v1");
+        localStorage.removeItem("schedules-page-cache-v1");
         console.log("🧹 Cache limpiado");
       }
 
@@ -126,7 +131,7 @@ export const useWebSocketSchedules = ({
   }, [enabled, onScheduleRefresh, onScheduleChange]);
 
   return {
-    isConnected: isConnectedRef.current,
-    socket: socketRef.current,
+    isConnectedRef,
+    socketRef,
   };
 };

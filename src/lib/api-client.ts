@@ -2,18 +2,23 @@ const trimSlash = (value: string) => value.replace(/\/+$/, "");
 
 const getCandidates = () => {
   const candidates: string[] = [];
-  const fromEnv = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "").trim();
-
-  if (fromEnv) candidates.push(trimSlash(fromEnv));
+  const fromEnv = (
+    process.env.NEXT_PUBLIC_API_BASE_URL ??
+    process.env.NEXT_PUBLIC_BACKEND_URL ??
+    ""
+  ).trim();
 
   if (typeof window !== "undefined") {
     // Keep same-origin as fallback (for setups using Next rewrites).
     candidates.push(trimSlash(window.location.origin));
 
+    if (fromEnv) candidates.push(trimSlash(fromEnv));
+
     // Always include common local backend URLs for development resilience.
     candidates.push("http://localhost:4000");
     candidates.push("http://127.0.0.1:4000");
   } else {
+    if (fromEnv) candidates.push(trimSlash(fromEnv));
     candidates.push("http://localhost:4000");
     candidates.push("http://127.0.0.1:4000");
   }
