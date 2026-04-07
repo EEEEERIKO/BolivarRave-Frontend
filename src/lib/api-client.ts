@@ -14,9 +14,16 @@ const getCandidates = () => {
 
     if (fromEnv) candidates.push(trimSlash(fromEnv));
 
-    // Always include common local backend URLs for development resilience.
-    candidates.push("http://localhost:4000");
-    candidates.push("http://127.0.0.1:4000");
+    const isLocalhost =
+      window.location.hostname === "localhost" ||
+      window.location.hostname === "127.0.0.1" ||
+      window.location.hostname.startsWith("192.168");
+
+    // Only include localhost fallbacks for local development.
+    if (isLocalhost) {
+      candidates.push("http://localhost:4000");
+      candidates.push("http://127.0.0.1:4000");
+    }
   } else {
     if (fromEnv) candidates.push(trimSlash(fromEnv));
     candidates.push("http://localhost:4000");
