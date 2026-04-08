@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Line,
@@ -143,6 +143,8 @@ const DAY_LABELS: Record<ScheduleItem["day"], string> = {
 
 const ALL_DAYS: ScheduleItem["day"][] = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 const HOURS = Array.from({ length: 17 }, (_, idx) => 6 + idx);
+const OCCUPANCY_CHART_Y_AXIS_WIDTH = 30;
+const OCCUPANCY_CHART_RIGHT_MARGIN = 8;
 const TIME_OPTIONS = Array.from({ length: 33 }, (_, idx) => {
   const totalMinutes = 6 * 60 + idx * 30;
   const hour = Math.floor(totalMinutes / 60);
@@ -411,6 +413,7 @@ const scoreMatch = (item: ScheduleItem, query: string) => {
 
 export default function Home() {
   const router = useRouter();
+  const occupancyChartScrollRef = useRef<HTMLDivElement | null>(null);
   const [query, setQuery] = useState("");
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
   const [submittedQuery, setSubmittedQuery] = useState("");
@@ -595,6 +598,36 @@ export default function Home() {
       return row;
     });
   }, [scheduleItems, todayIso]);
+
+  const currentHourIndex = useMemo(() => {
+    if (!currentHourLabel) return -1;
+    return occupancyByHour.findIndex((row) => row.hour === currentHourLabel);
+  }, [occupancyByHour, currentHourLabel]);
+
+  const centerOccupancyChartAtCurrentHour = useCallback(() => {
+    const container = occupancyChartScrollRef.current;
+    if (!container || currentHourIndex < 0) return;
+
+    const trackWidth = container.scrollWidth;
+    const points = Math.max(HOURS.length - 1, 1);
+    const drawableWidth = Math.max(trackWidth - OCCUPANCY_CHART_Y_AXIS_WIDTH - OCCUPANCY_CHART_RIGHT_MARGIN, 1);
+    const pointStep = drawableWidth / points;
+    const currentHourCenterX = OCCUPANCY_CHART_Y_AXIS_WIDTH + currentHourIndex * pointStep;
+    const targetLeft = currentHourCenterX - container.clientWidth / 2;
+    const maxLeft = Math.max(container.scrollWidth - container.clientWidth, 0);
+    const nextLeft = Math.max(0, Math.min(targetLeft, maxLeft));
+
+    container.scrollTo({ left: nextLeft, behavior: "smooth" });
+  }, [currentHourIndex]);
+
+  useEffect(() => {
+    centerOccupancyChartAtCurrentHour();
+  }, [centerOccupancyChartAtCurrentHour]);
+
+  useEffect(() => {
+    window.addEventListener("resize", centerOccupancyChartAtCurrentHour);
+    return () => window.removeEventListener("resize", centerOccupancyChartAtCurrentHour);
+  }, [centerOccupancyChartAtCurrentHour]);
 
   const kpis = [
     {
@@ -988,7 +1021,7 @@ export default function Home() {
   };
 
   return (
-    <div className="mx-auto max-w-7xl space-y-8 p-8">
+    <div className="mx-auto max-w-7xl space-y-6 p-3 sm:space-y-8 sm:p-6 lg:p-8">
       {isLoadingData ? (
         <section className="rounded-2xl border border-[#295786]/20 bg-[#295786]/5 p-4">
           <div className="flex items-center gap-3 text-[#295786]">
@@ -1001,9 +1034,9 @@ export default function Home() {
         </section>
       ) : null}
 
-      <section className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
+      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {kpis.map((kpi) => (
-          <div key={kpi.title} className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <div key={kpi.title} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6 dark:border-slate-800 dark:bg-slate-900">
             <p className="mb-2 text-xs font-medium tracking-wider text-slate-500 uppercase">{kpi.title}</p>
             <div className="flex items-end justify-between">
               <h3 className="text-3xl font-bold text-slate-900 dark:text-white">{isLoadingData ? "..." : kpi.value}</h3>
@@ -1015,8 +1048,8 @@ export default function Home() {
         ))}
       </section>
 
-      <section className="grid grid-cols-1 gap-8 lg:grid-cols-12">
-        <div className="grid grid-cols-1 gap-6 lg:col-span-12 lg:grid-cols-12">
+      <section className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+        <div className="grid grid-cols-1 gap-4 sm:gap-6 lg:col-span-12 lg:grid-cols-12">
           <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900 lg:col-span-9 xl:p-5">
             <h4 className="text-sm font-bold tracking-wider text-slate-800 uppercase dark:text-slate-200">BÚSQUEDA RÁPIDA</h4>
             <div className="mt-1 rounded-2xl border border-slate-200 p-3 dark:border-slate-700">
@@ -1055,7 +1088,7 @@ export default function Home() {
                   <span className="leading-none">Salones Disponibles</span>
                 </button>
               </div>
-              <form onSubmit={handleSearchSubmit} className="mt-1 flex flex-col gap-1 sm:flex-row sm:items-center">
+              <form onSubmit={handleSearchSubmit} className="mt-2 flex flex-col gap-2 sm:mt-1 sm:gap-1 sm:flex-row sm:items-end">
                 {quickMode !== "availableRooms" ? (
                   <input
                     value={query}
@@ -1110,9 +1143,9 @@ export default function Home() {
                       </label>
                     </div>
                   )}
-                <button
+                  <button
                   type="submit"
-                  className="rounded-xl bg-[#295786] px-4 py-2.5 text-sm font-bold text-white transition hover:brightness-110"
+                    className="w-full rounded-xl bg-[#295786] px-4 py-2.5 text-sm font-bold text-white transition hover:brightness-110 sm:w-auto"
                 >
                   Buscar
                 </button>
@@ -1145,7 +1178,7 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900 lg:col-span-12">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-6 dark:border-slate-800 dark:bg-slate-900 lg:col-span-12">
           <div className="mb-8 flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
             <div>
               <h4 className="text-sm font-bold tracking-wider text-slate-800 uppercase dark:text-slate-200">Vista previa del mapa del edificio</h4>
@@ -1168,9 +1201,9 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="mb-8 grid grid-cols-2 gap-4 md:grid-cols-4 lg:grid-cols-6">
+          <div className="mb-8 grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6">
             {miniMapRooms.map((room, index) => (
-              <div key={`${room.id}-${index}`} className={`group flex min-h-[98px] cursor-default flex-col justify-between rounded-xl border-2 p-3 ${room.classes}`}>
+              <div key={`${room.id}-${index}`} className={`group flex min-h-[88px] cursor-default flex-col justify-between rounded-xl border-2 p-3 sm:min-h-[98px] ${room.classes}`}>
                 <span className="line-clamp-2 text-center text-xs font-black leading-tight md:text-sm">{room.room}</span>
                 <span className={`text-center text-[10px] font-bold uppercase ${room.textClass}`}>{room.label || "Disponible"}</span>
               </div>
@@ -1207,9 +1240,9 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-6 lg:col-span-12 lg:grid-cols-12">
-          <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900 lg:col-span-8">
-            <div className="mb-3 flex items-center justify-between">
+        <div className="grid grid-cols-1 gap-4 sm:gap-6 lg:col-span-12 lg:grid-cols-12">
+          <div className="rounded-2xl border border-slate-200 bg-white p-3 sm:p-4 lg:p-5 dark:border-slate-800 dark:bg-slate-900 lg:col-span-8">
+            <div className="mb-2 flex items-center justify-between gap-2">
               <h4 className="text-sm font-bold tracking-wider text-slate-800 uppercase dark:text-slate-200">Ocupación por hora de salones</h4>
               <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-bold tracking-wider text-slate-600 uppercase dark:bg-slate-800 dark:text-slate-300">
                 {isLoadingData ? "Cargando" : "Datos en vivo"}
@@ -1218,63 +1251,74 @@ export default function Home() {
             {isLoadingData ? (
               <p className="mb-2 text-xs text-slate-500">Actualizando ocupación por hora...</p>
             ) : null}
-            <div className="h-72 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={occupancyByHour}>
-                  <XAxis dataKey="hour" tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
-                  <YAxis domain={[0, Math.max(totalRooms, 1)]} tickLine={false} axisLine={false} tick={{ fontSize: 11 }} tickCount={8} allowDecimals={false} />
-                  <Tooltip
-                    contentStyle={{
-                      borderRadius: 12,
-                      border: "1px solid #cbd5e1",
-                      background: "#ffffff",
-                      fontSize: 12,
-                    }}
-                  />
-                  {ALL_DAYS.map((day) => {
-                    const isTodayLine = todayDay === day;
+            <div ref={occupancyChartScrollRef} className="overflow-x-auto">
+              <div className="h-72 min-w-[920px] w-full sm:min-w-0">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={occupancyByHour} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                    <XAxis dataKey="hour" tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
+                    <YAxis
+                      domain={[0, Math.max(totalRooms, 1)]}
+                      tickLine={false}
+                      axisLine={false}
+                      tick={{ fontSize: 11 }}
+                      tickCount={8}
+                      allowDecimals={false}
+                      width={OCCUPANCY_CHART_Y_AXIS_WIDTH}
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        borderRadius: 12,
+                        border: "1px solid #cbd5e1",
+                        background: "#ffffff",
+                        fontSize: 12,
+                      }}
+                    />
+                    {ALL_DAYS.map((day) => {
+                      const isTodayLine = todayDay === day;
 
-                    return (
-                      <Line
-                        key={day}
-                        type="monotone"
-                        dataKey={day}
-                        name={DAY_LABELS[day]}
-                        stroke={DAY_COLORS[day]}
-                        strokeWidth={isTodayLine ? 3.6 : 2.2}
-                        strokeOpacity={isTodayLine ? 1 : 0.35}
-                        dot={
-                          isTodayLine
-                            ? (props) => {
-                                const payload = props.payload as { hour?: string };
-                                if (!currentHourLabel || payload.hour !== currentHourLabel) {
-                                  const emptyDotKey = `empty-dot-${day}-${payload.hour ?? "na"}-${String(props.cx)}-${String(props.cy)}`;
-                                  return <g key={emptyDotKey} />;
+                      return (
+                        <Line
+                          key={day}
+                          type="monotone"
+                          dataKey={day}
+                          name={DAY_LABELS[day]}
+                          stroke={DAY_COLORS[day]}
+                          strokeWidth={isTodayLine ? 3.6 : 2.2}
+                          strokeOpacity={isTodayLine ? 1 : 0.35}
+                          dot={
+                            isTodayLine
+                              ? (props) => {
+                                  const payload = props.payload as { hour?: string };
+                                  if (!currentHourLabel || payload.hour !== currentHourLabel) {
+                                    const emptyDotKey = `empty-dot-${day}-${payload.hour ?? "na"}-${String(props.cx)}-${String(props.cy)}`;
+                                    return <g key={emptyDotKey} />;
+                                  }
+
+                                  const dotKey = `current-dot-${day}-${payload.hour ?? "na"}-${String(props.cx)}-${String(props.cy)}`;
+
+                                  return (
+                                    <circle
+                                      key={dotKey}
+                                      cx={props.cx}
+                                      cy={props.cy}
+                                      r={6}
+                                      fill={DAY_COLORS[day]}
+                                      stroke="#ffffff"
+                                      strokeWidth={2}
+                                    />
+                                  );
                                 }
-
-                                const dotKey = `current-dot-${day}-${payload.hour ?? "na"}-${String(props.cx)}-${String(props.cy)}`;
-
-                                return (
-                                  <circle
-                                    key={dotKey}
-                                    cx={props.cx}
-                                    cy={props.cy}
-                                    r={6}
-                                    fill={DAY_COLORS[day]}
-                                    stroke="#ffffff"
-                                    strokeWidth={2}
-                                  />
-                                );
-                              }
-                            : undefined
-                        }
-                        activeDot={{ r: isTodayLine ? 6 : 4 }}
-                      />
-                    );
-                  })}
-                </LineChart>
-              </ResponsiveContainer>
+                              : undefined
+                          }
+                          activeDot={{ r: isTodayLine ? 6 : 4 }}
+                        />
+                      );
+                    })}
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
             </div>
+            <p className="mt-2 text-[11px] text-slate-500 sm:hidden">Desliza horizontalmente para ver toda la línea por hora.</p>
             <div className="mt-3 flex flex-wrap gap-3">
               {ALL_DAYS.map((day) => (
                 <span key={day} className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-600 dark:text-slate-300">
@@ -1285,7 +1329,7 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900 lg:col-span-4">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-6 dark:border-slate-800 dark:bg-slate-900 lg:col-span-4">
             <h4 className="text-sm font-bold tracking-wider text-slate-800 uppercase dark:text-slate-200">Resumen de hoy</h4>
             <div className="mt-4 flex flex-col gap-2">
               {todayOverview.map((item) => (
@@ -1302,7 +1346,7 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="grid grid-cols-1 gap-8 lg:grid-cols-2 lg:items-stretch">
+      <section className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:items-stretch">
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 lg:flex lg:h-full lg:flex-col">
           <div className="flex items-center justify-between border-b border-slate-100 p-5 dark:border-slate-800">
             <h4 className="text-sm font-bold tracking-wider text-slate-800 uppercase dark:text-slate-200">Próximas clases</h4>

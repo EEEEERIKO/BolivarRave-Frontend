@@ -23,6 +23,9 @@ type AuditoriumEvent = {
   attendees: number;
   needsScreen: boolean;
   needsSound: boolean;
+  needsMonitor: boolean;
+  needsProjector: boolean;
+  needsWaterFilter: boolean;
   observations: string;
   color: "blue" | "emerald" | "amber";
   scheduleBlocks: ScheduleBlock[];
@@ -37,6 +40,9 @@ type AuditorioReservaApi = {
   numeroAsistentes: number;
   requierePantalla: boolean;
   requiereSonido: boolean;
+  requiereMonitor: boolean;
+  requiereProyector: boolean;
+  requiereFiltroAgua: boolean;
   observaciones: string | null;
   estado: AuditorioEstado;
   fechaCreacion: string;
@@ -57,6 +63,9 @@ type NewEventFormState = {
   attendees: string;
   needsScreen: boolean;
   needsSound: boolean;
+  needsMonitor: boolean;
+  needsProjector: boolean;
+  needsWaterFilter: boolean;
   observations: string;
   scheduleBlocks: ScheduleBlock[];
 };
@@ -213,6 +222,9 @@ function mapReservaToEvent(reserva: AuditorioReservaApi): AuditoriumEvent {
     attendees: reserva.numeroAsistentes,
     needsScreen: reserva.requierePantalla,
     needsSound: reserva.requiereSonido,
+    needsMonitor: reserva.requiereMonitor,
+    needsProjector: reserva.requiereProyector,
+    needsWaterFilter: reserva.requiereFiltroAgua,
     observations: reserva.observaciones ?? "",
     color: colorFromEstado(reserva.estado),
     scheduleBlocks: reserva.horarios
@@ -299,6 +311,9 @@ function createEmptyFormState(defaultDate: string): NewEventFormState {
     attendees: "",
     needsScreen: false,
     needsSound: false,
+    needsMonitor: false,
+    needsProjector: false,
+    needsWaterFilter: false,
     observations: "",
     scheduleBlocks: [
       {
@@ -332,6 +347,7 @@ export default function AuditorioPage() {
   const [formState, setFormState] = useState<NewEventFormState>(createEmptyFormState(defaultDateKey));
   const [isMonthPickerOpen, setIsMonthPickerOpen] = useState(false);
   const [pickerYear, setPickerYear] = useState(colombiaToday.getFullYear());
+  const [visibleMonthCount, setVisibleMonthCount] = useState(2);
 
   const syncReservas = useCallback(async () => {
     const response = await fetchApiJson<{ reservas?: AuditorioReservaApi[] }>("/api/auditorio/reservas", {
@@ -422,9 +438,20 @@ export default function AuditorioPage() {
     }
   }, [isMonthPickerOpen]);
 
+  useEffect(() => {
+    const syncVisibleMonthCount = () => {
+      setVisibleMonthCount(window.innerWidth < 768 ? 1 : 2);
+    };
+
+    syncVisibleMonthCount();
+    window.addEventListener("resize", syncVisibleMonthCount);
+
+    return () => window.removeEventListener("resize", syncVisibleMonthCount);
+  }, []);
+
   const monthsToShow = useMemo(
-    () => [0, 1].map((offset) => new Date(monthCursor.getFullYear(), monthCursor.getMonth() + offset, 1)),
-    [monthCursor]
+    () => Array.from({ length: visibleMonthCount }, (_, offset) => new Date(monthCursor.getFullYear(), monthCursor.getMonth() + offset, 1)),
+    [monthCursor, visibleMonthCount]
   );
 
   const eventMapByDay = useMemo(
@@ -440,7 +467,10 @@ export default function AuditorioPage() {
     [events]
   );
 
-  const periodLabel = `${monthNames[monthsToShow[0].getMonth()]} ${monthsToShow[0].getFullYear()} - ${monthNames[monthsToShow[1].getMonth()]} ${monthsToShow[1].getFullYear()}`;
+  const periodLabel =
+    monthsToShow.length === 1
+      ? `${monthNames[monthsToShow[0].getMonth()]} ${monthsToShow[0].getFullYear()}`
+      : `${monthNames[monthsToShow[0].getMonth()]} ${monthsToShow[0].getFullYear()} - ${monthNames[monthsToShow[1].getMonth()]} ${monthsToShow[1].getFullYear()}`;
   const selectedEvent = events.find((event) => event.id === selectedEventId) ?? null;
 
   const formatOverlapMessage = (detail: {
@@ -486,6 +516,9 @@ export default function AuditorioPage() {
     numeroAsistentes: Number(state.attendees) || 1,
     requierePantalla: state.needsScreen,
     requiereSonido: state.needsSound,
+    requiereMonitor: state.needsMonitor,
+    requiereProyector: state.needsProjector,
+    requiereFiltroAgua: state.needsWaterFilter,
     observaciones: state.observations.trim() || null,
     estado: state.status,
     horarios: state.scheduleBlocks
@@ -522,6 +555,9 @@ export default function AuditorioPage() {
       attendees: String(selectedEvent.attendees),
       needsScreen: selectedEvent.needsScreen,
       needsSound: selectedEvent.needsSound,
+      needsMonitor: selectedEvent.needsMonitor,
+      needsProjector: selectedEvent.needsProjector,
+      needsWaterFilter: selectedEvent.needsWaterFilter,
       observations: selectedEvent.observations,
       scheduleBlocks: selectedEvent.scheduleBlocks.map((block, index) => ({
         ...block,
@@ -605,6 +641,9 @@ export default function AuditorioPage() {
             numeroAsistentes: sourceEvent.attendees,
             requierePantalla: sourceEvent.needsScreen,
             requiereSonido: sourceEvent.needsSound,
+            requiereMonitor: sourceEvent.needsMonitor,
+            requiereProyector: sourceEvent.needsProjector,
+            requiereFiltroAgua: sourceEvent.needsWaterFilter,
             observaciones: sourceEvent.observations || null,
             estado: sourceEvent.status,
             horarios: shiftedBlocks.map((block) => ({
@@ -1086,7 +1125,15 @@ export default function AuditorioPage() {
                 </p>
                 <p>
                   <span className="font-semibold">Recursos:</span>{" "}
-                  {[selectedEvent.needsScreen ? "Pantalla" : null, selectedEvent.needsSound ? "Sonido" : null].filter(Boolean).join(", ") || "Ninguno"}
+                  [
+                    selectedEvent.needsScreen ? "Pantalla" : null,
+                    selectedEvent.needsSound ? "Sonido" : null,
+                    selectedEvent.needsMonitor ? "Monitor" : null,
+                    selectedEvent.needsProjector ? "Proyector" : null,
+                    selectedEvent.needsWaterFilter ? "Filtro de Agua" : null,
+                  ]
+                    .filter(Boolean)
+                    .join(", ") || "Ninguno"
                 </p>
                 <p>
                   <span className="font-semibold">Horarios:</span> {getEventScheduleSummary(selectedEvent)}
@@ -1258,6 +1305,30 @@ export default function AuditorioPage() {
                       onChange={(event) => setFormState((current) => ({ ...current, needsSound: event.target.checked }))}
                     />
                     Sonido
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={formState.needsMonitor}
+                      onChange={(event) => setFormState((current) => ({ ...current, needsMonitor: event.target.checked }))}
+                    />
+                    Monitor
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={formState.needsProjector}
+                      onChange={(event) => setFormState((current) => ({ ...current, needsProjector: event.target.checked }))}
+                    />
+                    Proyector
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={formState.needsWaterFilter}
+                      onChange={(event) => setFormState((current) => ({ ...current, needsWaterFilter: event.target.checked }))}
+                    />
+                    Filtro de Agua
                   </label>
                 </div>
               </div>

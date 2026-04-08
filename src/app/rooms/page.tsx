@@ -210,6 +210,7 @@ export default function RoomsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedRoom, setSelectedRoom] = useState<string | null>(null);
+  const [isRoomModalOpen, setIsRoomModalOpen] = useState(false);
 
   useEffect(() => {
     const cached = readRoomsCache();
@@ -407,7 +408,7 @@ export default function RoomsPage() {
 
   if (loading) {
     return (
-      <div className="flex h-[calc(100vh-4rem)] items-center justify-center">
+      <div className="flex min-h-[calc(100vh-4rem)] items-center justify-center p-4">
         <div className="text-center">
           <div className="mb-4 h-8 w-8 animate-spin rounded-full border-4 border-slate-200 border-t-primary"></div>
           <p className="text-slate-600">Cargando salones...</p>
@@ -418,7 +419,7 @@ export default function RoomsPage() {
 
   if (error) {
     return (
-      <div className="flex h-[calc(100vh-4rem)] items-center justify-center">
+      <div className="flex min-h-[calc(100vh-4rem)] items-center justify-center p-4">
         <div className="rounded-lg border border-red-200 bg-red-50 p-6 text-center">
           <p className="text-red-600">Error al cargar salones: {error}</p>
         </div>
@@ -427,26 +428,21 @@ export default function RoomsPage() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-4rem)] overflow-hidden">
-      <div className="flex-1 overflow-y-auto p-8">
-        <div className="mb-8">
-          <h3 className="mb-1 text-2xl font-bold">Disponibilidad de Salones</h3>
+    <div className="flex min-h-[calc(100vh-4rem)] flex-col overflow-x-hidden lg:h-[calc(100vh-4rem)] lg:flex-row lg:overflow-hidden">
+      <div className="flex-1 overflow-y-auto p-3 sm:p-4 lg:p-8">
+        <div className="mb-6 sm:mb-8">
+          <h3 className="mb-1 text-xl font-bold sm:text-2xl">Disponibilidad de Salones</h3>
           <p className="text-sm text-slate-500">Estado de ocupación en tiempo real en todos los pisos.</p>
-          <div className="mt-6 flex gap-4">
-            <Legend dot="bg-emerald-500" label="Disponible" />
-            <Legend dot="bg-rose-500" label="En Clase" />
-            <Legend dot="bg-amber-400" label="Inicia Pronto" />
-          </div>
         </div>
 
-        <div className="space-y-8 pb-12">
+        <div className="space-y-6 pb-8 sm:space-y-8 sm:pb-12">
           {roomsByFloor.map((group) => (
             <div key={group.floor} className="space-y-4">
               <div className="flex items-center gap-4">
                 <span className="rounded bg-primary/10 px-3 py-1 text-sm font-bold text-primary">{group.floor}</span>
                 <div className="h-[1px] flex-1 bg-primary/10"></div>
               </div>
-              <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
                 {group.rooms.map((room) => (
                   <RoomCard
                     key={room.id}
@@ -454,7 +450,10 @@ export default function RoomsPage() {
                     status={room.status}
                     detail={room.cardDetail}
                     selected={selectedRoom === room.id}
-                    onSelect={() => setSelectedRoom(room.id)}
+                    onSelect={() => {
+                      setSelectedRoom(room.id);
+                      setIsRoomModalOpen(true);
+                    }}
                   />
                 ))}
               </div>
@@ -463,11 +462,11 @@ export default function RoomsPage() {
         </div>
       </div>
 
-      <aside className="w-80 overflow-y-auto border-l border-primary/10 bg-white dark:bg-slate-900">
-        <div className="p-6">
-          <div className="mb-8 flex items-center justify-between">
+      <aside className="hidden w-full border-t border-primary/10 bg-white dark:bg-slate-900 lg:block lg:w-80 lg:overflow-y-auto lg:border-t-0 lg:border-l">
+        <div className="p-4 sm:p-6">
+          <div className="mb-6 flex items-center justify-between sm:mb-8">
             <h3 className="text-sm font-bold tracking-wider text-slate-400 uppercase">Información del Salón</h3>
-            <button className="rounded p-1 hover:bg-slate-100 dark:hover:bg-slate-800">
+            <button type="button" className="rounded p-1 hover:bg-slate-100 dark:hover:bg-slate-800">
               <span className="material-symbols-outlined text-slate-400">close</span>
             </button>
           </div>
@@ -487,7 +486,7 @@ export default function RoomsPage() {
             )}
           </div>
 
-          <div className="space-y-6">
+          <div className="space-y-5 sm:space-y-6">
             <div>
               <p className="mb-2 text-[10px] font-bold tracking-widest text-slate-400 uppercase">Sesión Actual</p>
               <div className="space-y-1">
@@ -520,9 +519,9 @@ export default function RoomsPage() {
               </div>
             </div>
 
-            <div className="border-t border-slate-100 pt-6 dark:border-slate-800">
+            <div className="border-t border-slate-100 pt-5 dark:border-slate-800 sm:pt-6">
               <p className="mb-4 text-[10px] font-bold tracking-widest text-slate-400 uppercase">Equipamiento del Salón</p>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 gap-3 sm:gap-4">
                 <Equip icon="videocam" label="Proyector" />
                 <Equip icon="wifi" label="Wi-Fi de Alta Velocidad" />
                 <Equip icon="tv" label="Smart TV" />
@@ -530,7 +529,7 @@ export default function RoomsPage() {
               </div>
             </div>
 
-            <div className="pt-6">
+            <div className="pt-4 sm:pt-6">
               <button className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-white shadow-lg shadow-primary/20 transition-all hover:bg-primary/90">
                 <span className="material-symbols-outlined text-sm">edit</span>
                 Administrar Horario
@@ -542,15 +541,98 @@ export default function RoomsPage() {
           </div>
         </div>
       </aside>
-    </div>
-  );
-}
 
-function Legend({ dot, label }: { dot: string; label: string }) {
-  return (
-    <div className="flex items-center gap-2">
-      <span className={`h-3 w-3 rounded-full ${dot}`}></span>
-      <span className="text-xs font-medium uppercase text-slate-600 dark:text-slate-400">{label}</span>
+      {isRoomModalOpen && selectedInfo ? (
+        <div className="fixed inset-0 z-50 flex items-end bg-slate-900/50 p-0 lg:hidden" role="dialog" aria-modal="true">
+          <button
+            type="button"
+            aria-label="Cerrar información del salón"
+            className="absolute inset-0"
+            onClick={() => setIsRoomModalOpen(false)}
+          />
+          <div className="relative z-10 max-h-[88vh] w-full overflow-y-auto rounded-t-2xl bg-white p-4 shadow-2xl dark:bg-slate-900">
+            <div className="mb-5 flex items-center justify-between">
+              <h3 className="text-sm font-bold tracking-wider text-slate-400 uppercase">Información del Salón</h3>
+              <button
+                type="button"
+                onClick={() => setIsRoomModalOpen(false)}
+                className="rounded p-1 hover:bg-slate-100 dark:hover:bg-slate-800"
+              >
+                <span className="material-symbols-outlined text-slate-400">close</span>
+              </button>
+            </div>
+
+            <div className="mb-6 rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-800">
+              <h4 className="text-2xl font-black text-slate-900 dark:text-slate-100">{selectedInfo.nombre}</h4>
+              <div className="mt-2">
+                <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-bold tracking-wide uppercase ${selectedStatusMeta.pillClass}`}>
+                  <span className="material-symbols-outlined text-xs">{selectedStatusMeta.icon}</span>
+                  {selectedStatusMeta.label}
+                </span>
+              </div>
+              {selectedInfo.capacidad && (
+                <p className="mt-2 text-xs text-slate-600 dark:text-slate-400">
+                  Capacidad: {selectedInfo.capacidad} personas
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-5">
+              <div>
+                <p className="mb-2 text-[10px] font-bold tracking-widest text-slate-400 uppercase">Sesión Actual</p>
+                <div className="space-y-1">
+                  <h5 className="font-bold text-slate-900 dark:text-slate-100">{selectedInfo.session}</h5>
+                  <p className="text-xs text-slate-500">{selectedInfo.section}</p>
+                </div>
+              </div>
+
+              <div>
+                <p className="mb-2 text-[10px] font-bold tracking-widest text-slate-400 uppercase">Docente</p>
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-200 dark:bg-slate-700">
+                    <span className="material-symbols-outlined text-slate-400">person</span>
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold">{selectedInfo.professor}</p>
+                    <p className="text-[10px] text-slate-500">Departamento</p>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <p className="mb-2 text-[10px] font-bold tracking-widest text-slate-400 uppercase">Horario</p>
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="material-symbols-outlined text-base text-slate-400">schedule</span>
+                  <span>
+                    {selectedInfo.schedule}
+                    {selectedInfo.remaining !== "-" ? ` (${selectedInfo.remaining})` : ""}
+                  </span>
+                </div>
+              </div>
+
+              <div className="border-t border-slate-100 pt-5 dark:border-slate-800">
+                <p className="mb-4 text-[10px] font-bold tracking-widest text-slate-400 uppercase">Equipamiento del Salón</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <Equip icon="videocam" label="Proyector" />
+                  <Equip icon="wifi" label="Wi-Fi de Alta Velocidad" />
+                  <Equip icon="tv" label="Smart TV" />
+                  <Equip icon="volume_up" label="Sistema de Sonido" />
+                </div>
+              </div>
+
+              <div className="pt-3 pb-2">
+                <button className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-white shadow-lg shadow-primary/20 transition-all hover:bg-primary/90">
+                  <span className="material-symbols-outlined text-sm">edit</span>
+                  Administrar Horario
+                </button>
+                <button className="mt-3 w-full rounded-xl border border-slate-200 py-3 text-sm font-bold text-slate-600 transition-all hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800">
+                  Ver Historial Completo
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -571,7 +653,7 @@ function RoomCard({ room, status, detail, selected, onSelect }: RoomCardProps) {
     <button
       type="button"
       onClick={onSelect}
-      className={`group w-full cursor-pointer rounded-xl bg-white p-4 text-left transition-all hover:shadow-lg dark:bg-slate-800 ${selectedStyles}`}
+      className={`group relative w-full cursor-pointer rounded-xl bg-white p-3 text-left transition-all hover:shadow-lg sm:p-4 dark:bg-slate-800 ${selectedStyles}`}
     >
       <div className="mb-3">
         <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-bold tracking-wide uppercase ${statusMeta.pillClass}`}>
@@ -580,7 +662,7 @@ function RoomCard({ room, status, detail, selected, onSelect }: RoomCardProps) {
         </span>
       </div>
       <div className="mb-4 flex items-start justify-between gap-2">
-        <span className="text-lg font-bold whitespace-normal flex-1">{room}</span>
+        <span className="flex-1 whitespace-normal text-base font-bold sm:text-lg">{room}</span>
       </div>
       <p className={`text-[10px] font-bold tracking-widest uppercase ${selected ? "font-black text-primary" : "text-slate-400"}`}>
         {detail}
