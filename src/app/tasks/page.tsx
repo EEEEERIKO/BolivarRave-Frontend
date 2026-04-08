@@ -191,12 +191,14 @@ export default function TasksPage() {
   const [staffSkills, setStaffSkills] = useState<StaffSkillLink[]>([]);
   const [staff, setStaff] = useState<StaffItem[]>([]);
   const [rooms, setRooms] = useState<RoomItem[]>([]);
-  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [notice, setNotice] = useState<NoticeState>(null);
 
   const [skillName, setSkillName] = useState("");
+  const [editingSkillId, setEditingSkillId] = useState<string | null>(null);
+  const [editingSkillName, setEditingSkillName] = useState("");
+  const [deletingSkillId, setDeletingSkillId] = useState<string | null>(null);
   const [catalogForm, setCatalogForm] = useState<CatalogFormState>({
     nombre: "",
     tipo: "Recurrente",
@@ -269,9 +271,11 @@ export default function TasksPage() {
   const activeInstances = useMemo(() => instances.filter((task) => task.estado === "En Progreso"), [instances]);
   const completedInstances = useMemo(() => instances.filter((task) => task.estado === "Completada"), [instances]);
 
-  const loadData = async () => {
-    setLoading(true);
-    setNotice(null);
+  const loadData = async (options?: { preserveNotice?: boolean }) => {
+    const preserveNotice = options?.preserveNotice ?? false;
+    if (!preserveNotice) {
+      setNotice(null);
+    }
 
     try {
       const [catalogBody, instancesBody, skillsBody, staffSkillsBody, staffBody, roomsBody] = await Promise.all([
@@ -288,7 +292,15 @@ export default function TasksPage() {
       setSkills(skillsBody.skills ?? []);
       setStaffSkills(staffSkillsBody.links ?? []);
       setStaff(staffBody.staff ?? []);
-      setRooms((roomsBody.roomsByFloor ?? []).flat().filter(Boolean));
+      const uniqueRooms = Array.from(
+        new Map(
+          (roomsBody.roomsByFloor ?? [])
+            .flat()
+            .filter(Boolean)
+            .map((room) => [room.id, room] as const),
+        ).values(),
+      );
+      setRooms(uniqueRooms);
 
       setCatalogForm((current) => ({
         ...current,
@@ -297,7 +309,7 @@ export default function TasksPage() {
       setInstanceForm((current) => ({
         ...current,
         tareaCatalogoId: current.tareaCatalogoId || catalogBody.tasks?.[0]?.id || "",
-        salonId: current.salonId || roomsBody.roomsByFloor?.flat()?.[0]?.id || "",
+        salonId: current.salonId || uniqueRooms[0]?.id || "",
       }));
       setLinkSkillForm((current) => ({
         ...current,
@@ -320,7 +332,6 @@ export default function TasksPage() {
         text: error instanceof Error ? error.message : "No se pudieron cargar las tareas.",
       });
     } finally {
-      setLoading(false);
       setRefreshing(false);
     }
   };
@@ -331,7 +342,7 @@ export default function TasksPage() {
 
   const refresh = async () => {
     setRefreshing(true);
-    await loadData();
+    await loadData({ preserveNotice: true });
   };
 
   const submitSkill = async (event: FormEvent<HTMLFormElement>) => {
@@ -354,6 +365,73 @@ export default function TasksPage() {
       await refresh();
     } catch (error) {
       setNotice({ kind: "error", text: error instanceof Error ? error.message : "No se pudo crear la habilidad." });
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const beginEditSkill = (skill: SkillItem) => {
+    setEditingSkillId(skill.id);
+    setEditingSkillName(skill.nombre);
+    setNotice(null);
+  };
+
+  const cancelEditSkill = () => {
+    setEditingSkillId(null);
+    setEditingSkillName("");
+  };
+
+  const submitSkillEdit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!editingSkillId) {
+      setNotice({ kind: "error", text: "Selecciona una habilidad para editar." });
+      return;
+    }
+
+    const trimmedName = editingSkillName.trim();
+    if (!trimmedName) {
+      setNotice({ kind: "error", text: "Escribe un nombre de habilidad." });
+      return;
+    }
+
+    try {
+      setBusyAction(`skill-edit-${editingSkillId}`);
+      await fetchApiJson<{ message: string; id: string }>(`/api/tasks/skills/${editingSkillId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nombre: trimmedName }),
+      });
+      setNotice({ kind: "success", text: "Habilidad actualizada correctamente." });
+      setEditingSkillId(null);
+      setEditingSkillName("");
+      await refresh();
+    } catch (error) {
+      setNotice({ kind: "error", text: error instanceof Error ? error.message : "No se pudo actualizar la habilidad." });
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const deleteSkill = async (skillId: string) => {
+    if (!confirm("¿Estás seguro de que deseas eliminar esta habilidad?")) {
+      return;
+    }
+
+    try {
+      setBusyAction(`skill-delete-${skillId}`);
+      setDeletingSkillId(skillId);
+      await fetchApiJson<{ message: string; id: string }>(`/api/tasks/skills/${skillId}`, {
+        method: "DELETE",
+      });
+      setNotice({ kind: "success", text: "Habilidad eliminada correctamente." });
+      setEditingSkillId(null);
+      setEditingSkillName("");
+      setDeletingSkillId(null);
+      await refresh();
+    } catch (error) {
+      setNotice({ kind: "error", text: error instanceof Error ? error.message : "No se pudo eliminar la habilidad." });
+      setDeletingSkillId(null);
     } finally {
       setBusyAction(null);
     }
@@ -590,28 +668,28 @@ export default function TasksPage() {
 
   return (
     <main className="min-h-screen bg-background text-on-surface">
-      <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-8 px-4 py-6 sm:px-6 lg:px-8">
+      <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-5 px-4 py-6 sm:px-6 lg:px-8">
         <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
-          <div className="flex flex-col gap-6 bg-[linear-gradient(180deg,#f7f9fb_0%,#eef3f8_100%)] px-6 py-6 sm:px-8 lg:flex-row lg:items-end lg:justify-between">
-            <div className="max-w-3xl space-y-2">
-              <p className="text-[10px] font-black tracking-[0.34em] text-slate-500 uppercase">Institutional Intelligence</p>
-              <h1 className="text-3xl font-black tracking-tight text-slate-900 sm:text-4xl">Tasks Control Center</h1>
-              <p className="max-w-2xl text-sm leading-6 text-slate-600">
-                Real tasks, real skills, and traceable reviews.
+          <div className="flex flex-col gap-4 bg-[linear-gradient(180deg,#f7f9fb_0%,#eef3f8_100%)] px-5 py-4 sm:px-6 lg:flex-row lg:items-center lg:justify-between">
+            <div className="max-w-3xl space-y-1">
+              <p className="text-[9px] font-black tracking-[0.34em] text-slate-500 uppercase">Inteligencia Institucional</p>
+              <h1 className="text-2xl font-black tracking-tight text-slate-900 sm:text-3xl">Centro de Control de Tareas</h1>
+              <p className="max-w-2xl text-xs leading-5 text-slate-600">
+                Tareas reales, habilidades reales y revisiones trazables.
               </p>
             </div>
 
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:min-w-[560px]">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:min-w-[480px]">
               {[
                 { label: "Catalogo", value: catalog.length, tone: "bg-white/12" },
                 { label: "Instancias", value: instances.length, tone: "bg-white/12" },
                 { label: "Pendientes", value: pendingInstances.length, tone: "bg-white/12" },
                 { label: "Revision", value: reviewableCount, tone: "bg-white/12" },
               ].map((item) => (
-                <div key={item.label} className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
-                  <p className="text-[10px] font-bold tracking-[0.26em] text-slate-500 uppercase">{item.label}</p>
-                  <p className="mt-2 text-2xl font-black text-slate-900">{item.value}</p>
-                  <div className="mt-3 h-1.5 rounded-full bg-slate-100">
+                <div key={item.label} className="rounded-lg border border-slate-200 bg-white px-3 py-2 shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
+                  <p className="text-[9px] font-bold tracking-[0.26em] text-slate-500 uppercase">{item.label}</p>
+                  <p className="mt-1 text-xl font-black text-slate-900">{item.value}</p>
+                  <div className="mt-2 h-1 rounded-full bg-slate-100">
                     <div className="h-full rounded-full bg-[#3a5f94]" style={{ width: `${Math.max(20, Math.min(100, item.value * 18))}%` }} />
                   </div>
                 </div>
@@ -619,82 +697,148 @@ export default function TasksPage() {
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3 border-t border-slate-200 px-6 py-4 sm:px-8">
-            <button
-              type="button"
-              onClick={() => void refresh()}
-              className="inline-flex items-center gap-2 rounded-md bg-[#3a5f94] px-4 py-2 text-[11px] font-bold tracking-[0.24em] text-white uppercase transition-transform hover:brightness-110 disabled:opacity-60"
-              disabled={refreshing}
-            >
-              <span className={`material-symbols-outlined text-[18px] ${refreshing ? "animate-spin" : ""}`}>refresh</span>
-              {refreshing ? "Actualizando" : "Refrescar datos"}
-            </button>
-            <div className="rounded-md bg-slate-100 px-4 py-2 text-[11px] font-semibold text-slate-600">
+          <div className="flex flex-wrap items-center gap-2 border-t border-slate-200 px-5 py-3 sm:px-6">
+            <div className="rounded-md bg-slate-100 px-3 py-1 text-[10px] font-semibold text-slate-600">
               {staff.filter((person) => eligibleStaffIds.has(person.id)).length} staff compatibles · {linkedSkillsCount} vinculaciones activas
             </div>
+            {refreshing ? (
+              <div className="rounded-md bg-[#3a5f94]/10 px-3 py-1 text-[10px] font-semibold text-[#3a5f94]">
+                Actualizando datos...
+              </div>
+            ) : null}
             {notice ? (
-              <div className={`rounded-md px-4 py-2 text-[11px] font-semibold ${notice.kind === "success" ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"}`}>
+              <div className={`rounded-md px-3 py-1 text-[10px] font-semibold ${notice.kind === "success" ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"}`}>
                 {notice.text}
               </div>
             ) : null}
           </div>
         </section>
 
-        {loading ? (
-          <section className="grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
-            {Array.from({ length: 4 }).map((_, index) => (
-              <div key={index} className="h-28 animate-pulse rounded-[24px] border border-slate-200 bg-white/80" />
-            ))}
-          </section>
-        ) : null}
-
-        <section className="grid gap-4 xl:grid-cols-[0.95fr_1.35fr]">
-          <div className="space-y-4">
-            <form onSubmit={submitSkill} className="rounded-xl border border-[#d3e4fe] bg-white p-5 shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
-              <div className="flex items-start gap-3">
-                <span className="material-symbols-outlined rounded-2xl bg-[#d5e3ff]/50 p-2 text-[#3a5f94]">psychology</span>
+        <section className="grid gap-5 xl:grid-cols-[0.9fr_1.2fr_0.9fr]">
+          <div className="space-y-3">
+            <form onSubmit={submitSkill} className="rounded-xl border border-[#d3e4fe] bg-white p-4 shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
+              <div className="flex items-start gap-2">
+                <span className="material-symbols-outlined rounded-2xl bg-[#d5e3ff]/50 p-1.5 text-[#3a5f94] text-xl">psychology</span>
                 <div>
-                  <p className="text-[10px] font-bold tracking-[0.26em] text-slate-500 uppercase">Habilidades</p>
-                  <h2 className="mt-1 text-lg font-black text-slate-900">Skill Matrix</h2>
+                  <p className="text-[9px] font-bold tracking-[0.26em] text-slate-500 uppercase">Habilidades</p>
+                  <h2 className="text-base font-black text-slate-900">Matriz</h2>
                 </div>
               </div>
-              <div className="mt-5 space-y-3">
-                <label className="block space-y-2">
-                  <span className="text-xs font-bold text-slate-500">Nombre de la habilidad</span>
+              <div className="mt-2 space-y-1.5">
+                <label className="block space-y-1">
+                  <span className="text-xs font-bold text-slate-500">Nombre</span>
                   <input
                     value={skillName}
                     onChange={(event) => setSkillName(event.target.value)}
-                    className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-2.5 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
+                    className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-2 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                     placeholder="Electricidad, Limpieza, Soporte, etc."
                   />
                 </label>
                 <button
                   type="submit"
                   disabled={busyAction === "skill-create"}
-                  className={`${primaryButtonClass} w-full justify-center`}
+                  className="w-full rounded-md bg-[#3a5f94] px-3 py-1.5 text-[10px] font-bold text-white uppercase transition-transform hover:brightness-110 disabled:opacity-60"
                 >
-                  <span className="material-symbols-outlined text-[18px]">add</span>
+                  <span className="material-symbols-outlined text-[16px]">add</span>
                   {busyAction === "skill-create" ? "Guardando..." : "Crear habilidad"}
                 </button>
               </div>
             </form>
 
-            <form onSubmit={submitLinkSkill} className="rounded-xl border border-[#d9e4ea] bg-white p-5 shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
-              <div className="flex items-start gap-3">
-                <span className="material-symbols-outlined rounded-2xl bg-[#d5e3ff]/50 p-2 text-[#3a5f94]">link</span>
+            <section className="rounded-xl border border-[#d3e4fe] bg-white p-4 shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
+              <div className="flex items-start gap-2">
+                <span className="material-symbols-outlined rounded-2xl bg-[#d5e3ff]/50 p-1.5 text-[#3a5f94] text-xl">list</span>
                 <div>
-                  <p className="text-[10px] font-bold tracking-[0.26em] text-slate-500 uppercase">Vinculos</p>
-                  <h2 className="mt-1 text-lg font-black text-slate-900">Skill Links</h2>
+                  <p className="text-[10px] font-bold tracking-[0.26em] text-slate-500 uppercase">Listado</p>
+                  <h2 className="mt-1 text-lg font-black text-slate-900">Ver y editar habilidades</h2>
                 </div>
               </div>
-              <div className="mt-5 grid gap-3">
-                <label className="block space-y-2">
+
+              <div className="mt-5 max-h-48 space-y-2 overflow-y-auto pr-1">
+                {skills.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+                    Aun no hay habilidades registradas.
+                  </div>
+                ) : (
+                  skills.map((skill) => (
+                    <div key={skill.id} className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                      <div>
+                        <p className="text-sm font-bold text-slate-900">{skill.nombre}</p>
+                        <p className="text-[11px] text-slate-500">{staffSkills.filter((link) => link.habilidadId === skill.id).length} staff vinculados</p>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => beginEditSkill(skill)}
+                          className="rounded-md bg-[#3a5f94] px-3 py-2 text-[11px] font-bold tracking-[0.18em] text-white uppercase transition hover:brightness-110"
+                        >
+                          Editar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => deleteSkill(skill.id)}
+                          disabled={deletingSkillId === skill.id || busyAction?.startsWith("skill-delete-")}
+                          className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-[11px] font-bold tracking-[0.18em] text-red-600 uppercase transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {deletingSkillId === skill.id ? "Eliminando..." : "Eliminar"}
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <form onSubmit={submitSkillEdit} className="mt-5 rounded-2xl border border-slate-200 bg-white p-4">
+                <p className="text-[10px] font-bold tracking-[0.24em] text-slate-500 uppercase">Edición</p>
+                <div className="mt-2 space-y-1.5">
+                  <label className="block space-y-0.5">
+                    <span className="text-xs font-bold text-slate-500">Nombre</span>
+                    <input
+                      value={editingSkillName}
+                      onChange={(event) => setEditingSkillName(event.target.value)}
+                      disabled={!editingSkillId}
+                      className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20 disabled:cursor-not-allowed disabled:opacity-60"
+                      placeholder={editingSkillId ? "Escribe el nuevo nombre" : "Selecciona una habilidad para editar"}
+                    />
+                  </label>
+                  <div className="flex gap-2">
+                    <button
+                      type="submit"
+                      disabled={!editingSkillId || busyAction?.startsWith("skill-edit-")}
+                      className={`${primaryButtonClass} flex-1 justify-center`}
+                    >
+                      <span className="material-symbols-outlined text-[18px]">save</span>
+                      {editingSkillId && busyAction === `skill-edit-${editingSkillId}` ? "Guardando..." : "Guardar cambios"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={cancelEditSkill}
+                      disabled={!editingSkillId}
+                      className="rounded-md border border-slate-200 px-4 py-2 text-[11px] font-bold tracking-[0.18em] text-slate-600 uppercase transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              </form>
+            </section>
+
+            <form onSubmit={submitLinkSkill} className="rounded-xl border border-[#d9e4ea] bg-white p-4 shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
+              <div className="flex items-start gap-2">
+                <span className="material-symbols-outlined rounded-2xl bg-[#d5e3ff]/50 p-1.5 text-[#3a5f94] text-xl">link</span>
+                <div>
+                  <p className="text-[9px] font-bold tracking-[0.26em] text-slate-500 uppercase">Vínculos</p>
+                  <h2 className="text-base font-black text-slate-900">Vincular</h2>
+                </div>
+              </div>
+              <div className="mt-2 space-y-1">
+                <label className="block space-y-0.5">
                   <span className="text-xs font-bold text-slate-500">Staff</span>
                   <select
                   style={selectChevronStyle}
                     value={linkSkillForm.staffId}
                     onChange={(event) => setLinkSkillForm((current) => ({ ...current, staffId: event.target.value }))}
-                    className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-2.5 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
+                    className="w-full rounded-md border-none bg-[#e8eff3] px-2 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                   >
                     <option value="">Selecciona una persona</option>
                     {staff.map((person) => (
@@ -704,13 +848,13 @@ export default function TasksPage() {
                     ))}
                   </select>
                 </label>
-                <label className="block space-y-2">
+                <label className="block space-y-0.5">
                   <span className="text-xs font-bold text-slate-500">Habilidad</span>
                   <select
                   style={selectChevronStyle}
                     value={linkSkillForm.habilidadId}
                     onChange={(event) => setLinkSkillForm((current) => ({ ...current, habilidadId: event.target.value }))}
-                    className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-2.5 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
+                    className="w-full rounded-md border-none bg-[#e8eff3] px-2 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                   >
                     <option value="">Selecciona una habilidad</option>
                     {skills.map((skill) => (
@@ -732,33 +876,33 @@ export default function TasksPage() {
             </form>
           </div>
 
-          <form onSubmit={submitCatalog} className="rounded-xl border border-[#d5e3ff] bg-white p-5 shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
-            <div className="flex items-start gap-3">
-              <span className="material-symbols-outlined rounded-2xl bg-[#d5e3ff]/50 p-2 text-[#3a5f94]">category</span>
+            <form onSubmit={submitCatalog} className="rounded-xl border border-[#d5e3ff] bg-white p-4 shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
+            <div className="flex items-start gap-2">
+              <span className="material-symbols-outlined rounded-2xl bg-[#d5e3ff]/50 p-1.5 text-[#3a5f94] text-xl">category</span>
               <div>
-                <p className="text-[10px] font-bold tracking-[0.26em] text-slate-500 uppercase">Catalogo</p>
-                <h2 className="mt-1 text-lg font-black text-slate-900">Task Catalog</h2>
+                <p className="text-[9px] font-bold tracking-[0.26em] text-slate-500 uppercase">Catálogo</p>
+                <h2 className="text-base font-black text-slate-900">Nuevo</h2>
               </div>
             </div>
 
-            <div className="mt-5 grid gap-3 sm:grid-cols-2">
-              <label className="block space-y-2 sm:col-span-2">
+            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+              <label className="block space-y-0.5 sm:col-span-2">
                 <span className="text-xs font-bold text-slate-500">Nombre</span>
                 <input
                   value={catalogForm.nombre}
                   onChange={(event) => setCatalogForm((current) => ({ ...current, nombre: event.target.value }))}
-                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-2.5 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
+                  className="w-full rounded-md border-none bg-[#e8eff3] px-2 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                   placeholder="Limpieza general del bloque norte"
                 />
               </label>
 
-              <label className="block space-y-2">
+              <label className="block space-y-0.5">
                 <span className="text-xs font-bold text-slate-500">Tipo</span>
                 <select
                   style={selectChevronStyle}
                   value={catalogForm.tipo}
                   onChange={(event) => setCatalogForm((current) => ({ ...current, tipo: event.target.value as TaskType }))}
-                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-2.5 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
+                  className="w-full rounded-md border-none bg-[#e8eff3] px-2 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                 >
                   {(["Recurrente", "Esporadica"] as TaskType[]).map((type) => (
                     <option key={type} value={type}>
@@ -768,13 +912,13 @@ export default function TasksPage() {
                 </select>
               </label>
 
-              <label className="block space-y-2">
+              <label className="block space-y-1">
                 <span className="text-xs font-bold text-slate-500">Habilidad requerida</span>
                 <select
                   style={selectChevronStyle}
                   value={catalogForm.habilidadRequeridaId}
                   onChange={(event) => setCatalogForm((current) => ({ ...current, habilidadRequeridaId: event.target.value }))}
-                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-2.5 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
+                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                 >
                   <option value="">Sin habilidad obligatoria</option>
                   {skills.map((skill) => (
@@ -785,25 +929,25 @@ export default function TasksPage() {
                 </select>
               </label>
 
-              <label className="block space-y-2">
+              <label className="block space-y-1">
                 <span className="text-xs font-bold text-slate-500">Tiempo estimado (min)</span>
                 <input
                   type="number"
                   min={1}
                   value={catalogForm.tiempoEstimadoMin}
                   onChange={(event) => setCatalogForm((current) => ({ ...current, tiempoEstimadoMin: event.target.value }))}
-                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-2.5 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
+                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                 />
               </label>
 
-              <label className="block space-y-2">
+              <label className="block space-y-1">
                 <span className="text-xs font-bold text-slate-500">Puntos otorgados</span>
                 <input
                   type="number"
                   min={0}
                   value={catalogForm.puntosOtorgados}
                   onChange={(event) => setCatalogForm((current) => ({ ...current, puntosOtorgados: event.target.value }))}
-                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-2.5 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
+                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                 />
               </label>
 
@@ -825,18 +969,18 @@ export default function TasksPage() {
               <span className="material-symbols-outlined rounded-2xl bg-[#d5e3ff]/50 p-2 text-[#3a5f94]">calendar_add_on</span>
               <div>
                 <p className="text-[10px] font-bold tracking-[0.26em] text-slate-500 uppercase">Instancias</p>
-                <h2 className="mt-1 text-lg font-black text-slate-900">Scheduling</h2>
+                <h2 className="mt-1 text-lg font-black text-slate-900">Programación</h2>
               </div>
             </div>
 
             <div className="mt-5 grid gap-3 sm:grid-cols-2">
-              <label className="block space-y-2 sm:col-span-2">
-                <span className="text-xs font-bold text-slate-500">Tarea de catalogo</span>
+              <label className="block space-y-0.5">
+                <span className="text-xs font-bold text-slate-500">Categoría de Tarea</span>
                 <select
                   style={selectChevronStyle}
                   value={instanceForm.tareaCatalogoId}
                   onChange={(event) => setInstanceForm((current) => ({ ...current, tareaCatalogoId: event.target.value }))}
-                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-2.5 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
+                  className="w-full rounded-md border-none bg-[#e8eff3] px-2 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                 >
                   <option value="">Selecciona un catalogo</option>
                   {catalog.map((task) => (
@@ -847,13 +991,13 @@ export default function TasksPage() {
                 </select>
               </label>
 
-              <label className="block space-y-2">
+              <label className="block space-y-1">
                 <span className="text-xs font-bold text-slate-500">Salon</span>
                 <select
                   style={selectChevronStyle}
                   value={instanceForm.salonId}
                   onChange={(event) => setInstanceForm((current) => ({ ...current, salonId: event.target.value }))}
-                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-2.5 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
+                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                 >
                   <option value="">Sin salon asignado</option>
                   {rooms.map((room) => (
@@ -864,13 +1008,13 @@ export default function TasksPage() {
                 </select>
               </label>
 
-              <label className="block space-y-2">
+              <label className="block space-y-1">
                 <span className="text-xs font-bold text-slate-500">Prioridad</span>
                 <select
                   style={selectChevronStyle}
                   value={instanceForm.prioridad}
                   onChange={(event) => setInstanceForm((current) => ({ ...current, prioridad: event.target.value as TaskPriority }))}
-                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-2.5 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
+                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                 >
                   {(["Baja", "Media", "Alta", "Urgente"] as TaskPriority[]).map((priority) => (
                     <option key={priority} value={priority}>
@@ -880,27 +1024,27 @@ export default function TasksPage() {
                 </select>
               </label>
 
-              <label className="block space-y-2">
+              <label className="block space-y-1">
                 <span className="text-xs font-bold text-slate-500">Fecha programada</span>
                 <input
                   type="date"
                   value={instanceForm.fechaProgramada}
                   onChange={(event) => setInstanceForm((current) => ({ ...current, fechaProgramada: event.target.value }))}
-                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-2.5 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
+                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                 />
               </label>
 
-              <label className="block space-y-2">
+              <label className="block space-y-1">
                 <span className="text-xs font-bold text-slate-500">Hora programada</span>
                 <input
                   type="time"
                   value={instanceForm.horaProgramada}
                   onChange={(event) => setInstanceForm((current) => ({ ...current, horaProgramada: event.target.value }))}
-                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-2.5 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
+                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                 />
               </label>
 
-              <label className="flex items-center gap-3 rounded-md border border-[#d9e4ea] bg-[#f0f4f7] px-4 py-2.5 sm:col-span-2">
+              <label className="flex items-center gap-3 rounded-md border border-[#d9e4ea] bg-[#f0f4f7] px-4 py-1 sm:col-span-2">
                 <input
                   type="checkbox"
                   checked={instanceForm.asignacionAutomatica}
@@ -910,13 +1054,13 @@ export default function TasksPage() {
                 <span className="text-sm font-semibold text-slate-700">Activar asignacion automatica</span>
               </label>
 
-              <label className="block space-y-2 sm:col-span-2">
+              <label className="block space-y-1 sm:col-span-2">
                 <span className="text-xs font-bold text-slate-500">Detalle adicional</span>
                 <textarea
                   value={instanceForm.detalleAdicional}
                   onChange={(event) => setInstanceForm((current) => ({ ...current, detalleAdicional: event.target.value }))}
-                  rows={4}
-                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-2.5 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
+                  rows={3}
+                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                   placeholder="Instrucciones, prioridad operativa, observaciones..."
                 />
               </label>
@@ -943,13 +1087,13 @@ export default function TasksPage() {
             </div>
 
             <div className="mt-5 grid gap-3 sm:grid-cols-2">
-              <label className="block space-y-2 sm:col-span-2">
+              <label className="block space-y-1 sm:col-span-2">
                 <span className="text-xs font-bold text-slate-500">Instancia</span>
                 <select
                   style={selectChevronStyle}
                   value={assignmentForm.tareaInstanciaId}
                   onChange={(event) => setAssignmentForm((current) => ({ ...current, tareaInstanciaId: event.target.value }))}
-                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-2.5 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
+                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                 >
                   <option value="">Selecciona una instancia</option>
                   {instances.map((task) => (
@@ -960,13 +1104,13 @@ export default function TasksPage() {
                 </select>
               </label>
 
-              <label className="block space-y-2 sm:col-span-2">
+              <label className="block space-y-1 sm:col-span-2">
                 <span className="text-xs font-bold text-slate-500">Staff</span>
                 <select
                   style={selectChevronStyle}
                   value={assignmentForm.staffId}
                   onChange={(event) => setAssignmentForm((current) => ({ ...current, staffId: event.target.value }))}
-                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-2.5 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
+                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                 >
                   <option value="">Selecciona un staff</option>
                   {staff.map((person) => (
@@ -998,13 +1142,13 @@ export default function TasksPage() {
             </div>
 
             <div className="mt-5 grid gap-3 sm:grid-cols-2">
-              <label className="block space-y-2 sm:col-span-2">
+              <label className="block space-y-1 sm:col-span-2">
                 <span className="text-xs font-bold text-slate-500">Asignacion</span>
                 <select
                   style={selectChevronStyle}
                   value={reviewForm.asignacionId}
                   onChange={(event) => setReviewForm((current) => ({ ...current, asignacionId: event.target.value }))}
-                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-2.5 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
+                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                 >
                   <option value="">Selecciona una asignacion</option>
                   {instances
@@ -1017,13 +1161,13 @@ export default function TasksPage() {
                 </select>
               </label>
 
-              <label className="block space-y-2">
+              <label className="block space-y-1">
                 <span className="text-xs font-bold text-slate-500">Monitor revisor</span>
                 <select
                   style={selectChevronStyle}
                   value={reviewForm.monitorId}
                   onChange={(event) => setReviewForm((current) => ({ ...current, monitorId: event.target.value }))}
-                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-2.5 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
+                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                 >
                   <option value="">Selecciona un monitor</option>
                   {staff
@@ -1036,39 +1180,39 @@ export default function TasksPage() {
                 </select>
               </label>
 
-              <label className="block space-y-2">
-                <span className="text-xs font-bold text-slate-500">Decision</span>
+              <label className="block space-y-1">
+                <span className="text-xs font-bold text-slate-500">Decisión</span>
                 <select
                   style={selectChevronStyle}
                   value={reviewForm.decision}
                   onChange={(event) => setReviewForm((current) => ({ ...current, decision: event.target.value as "aprobar" | "rechazar" }))}
-                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-2.5 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
+                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                 >
                   <option value="aprobar">Aprobar</option>
                   <option value="rechazar">Rechazar</option>
                 </select>
               </label>
 
-              <label className="block space-y-2">
+              <label className="block space-y-1">
                 <span className="text-xs font-bold text-slate-500">Estado al rechazar</span>
                 <select
                   style={selectChevronStyle}
                   value={reviewForm.rechazoEstado}
                   onChange={(event) => setReviewForm((current) => ({ ...current, rechazoEstado: event.target.value as "Corregir" | "Rechazada" }))}
-                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-2.5 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
+                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                 >
                   <option value="Corregir">Corregir</option>
                   <option value="Rechazada">Rechazada</option>
                 </select>
               </label>
 
-              <label className="block space-y-2 sm:col-span-2">
+              <label className="block space-y-1 sm:col-span-2">
                 <span className="text-xs font-bold text-slate-500">Observaciones</span>
                 <textarea
                   value={reviewForm.observacionesRevision}
                   onChange={(event) => setReviewForm((current) => ({ ...current, observacionesRevision: event.target.value }))}
-                  rows={4}
-                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-2.5 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
+                  rows={3}
+                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                   placeholder="Motivo de rechazo, confirmacion o notas del monitor..."
                 />
               </label>
@@ -1147,19 +1291,8 @@ export default function TasksPage() {
               </span>
             </div>
             <div className="space-y-4 p-5">
-              <div className="grid gap-2 sm:grid-cols-2">
-                {skills.length === 0 ? (
-                  <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500 sm:col-span-2">
-                    Aun no hay habilidades registradas.
-                  </div>
-                ) : (
-                  skills.map((skill) => (
-                    <div key={skill.id} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                      <p className="text-sm font-bold text-slate-900">{skill.nombre}</p>
-                      <p className="mt-1 text-[11px] text-slate-500">{staffSkills.filter((link) => link.habilidadId === skill.id).length} staff vinculados</p>
-                    </div>
-                  ))
-                )}
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                La lista editable de habilidades está arriba. Aquí solo ves el resumen de compatibilidad y los vínculos activos.
               </div>
 
               <div className="rounded-2xl border border-slate-200 bg-white p-4">
@@ -1216,44 +1349,44 @@ export default function TasksPage() {
           </div>
         </section>
 
-        <section className="grid gap-4 xl:grid-cols-[1.18fr_0.82fr]">
+        <section className="grid gap-5 xl:grid-cols-[1.18fr_0.82fr]">
           <div className="rounded-xl border border-slate-200 bg-white shadow-[0_10px_30px_rgba(42,52,57,0.06)] overflow-hidden">
-            <div className="flex flex-col gap-3 border-b border-slate-200 bg-[#f0f4f7] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-col gap-2 border-b border-slate-200 bg-[#f0f4f7] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <p className="text-[10px] font-bold tracking-[0.26em] text-slate-500 uppercase">Estado operativo</p>
-                <h2 className="mt-1 text-lg font-black text-slate-900">Operational State</h2>
+                <p className="text-[9px] font-bold tracking-[0.26em] text-slate-500 uppercase">Estado operativo</p>
+                <h2 className="text-base font-black text-slate-900">Estado</h2>
               </div>
-              <div className="flex flex-wrap gap-2 text-[11px] font-semibold text-slate-600">
-                <span className="rounded-full bg-slate-100 px-3 py-1">Pendientes {pendingInstances.length}</span>
-                <span className="rounded-full bg-sky-100 px-3 py-1 text-sky-700">En progreso {activeInstances.length}</span>
-                <span className="rounded-full bg-indigo-100 px-3 py-1 text-indigo-700">Revision {reviewQueue.length}</span>
-                <span className="rounded-full bg-emerald-100 px-3 py-1 text-emerald-700">Completadas {completedInstances.length}</span>
+              <div className="flex flex-wrap gap-1 text-[10px] font-semibold text-slate-600">
+                <span className="rounded-full bg-slate-100 px-2 py-0.5">Pendientes {pendingInstances.length}</span>
+                <span className="rounded-full bg-sky-100 px-2 py-0.5 text-sky-700">En progreso {activeInstances.length}</span>
+                <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-indigo-700">Rev {reviewQueue.length}</span>
+                <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-emerald-700">Done {completedInstances.length}</span>
               </div>
             </div>
 
             <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-slate-200 text-left">
+              <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
                 <thead className="bg-slate-50">
                   <tr>
-                    <th className="px-5 py-3 text-[10px] font-black tracking-[0.2em] text-slate-500 uppercase">Tarea</th>
-                    <th className="px-5 py-3 text-[10px] font-black tracking-[0.2em] text-slate-500 uppercase">Estado</th>
-                    <th className="px-5 py-3 text-[10px] font-black tracking-[0.2em] text-slate-500 uppercase">Prioridad</th>
-                    <th className="px-5 py-3 text-[10px] font-black tracking-[0.2em] text-slate-500 uppercase">Horario</th>
-                    <th className="px-5 py-3 text-[10px] font-black tracking-[0.2em] text-slate-500 uppercase">Asignado</th>
-                    <th className="px-5 py-3 text-[10px] font-black tracking-[0.2em] text-slate-500 uppercase">Acciones</th>
+                    <th className="px-3 py-2 text-[9px] font-black tracking-[0.2em] text-slate-500 uppercase">Tarea</th>
+                    <th className="px-3 py-2 text-[9px] font-black tracking-[0.2em] text-slate-500 uppercase">Estado</th>
+                    <th className="px-3 py-2 text-[9px] font-black tracking-[0.2em] text-slate-500 uppercase">Prioridad</th>
+                    <th className="px-3 py-2 text-[9px] font-black tracking-[0.2em] text-slate-500 uppercase">Horario</th>
+                    <th className="px-3 py-2 text-[9px] font-black tracking-[0.2em] text-slate-500 uppercase">Asignado</th>
+                    <th className="px-3 py-2 text-[9px] font-black tracking-[0.2em] text-slate-500 uppercase">Acciones</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {instances.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="px-5 py-10 text-center text-sm text-slate-500">
+                      <td colSpan={6} className="px-3 py-6 text-center text-xs text-slate-500">
                         No hay instancias programadas.
                       </td>
                     </tr>
                   ) : (
                     instances.map((task) => (
-                      <tr key={task.id} className="align-top hover:bg-slate-50/80">
-                        <td className="px-5 py-4">
+                      <tr key={task.id} className="align-top hover:bg-slate-50/80 text-xs">
+                        <td className="px-3 py-2">
                           <p className="text-sm font-bold text-slate-900">{task.tareaNombre}</p>
                           <p className="mt-1 text-[11px] text-slate-500">
                             {task.salonNombre ? roomLabel(roomById.get(task.salonId ?? "") ?? { id: task.salonId ?? task.id, nombre: task.salonNombre, piso: null }) : "Sin salon"}
@@ -1263,29 +1396,29 @@ export default function TasksPage() {
                           </p>
                           <p className="mt-1 text-[11px] text-slate-500">ID {task.id}</p>
                         </td>
-                        <td className="px-5 py-4">
-                          <span className={`inline-flex rounded-full px-3 py-1 text-[11px] font-bold ${stateStyles[task.estado]}`}>{task.estado}</span>
+                        <td className="px-3 py-2 text-xs">
+                          <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ${stateStyles[task.estado]}`}>{task.estado}</span>
                         </td>
-                        <td className="px-5 py-4">
-                          <span className={`inline-flex rounded-full px-3 py-1 text-[11px] font-bold ${priorityStyles[task.prioridad]}`}>{task.prioridad}</span>
+                        <td className="px-3 py-2 text-xs">
+                          <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ${priorityStyles[task.prioridad]}`}>{task.prioridad}</span>
                         </td>
-                        <td className="px-5 py-4 text-sm text-slate-600">
-                          <p>{formatDateLabel(task.fechaProgramada)}</p>
-                          <p className="mt-1 text-[11px] text-slate-500">{formatTimeLabel(task.horaProgramada)}</p>
+                        <td className="px-3 py-2 text-xs text-slate-600">
+                          <p className="text-[10px]">{formatDateLabel(task.fechaProgramada)}</p>
+                          <p className="text-[9px] text-slate-500">{formatTimeLabel(task.horaProgramada)}</p>
                         </td>
-                        <td className="px-5 py-4 text-sm text-slate-600">
-                          <p className="font-semibold text-slate-900">{task.staffAsignadoNombre ?? "Sin asignar"}</p>
-                          <p className="mt-1 text-[11px] text-slate-500">{task.asignacionId ? `Asignacion ${task.asignacionId.slice(0, 8)}` : "Aun no asignada"}</p>
+                        <td className="px-3 py-2 text-xs text-slate-600">
+                          <p className="font-semibold text-slate-900 text-[10px]">{task.staffAsignadoNombre ?? "Sin asignar"}</p>
+                          <p className="text-[9px] text-slate-500">{task.asignacionId ? `${task.asignacionId.slice(0, 8)}` : "No asignada"}</p>
                         </td>
-                        <td className="px-5 py-4">
-                          <div className="flex flex-wrap gap-2">
+                        <td className="px-3 py-2 text-xs">
+                          <div className="flex flex-wrap gap-1">
                             {task.asignacionId ? (
                               <>
                                 <button
                                   type="button"
                                   onClick={() => void startTask(task.asignacionId ?? "")}
                                   disabled={busyAction === `start-${task.asignacionId}`}
-                                  className={primaryButtonClass}
+                                  className="inline-flex items-center gap-1 rounded-md bg-[#3a5f94] px-2 py-1 text-[10px] font-bold text-white uppercase transition-transform hover:brightness-110 disabled:opacity-60"
                                 >
                                   Iniciar
                                 </button>
@@ -1293,16 +1426,9 @@ export default function TasksPage() {
                                   type="button"
                                   onClick={() => void sendToReview(task.asignacionId ?? "")}
                                   disabled={busyAction === `review-${task.asignacionId}`}
-                                  className={primaryButtonClass}
+                                  className="inline-flex items-center gap-1 rounded-md bg-[#3a5f94] px-2 py-1 text-[10px] font-bold text-white uppercase transition-transform hover:brightness-110 disabled:opacity-60"
                                 >
-                                  A revision
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => setReviewForm((current) => ({ ...current, asignacionId: task.asignacionId ?? current.asignacionId }))}
-                                  className={primaryButtonClass}
-                                >
-                                  Revisar
+                                  Rev
                                 </button>
                               </>
                             ) : (
@@ -1339,29 +1465,29 @@ export default function TasksPage() {
             </div>
           </div>
 
-          <div className="space-y-4">
-            <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
-              <p className="text-[10px] font-bold tracking-[0.26em] text-slate-500 uppercase">Resumen</p>
-              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <div className="space-y-3">
+            <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
+              <p className="text-[9px] font-bold tracking-[0.26em] text-slate-500 uppercase">Resumen</p>
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
                 {[
                   { label: "Pendientes", value: pendingInstances.length },
                   { label: "En progreso", value: activeInstances.length },
-                  { label: "Revision", value: reviewQueue.length },
+                  { label: "Revisión", value: reviewQueue.length },
                   { label: "Completadas", value: completedInstances.length },
                 ].map((item) => (
-                  <div key={item.label} className="rounded-2xl bg-slate-50 px-4 py-3">
-                    <p className="text-[10px] font-bold tracking-[0.24em] text-slate-500 uppercase">{item.label}</p>
-                    <p className="mt-2 text-2xl font-black text-slate-900">{item.value}</p>
+                  <div key={item.label} className="rounded-lg bg-slate-50 px-3 py-2">
+                    <p className="text-[8px] font-bold tracking-[0.24em] text-slate-500 uppercase">{item.label}</p>
+                    <p className="mt-1 text-xl font-black text-slate-900">{item.value}</p>
                   </div>
                 ))}
               </div>
             </div>
 
-            <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
-              <p className="text-[10px] font-bold tracking-[0.26em] text-slate-500 uppercase">Linea de revision</p>
-              <div className="mt-4 space-y-3">
+            <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
+              <p className="text-[9px] font-bold tracking-[0.26em] text-slate-500 uppercase">En Revisión</p>
+              <div className="mt-2 space-y-2 max-h-96 overflow-y-auto">
                 {reviewQueue.length === 0 ? (
-                  <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">No hay tareas en revision por ahora.</p>
+                  <p className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-2 text-xs text-slate-500">Sin tareas en revisión.</p>
                 ) : (
                   reviewQueue.map((task) => (
                     <button

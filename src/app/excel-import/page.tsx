@@ -12,7 +12,7 @@ const EXCEL_MIME_TYPES = [
   "text/csv",
   "application/csv",
 ];
-const WEEK_DAYS = ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes"] as const;
+const WEEK_DAYS = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"] as const;
 
 type ExistingEvent = {
   id: string;
@@ -246,10 +246,10 @@ const toMinutes = (time: string) => {
 const daySortOrder: Record<string, number> = {
   Lunes: 1,
   Martes: 2,
-  Miercoles: 3,
+  Miércoles: 3,
   Jueves: 4,
   Viernes: 5,
-  Sabado: 6,
+  Sábado: 6,
   Domingo: 7,
 };
 
@@ -1184,7 +1184,7 @@ export default function ExcelImportPage() {
     <div className="bg-background-light p-8 dark:bg-background-dark">
       <div className="mx-auto max-w-6xl space-y-8">
         <div className="flex flex-col gap-1">
-          <h2 className="text-3xl font-black tracking-tight text-slate-900 dark:text-slate-50">Import Schedule</h2>
+          <h2 className="text-3xl font-black tracking-tight text-slate-900 dark:text-slate-50">Importar Horario</h2>
           <p className="text-slate-500 dark:text-slate-400">
             El archivo se transforma en el frontend y el backend solo recibe datos listos para guardar.
           </p>
@@ -1193,9 +1193,9 @@ export default function ExcelImportPage() {
         <div className="flex items-start gap-4 rounded-xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-800/50 dark:bg-amber-900/20">
           <span className="material-symbols-outlined mt-0.5 text-amber-600 dark:text-amber-500">warning</span>
           <div className="flex-1">
-            <h4 className="text-sm font-bold text-amber-800 dark:text-amber-400">Warning: Data Override</h4>
+            <h4 className="text-sm font-bold text-amber-800 dark:text-amber-400">Advertencia: Superponer Datos</h4>
             <p className="mt-1 text-sm leading-relaxed text-amber-700 dark:text-amber-500">
-              Este flujo permite revisar conflictos antes de confirmar. Si cancelas, no se sube ningun cambio.
+              Este flujo permite revisar conflictos antes de confirmar. Si cancelas, no se sube ningún cambio.
             </p>
           </div>
         </div>
@@ -1235,7 +1235,7 @@ export default function ExcelImportPage() {
             <h3 className="font-bold text-slate-900 dark:text-slate-100">{fileLabel.name}</h3>
             <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{fileLabel.detail}</p>
             <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-              .xlsx con 5 hojas (Lunes-Viernes) en orden fijo. CSV solo para un dia.
+              .xlsx con 5 hojas (Lunes-Viernes) en orden fijo. CSV solo para un día.
             </p>
 
             {fileError ? <p className="mt-2 rounded-md bg-red-50 px-3 py-1 text-xs font-medium text-red-700">{fileError}</p> : null}
@@ -1248,12 +1248,12 @@ export default function ExcelImportPage() {
                 inputRef.current?.click();
               }}
             >
-              Change file
+              Cambiar archivo
             </button>
 
             {isCsvFile ? (
               <div className="mt-4 flex w-full max-w-sm items-center justify-center gap-2 rounded-md bg-slate-50 p-2">
-                <label className="text-xs font-semibold text-slate-600">Dia del CSV:</label>
+                <label className="text-xs font-semibold text-slate-600">Día del CSV:</label>
                 <select
                   value={fallbackDay}
                   onChange={(event) => setFallbackDay(event.target.value as (typeof WEEK_DAYS)[number])}
@@ -1280,7 +1280,7 @@ export default function ExcelImportPage() {
 
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            <p className="mb-1 text-xs font-bold tracking-widest text-slate-500 uppercase">Total Classes</p>
+            <p className="mb-1 text-xs font-bold tracking-widest text-slate-500 uppercase">Clases Totales</p>
             <h4 className="text-2xl font-black text-slate-900 dark:text-white">{hasAnalyzed ? reviewClasses.length : "-"}</h4>
           </div>
           <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
@@ -1288,39 +1288,39 @@ export default function ExcelImportPage() {
             <h4 className="text-2xl font-black text-slate-900 dark:text-white">{hasAnalyzed ? conflictClasses.length : "-"}</h4>
           </div>
           <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            <p className="mb-1 text-xs font-bold tracking-widest text-slate-500 uppercase">Work Days</p>
-            <h4 className="text-2xl font-black text-slate-900 dark:text-white">Mon - Fri</h4>
+            <p className="mb-1 text-xs font-bold tracking-widest text-slate-500 uppercase">Días Laborales</p>
+            <h4 className="text-2xl font-black text-slate-900 dark:text-white">Lun - Vie</h4>
           </div>
           <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            <p className="mb-1 text-xs font-bold tracking-widest text-slate-500 uppercase">Time Range</p>
+            <p className="mb-1 text-xs font-bold tracking-widest text-slate-500 uppercase">Rango Horario</p>
             <h4 className="text-2xl font-black text-slate-900 dark:text-white">6AM - 10PM</h4>
           </div>
         </div>
 
         <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
           <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 dark:border-slate-800">
-            <h3 className="text-xs font-bold tracking-wider text-slate-900 uppercase dark:text-slate-100">Schedule Data Preview</h3>
+            <h3 className="text-xs font-bold tracking-wider text-slate-900 uppercase dark:text-slate-100">Vista Previa de Datos del Horario</h3>
 
             {hasAnalyzed ? (
               manualMode ? (
                 <div className="flex items-center gap-2 text-sm font-bold text-amber-700 dark:text-amber-400">
                   <span className="material-symbols-outlined text-sm">edit</span>
-                  Complete missing fields
+                  Completa los campos faltantes
                 </div>
               ) :
               conflictClasses.length === 0 ? (
                 <div className="flex items-center gap-2 text-sm font-bold text-green-600 dark:text-green-400">
                   <span className="material-symbols-outlined text-sm">verified</span>
-                  No conflicts detected
+                  Sin conflictos detectados
                 </div>
               ) : (
                 <div className="flex items-center gap-2 text-sm font-bold text-amber-700 dark:text-amber-400">
                   <span className="material-symbols-outlined text-sm">warning</span>
-                  Conflicts detected
+                  Conflictos detectados
                 </div>
               )
             ) : (
-              <div className="text-xs text-slate-500">Aun no hay analisis del archivo</div>
+              <div className="text-xs text-slate-500">Aún no hay análisis del archivo</div>
             )}
           </div>
 
@@ -1331,22 +1331,22 @@ export default function ExcelImportPage() {
                   <p className="mb-3 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-700">{manualNotice}</p>
                 ) : null}
                 <p className="mb-3 text-sm text-amber-700">
-                  Completa las columnas faltantes aqui. Luego presiona &quot;Confirm Schedule Import&quot; para validar conflictos y guardar.
+                  Completa las columnas faltantes aquí. Luego presiona &quot;Confirmar Importación de Horario&quot; para validar conflictos y guardar.
                 </p>
                 <table className="w-full text-left text-sm">
                   <thead className="bg-slate-50 text-[10px] font-bold text-slate-500 uppercase dark:bg-slate-800/50 dark:text-slate-400">
                     <tr>
-                      <th className="px-2 py-2">Faculty</th>
-                      <th className="px-2 py-2">Code</th>
-                      <th className="px-2 py-2">Subject</th>
-                      <th className="px-2 py-2">Teacher</th>
-                      <th className="px-2 py-2">Start Date</th>
-                      <th className="px-2 py-2">End Date</th>
-                      <th className="px-2 py-2">Day</th>
-                      <th className="px-2 py-2">Room</th>
-                      <th className="px-2 py-2">Start</th>
-                      <th className="px-2 py-2">End</th>
-                      <th className="px-2 py-2 text-right">Action</th>
+                      <th className="px-2 py-2">Facultad</th>
+                      <th className="px-2 py-2">Código</th>
+                      <th className="px-2 py-2">Asignatura</th>
+                      <th className="px-2 py-2">Docente</th>
+                      <th className="px-2 py-2">Fecha Inicio</th>
+                      <th className="px-2 py-2">Fecha Fin</th>
+                      <th className="px-2 py-2">Día</th>
+                      <th className="px-2 py-2">Salón</th>
+                      <th className="px-2 py-2">Inicio</th>
+                      <th className="px-2 py-2">Fin</th>
+                      <th className="px-2 py-2 text-right">Acción</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -1360,7 +1360,7 @@ export default function ExcelImportPage() {
                         <td className="px-2 py-2"><input placeholder="YYYY-MM-DD" className="w-32 rounded border border-slate-300 px-2 py-1" value={row.endDate} onChange={(e) => setManualRows((all) => all.map((item) => item.id === row.id ? { ...item, endDate: e.target.value } : item))} /></td>
                         <td className="px-2 py-2">
                           <select className="w-28 rounded border border-slate-300 px-2 py-1" value={row.day} onChange={(e) => setManualRows((all) => all.map((item) => item.id === row.id ? { ...item, day: e.target.value } : item))}>
-                            {["Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado", "Domingo"].map((day) => (
+                            {["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"].map((day) => (
                               <option key={`${row.id}-${day}`} value={day}>{day}</option>
                             ))}
                           </select>
@@ -1394,13 +1394,13 @@ export default function ExcelImportPage() {
               <table className="w-full text-left text-sm">
                 <thead className="bg-slate-50 text-[10px] font-bold text-slate-500 uppercase dark:bg-slate-800/50 dark:text-slate-400">
                   <tr>
-                    <th className="px-6 py-3">Class</th>
-                    <th className="px-6 py-3">Faculty</th>
-                    <th className="px-6 py-3">Slots</th>
+                    <th className="px-6 py-3">Clase</th>
+                    <th className="px-6 py-3">Facultad</th>
+                    <th className="px-6 py-3">Bloques</th>
                     <th className="px-6 py-3 min-w-[260px]">Rango fechas</th>
-                    <th className="px-6 py-3">Conflicts</th>
-                    <th className="px-6 py-3">Status</th>
-                    <th className="px-6 py-3 text-right">Action</th>
+                    <th className="px-6 py-3">Conflictos</th>
+                    <th className="px-6 py-3">Estado</th>
+                    <th className="px-6 py-3 text-right">Acción</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -1447,7 +1447,7 @@ export default function ExcelImportPage() {
                           </td>
                           <td className="px-6 py-4">
                             {!isConflict ? (
-                              <span className="rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-bold text-green-700 uppercase">Ready</span>
+                              <span className="rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-bold text-green-700 uppercase">Listo</span>
                             ) : item.decision === "pending" ? (
                               <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-bold text-amber-700 uppercase">Pendiente</span>
                             ) : item.decision === "accept" ? (
@@ -1494,7 +1494,7 @@ export default function ExcelImportPage() {
                       <td colSpan={7} className="px-6 py-10 text-center text-slate-500">
                           {hasAnalyzed
                             ? "No hay clases nuevas o modificadas para mostrar."
-                            : "Carga un archivo para ver la previsualizacion automaticamente."}
+                            : "Carga un archivo para ver la visualización automáticamente."}
                       </td>
                     </tr>
                   )}
@@ -1513,7 +1513,7 @@ export default function ExcelImportPage() {
                 disabled={!canConfirmImport}
                 className="rounded-lg bg-primary px-8 py-3 font-bold text-white shadow-lg shadow-primary/20 transition-all hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {isImporting ? "Importando..." : "Confirm Schedule Import"}
+                {isImporting ? "Importando..." : "Confirmar Importación de Horario"}
               </button>
 
               <button
@@ -1521,7 +1521,7 @@ export default function ExcelImportPage() {
                 onClick={clearImport}
                 className="rounded-lg px-8 py-3 font-bold text-slate-600 transition-all hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
               >
-                Cancel Import
+                Cancelar Importación
               </button>
             </div>
 
@@ -1540,7 +1540,7 @@ export default function ExcelImportPage() {
                 <p className="mt-2 text-xs text-slate-500">{importProgress.detail}</p>
                 {importProgress.percent >= 98 ? (
                   <p className="mt-2 rounded-md bg-amber-50 px-2.5 py-1.5 text-xs text-amber-700">
-                    Esta fase puede tardar. Es normal y no significa que el sistema se haya caido.
+                    Esta fase puede tardar. Es normal y no significa que el sistema se haya caído.
                   </p>
                 ) : null}
               </div>
@@ -1548,12 +1548,12 @@ export default function ExcelImportPage() {
 
             {hasAnalyzed && conflictClasses.length > 0 ? (
               <p className="max-w-lg text-center text-sm text-amber-700">
-                Conflicts detected. Debes aceptar o rechazar los {pendingConflictCount} conflictos pendientes para continuar.
+                Conflictos detectados. Debes aceptar o rechazar los {pendingConflictCount} conflictos pendientes para continuar.
               </p>
             ) : null}
 
             {hasAnalyzed && conflictClasses.length === 0 ? (
-              <p className="max-w-lg text-center text-sm text-green-700">No conflicts detected.</p>
+              <p className="max-w-lg text-center text-sm text-green-700">Sin conflictos detectados.</p>
             ) : null}
 
             {hasAnalyzed && !manualMode && effectiveImportClassCount === 0 ? (
@@ -1564,7 +1564,7 @@ export default function ExcelImportPage() {
 
             {importResult ? (
               <p className="max-w-lg rounded-md bg-green-50 px-3 py-2 text-center text-sm text-green-700">
-                Importacion exitosa: {importResult.rowsCount} filas procesadas, {importResult.classesCount} clases y {importResult.slotsCount} bloques.
+                Importación exitosa: {importResult.rowsCount} filas procesadas, {importResult.classesCount} clases y {importResult.slotsCount} bloques.
               </p>
             ) : null}
 
@@ -1575,16 +1575,16 @@ export default function ExcelImportPage() {
         </div>
 
         <div className="space-y-4 pt-10">
-          <h3 className="text-lg font-bold text-slate-900 dark:text-slate-100">Previous Imports History</h3>
+          <h3 className="text-lg font-bold text-slate-900 dark:text-slate-100">Historial de Importaciones Anteriores</h3>
           <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
             <table className="w-full text-left text-sm">
               <thead className="bg-slate-50 text-[10px] font-bold text-slate-500 uppercase dark:bg-slate-800/50 dark:text-slate-400">
                 <tr>
-                  <th className="px-6 py-3">Date</th>
-                  <th className="px-6 py-3">Source File</th>
-                  <th className="px-6 py-3">Classes</th>
-                  <th className="px-6 py-3">Conflicts</th>
-                  <th className="px-6 py-3">Status</th>
+                  <th className="px-6 py-3">Fecha</th>
+                  <th className="px-6 py-3">Archivo Fuente</th>
+                  <th className="px-6 py-3">Clases</th>
+                  <th className="px-6 py-3">Conflictos</th>
+                  <th className="px-6 py-3">Estado</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -1611,7 +1611,7 @@ export default function ExcelImportPage() {
                 ) : (
                   <tr>
                     <td colSpan={5} className="px-6 py-8 text-center text-slate-500">
-                      No hay historial de imports todavia.
+                      No hay historial de importaciones todavía.
                     </td>
                   </tr>
                 )}

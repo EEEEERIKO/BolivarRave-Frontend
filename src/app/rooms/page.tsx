@@ -55,19 +55,19 @@ let roomsMemoryCache: RoomsCachePayload | null = null;
 const FLOOR_ONE_ALLOWED = new Set([
   "aula foro union 101",
   "aula foro unac 102",
-  "sala informatica 1 bolivar",
-  "sala informatica 2 bolivar",
+  "sala informática 1 bolivar",
+  "sala informática 2 bolivar",
 ]);
 
 const EXCLUDED_EXACT_ROOM_NAMES = new Set<string>();
 
 const EXCLUDED_NORMALIZED_ROOM_NAMES = new Set([
   "salon 200",
-  "salon academia de musica 200",
+  "salon academia de música 200",
   "salon 205 - sillas",
   "salon 206 - sillas",
   "salon 305",
-  "laboratorio de simulacion financiera 403",
+  "laboratorio de simulación financiera 403",
   "501",
   "502",
   "503",
@@ -88,9 +88,21 @@ function extractRoomNumber(roomName: string): number {
   return match ? parseInt(match[1]) : 9999; // 9999 al final si no tiene número
 }
 
-function parseTimeToMinutes(isoTime: string): number {
-  const time = isoTime.substring(11, 16);
-  const [hours, minutes] = time.split(":").map(Number);
+function formatTimeLabel(value: string): string {
+  const trimmed = value.trim();
+  const isoMatch = trimmed.match(/T(\d{2}:\d{2})/);
+  if (isoMatch?.[1]) return isoMatch[1];
+
+  const plainMatch = trimmed.match(/^(\d{1,2}:\d{2})/);
+  if (plainMatch?.[1]) return plainMatch[1];
+
+  return trimmed;
+}
+
+function parseTimeToMinutes(value: string): number {
+  const label = formatTimeLabel(value);
+  const [hours, minutes] = label.split(":").map(Number);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return Number.NaN;
   return hours * 60 + minutes;
 }
 
@@ -142,20 +154,20 @@ function isRoomVisible(room: { nombre: string; piso: number | null }): boolean {
 function getStatusMeta(status: RoomStatus) {
   if (status === "Occupied") {
     return {
-      label: "In Class",
+      label: "En Clase",
       icon: "play_circle",
       pillClass: "bg-rose-100 text-rose-700 border border-rose-200",
     };
   }
   if (status === "Starting Soon") {
     return {
-      label: "Starts Soon",
+      label: "Inicia Pronto",
       icon: "schedule",
       pillClass: "bg-amber-100 text-amber-800 border border-amber-200",
     };
   }
   return {
-    label: "Available",
+    label: "Disponible",
     icon: "check_circle",
     pillClass: "bg-emerald-100 text-emerald-700 border border-emerald-200",
   };
@@ -293,6 +305,9 @@ export default function RoomsPage() {
             const currentSchedule = todaySchedules.find((item) => {
               const start = parseTimeToMinutes(item.horaInicio);
               const end = parseTimeToMinutes(item.horaFin);
+              if (!Number.isFinite(start) || !Number.isFinite(end)) {
+                return false;
+              }
               return currentMinutes >= start && currentMinutes < end;
             });
 
@@ -312,18 +327,18 @@ export default function RoomsPage() {
                   remaining = `Starts in ${minutesUntilStart}m`;
                   cardDetail = `Starts in ${minutesUntilStart}m`;
                 } else {
-                  cardDetail = `Next class at ${nextSchedule.horaInicio.substring(11, 16)}`;
+                  cardDetail = `Next class at ${formatTimeLabel(nextSchedule.horaInicio)}`;
                 }
               } else if (todaySchedules.length > 0) {
                 const lastTodaySchedule = todaySchedules[todaySchedules.length - 1];
-                cardDetail = `Last class ended at ${lastTodaySchedule.horaFin.substring(11, 16)}`;
+                cardDetail = `Last class ended at ${formatTimeLabel(lastTodaySchedule.horaFin)}`;
               }
             }
 
             const session = displaySchedule ? displaySchedule.evento.nombrePrincipal : "No active class";
             const professor = displaySchedule ? displaySchedule.evento.responsable : "N/A";
             const schedule = displaySchedule
-              ? `${displaySchedule.horaInicio.substring(11, 16)} - ${displaySchedule.horaFin.substring(11, 16)}`
+              ? `${formatTimeLabel(displaySchedule.horaInicio)} - ${formatTimeLabel(displaySchedule.horaFin)}`
               : "Available now";
 
             rooms.push({
@@ -379,7 +394,7 @@ export default function RoomsPage() {
     return Array.from(floors.entries())
       .sort((a, b) => b[0] - a[0])
       .map(([floor, rooms]) => ({
-        floor: `Floor ${floor}`,
+        floor: `Piso ${floor}`,
         rooms: rooms.sort((a, b) => extractRoomNumber(a.nombre) - extractRoomNumber(b.nombre)),
       }));
   }, [allRoomsData]);
@@ -395,7 +410,7 @@ export default function RoomsPage() {
       <div className="flex h-[calc(100vh-4rem)] items-center justify-center">
         <div className="text-center">
           <div className="mb-4 h-8 w-8 animate-spin rounded-full border-4 border-slate-200 border-t-primary"></div>
-          <p className="text-slate-600">Loading rooms...</p>
+          <p className="text-slate-600">Cargando salones...</p>
         </div>
       </div>
     );
@@ -405,7 +420,7 @@ export default function RoomsPage() {
     return (
       <div className="flex h-[calc(100vh-4rem)] items-center justify-center">
         <div className="rounded-lg border border-red-200 bg-red-50 p-6 text-center">
-          <p className="text-red-600">Error loading rooms: {error}</p>
+          <p className="text-red-600">Error al cargar salones: {error}</p>
         </div>
       </div>
     );
@@ -415,12 +430,12 @@ export default function RoomsPage() {
     <div className="flex h-[calc(100vh-4rem)] overflow-hidden">
       <div className="flex-1 overflow-y-auto p-8">
         <div className="mb-8">
-          <h3 className="mb-1 text-2xl font-bold">Room Availability</h3>
-          <p className="text-sm text-slate-500">Real-time occupancy status across all floors.</p>
+          <h3 className="mb-1 text-2xl font-bold">Disponibilidad de Salones</h3>
+          <p className="text-sm text-slate-500">Estado de ocupación en tiempo real en todos los pisos.</p>
           <div className="mt-6 flex gap-4">
-            <Legend dot="bg-emerald-500" label="Available" />
-            <Legend dot="bg-rose-500" label="Occupied" />
-            <Legend dot="bg-amber-400" label="Starting Soon" />
+            <Legend dot="bg-emerald-500" label="Disponible" />
+            <Legend dot="bg-rose-500" label="En Clase" />
+            <Legend dot="bg-amber-400" label="Inicia Pronto" />
           </div>
         </div>
 
@@ -451,7 +466,7 @@ export default function RoomsPage() {
       <aside className="w-80 overflow-y-auto border-l border-primary/10 bg-white dark:bg-slate-900">
         <div className="p-6">
           <div className="mb-8 flex items-center justify-between">
-            <h3 className="text-sm font-bold tracking-wider text-slate-400 uppercase">Room Information</h3>
+            <h3 className="text-sm font-bold tracking-wider text-slate-400 uppercase">Información del Salón</h3>
             <button className="rounded p-1 hover:bg-slate-100 dark:hover:bg-slate-800">
               <span className="material-symbols-outlined text-slate-400">close</span>
             </button>
@@ -467,14 +482,14 @@ export default function RoomsPage() {
             </div>
             {selectedInfo.capacidad && (
               <p className="mt-2 text-xs text-slate-600 dark:text-slate-400">
-                Capacity: {selectedInfo.capacidad} persons
+                Capacidad: {selectedInfo.capacidad} personas
               </p>
             )}
           </div>
 
           <div className="space-y-6">
             <div>
-              <p className="mb-2 text-[10px] font-bold tracking-widest text-slate-400 uppercase">Current Session</p>
+              <p className="mb-2 text-[10px] font-bold tracking-widest text-slate-400 uppercase">Sesión Actual</p>
               <div className="space-y-1">
                 <h5 className="font-bold text-slate-900 dark:text-slate-100">{selectedInfo.session}</h5>
                 <p className="text-xs text-slate-500">{selectedInfo.section}</p>
@@ -482,20 +497,20 @@ export default function RoomsPage() {
             </div>
 
             <div>
-              <p className="mb-2 text-[10px] font-bold tracking-widest text-slate-400 uppercase">Professor</p>
+              <p className="mb-2 text-[10px] font-bold tracking-widest text-slate-400 uppercase">Docente</p>
               <div className="flex items-center gap-3">
                 <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-200 dark:bg-slate-700">
                   <span className="material-symbols-outlined text-slate-400">person</span>
                 </div>
                 <div>
                   <p className="text-sm font-semibold">{selectedInfo.professor}</p>
-                  <p className="text-[10px] text-slate-500">Department</p>
+                  <p className="text-[10px] text-slate-500">Departamento</p>
                 </div>
               </div>
             </div>
 
             <div>
-              <p className="mb-2 text-[10px] font-bold tracking-widest text-slate-400 uppercase">Schedule</p>
+              <p className="mb-2 text-[10px] font-bold tracking-widest text-slate-400 uppercase">Horario</p>
               <div className="flex items-center gap-2 text-sm">
                 <span className="material-symbols-outlined text-base text-slate-400">schedule</span>
                 <span>
@@ -506,22 +521,22 @@ export default function RoomsPage() {
             </div>
 
             <div className="border-t border-slate-100 pt-6 dark:border-slate-800">
-              <p className="mb-4 text-[10px] font-bold tracking-widest text-slate-400 uppercase">Room Equipment</p>
+              <p className="mb-4 text-[10px] font-bold tracking-widest text-slate-400 uppercase">Equipamiento del Salón</p>
               <div className="grid grid-cols-2 gap-4">
-                <Equip icon="videocam" label="Projector" />
-                <Equip icon="wifi" label="Hi-Speed Wi-Fi" />
+                <Equip icon="videocam" label="Proyector" />
+                <Equip icon="wifi" label="Wi-Fi de Alta Velocidad" />
                 <Equip icon="tv" label="Smart TV" />
-                <Equip icon="volume_up" label="Sound System" />
+                <Equip icon="volume_up" label="Sistema de Sonido" />
               </div>
             </div>
 
             <div className="pt-6">
               <button className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-white shadow-lg shadow-primary/20 transition-all hover:bg-primary/90">
                 <span className="material-symbols-outlined text-sm">edit</span>
-                Manage Schedule
+                Administrar Horario
               </button>
               <button className="mt-3 w-full rounded-xl border border-slate-200 py-3 text-sm font-bold text-slate-600 transition-all hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800">
-                View Full History
+                Ver Historial Completo
               </button>
             </div>
           </div>

@@ -216,80 +216,80 @@ const getInitialEditEvent = (): EditEventForm => ({
   end: "10:00",
 });
 
-const weekDays = ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado", "Domingo"];
+const weekDays = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"];
 const shortMonthNames = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
 const monthNames = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
-const pickerWeekDays = ["Lun", "Mar", "Mie", "Jue", "Vie", "Sab", "Dom"];
+const pickerWeekDays = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
 
 const faculties = [
   "Facultad de Ciencias Administrativas y Contables",
-  "Facultad de Ciencias Humanas y de la Educacion",
+  "Facultad de Ciencias Humanas y de la Educación",
   "Facultad de Ciencias de la Salud",
-  "Facultad de Ingenieria",
-  "Facultad de Teologia y Religion",
+  "Facultad de Ingeniería",
+  "Facultad de Teología y Religión",
 ];
 
 const rooms = [
   "Aula Foro Union",
   "Aula Foro UNAC",
-  "Sala Informatica 1 Bolivar",
-  "Sala Informatica 2 Bolivar",
-  "Sala de Simulacion 1",
-  "Sala de Simulacion 2",
-  "Sala de Simulacion 3",
-  "Laboratorio de analisis de datos y simulacion financiera",
+  "Sala Informática 1 Bolivar",
+  "Sala Informática 2 Bolivar",
+  "Sala de Simulación 1",
+  "Sala de Simulación 2",
+  "Sala de Simulación 3",
+  "Laboratorio de análisis de datos y simulación financiera",
   "Laboratorio de Desarrollo de Software (LDS)",
-  "Laboratorio de Fisica",
+  "Laboratorio de Física",
   "Laboratorio de Infantil",
-  "Laboratorio de Musica",
+  "Laboratorio de Música",
   "Laboratorio TAPH Bucaramanga",
-  "Presencial asistida por tecnologia",
-  "Sala de Capacitacion - Lab Industrial",
-  "Sala de Informatica ICOLVEN - Primer piso",
-  "Sala de Informatica ICOLVEN - Segundo piso",
-  "Sala de Produccion y Picking- Lab Industrial",
-  "Salon 16 TAPH",
-  "Salon 18 TAPH",
-  "Salon 19 TAPH",
-  "Salon 20 TAPH",
-  "Salon 21 TAPH",
-  "Salon 22 TAPH",
-  "Salon 29 TAPH",
-  "Salon 200",
-  "Salon 201",
-  "Salon 202",
-  "Salon 203",
-  "Salon 205",
-  "Salon 206",
-  "Salon 301",
-  "Salon 302",
-  "Salon 303",
-  "Salon 304",
-  "Salon 305",
-  "Salon 401",
-  "Salon 402",
-  "Salon 406",
-  "Salon 505",
-  "Salon 506",
-  "Salon Academia de Musica 103",
-  "Salon Academia de Musica 104",
-  "Salon Academia de Musica 105",
-  "Salon Academia de Musica 107",
-  "Salon Academia de Musica 108",
-  "Salon Academia de Musica 109",
-  "Salon Academia de Musica 200",
-  "Salon Academia de Musica 203",
-  "Salon Academia de Musica 204",
-  "Salon Academia de Musica 205",
-  "Salon Academia de Musica 206",
-  "Salon Academia de Musica 301",
-  "Salon Academia de Musica 303",
-  "Salon Academia de Musica 304",
-  "Salon Academia de Musica 305",
+  "Presencial asistida por tecnología",
+  "Sala de Capacitación - Lab Industrial",
+  "Sala de Informática ICOLVEN - Primer piso",
+  "Sala de Informática ICOLVEN - Segundo piso",
+  "Sala de Producción y Picking- Lab Industrial",
+  "Salón 16 TAPH",
+  "Salón 18 TAPH",
+  "Salón 19 TAPH",
+  "Salón 20 TAPH",
+  "Salón 21 TAPH",
+  "Salón 22 TAPH",
+  "Salón 29 TAPH",
+  "Salón 200",
+  "Salón 201",
+  "Salón 202",
+  "Salón 203",
+  "Salón 205",
+  "Salón 206",
+  "Salón 301",
+  "Salón 302",
+  "Salón 303",
+  "Salón 304",
+  "Salón 305",
+  "Salón 401",
+  "Salón 402",
+  "Salón 406",
+  "Salón 505",
+  "Salón 506",
+  "Salón Academia de Música 103",
+  "Salón Academia de Música 104",
+  "Salón Academia de Música 105",
+  "Salón Academia de Música 107",
+  "Salón Academia de Música 108",
+  "Salón Academia de Música 109",
+  "Salón Academia de Música 200",
+  "Salón Academia de Música 203",
+  "Salón Academia de Música 204",
+  "Salón Academia de Música 205",
+  "Salón Academia de Música 206",
+  "Salón Academia de Música 301",
+  "Salón Academia de Música 303",
+  "Salón Academia de Música 304",
+  "Salón Academia de Música 305",
   "Aula Interamericana 501",
   "Aula Interamericana 502",
   "Aula Interamericana 503",
-  "Solicitar salon a Planeacion",
+  "Solicitar salón a Planeación",
   "Virtual",
 ];
 
@@ -336,6 +336,8 @@ const normalizeKey = (value: string) =>
     .replace(/\s+/g, " ")
     .trim();
 
+const normalizeDayKey = (value: string) => normalizeKey(value);
+
 const hashString = (value: string) => {
   let hash = 0;
   for (let i = 0; i < value.length; i++) {
@@ -345,60 +347,53 @@ const hashString = (value: string) => {
   return Math.abs(hash);
 };
 
-const facultyToneMap: Array<{ keys: string[]; tones: string[] }> = [
+const facultyToneMap: Array<{ keys: string[]; tone: string }> = [
   {
     keys: ["facultad de ciencias administrativas y contables", "administrativas y contables"],
-    tones: [
-      "bg-emerald-50 border-emerald-700 text-emerald-900",
-      "bg-emerald-100 border-emerald-700 text-emerald-900",
-      "bg-teal-50 border-teal-700 text-teal-900",
-      "bg-teal-100 border-teal-700 text-teal-900",
-    ],
+    tone: "bg-emerald-50 border-emerald-700 text-emerald-900",
   },
   {
-    keys: ["facultad de ciencias humanas y de la educacion", "humanas y de la educacion"],
-    tones: [
-      "bg-violet-50 border-violet-700 text-violet-900",
-      "bg-violet-100 border-violet-700 text-violet-900",
-      "bg-fuchsia-50 border-fuchsia-700 text-fuchsia-900",
-      "bg-fuchsia-100 border-fuchsia-700 text-fuchsia-900",
-    ],
+    keys: ["facultad de ciencias humanas y de la educación", "humanas y de la educación"],
+    tone: "bg-violet-50 border-violet-700 text-violet-900",
   },
   {
     keys: ["facultad de ciencias de la salud", "ciencias de la salud"],
-    tones: [
-      "bg-rose-50 border-rose-700 text-rose-900",
-      "bg-rose-100 border-rose-700 text-rose-900",
-      "bg-pink-50 border-pink-700 text-pink-900",
-      "bg-pink-100 border-pink-700 text-pink-900",
-    ],
+    tone: "bg-rose-50 border-rose-700 text-rose-900",
   },
   {
-    keys: ["facultad de ingenieria", "ingenieria"],
-    tones: [
-      "bg-blue-50 border-blue-700 text-blue-900",
-      "bg-blue-100 border-blue-700 text-blue-900",
-      "bg-sky-50 border-sky-700 text-sky-900",
-      "bg-sky-100 border-sky-700 text-sky-900",
-    ],
+    keys: ["facultad de ingeniería", "ingeniería"],
+    tone: "bg-blue-50 border-blue-700 text-blue-900",
   },
   {
-    keys: ["facultad de teologia y religion", "teologia y religion"],
-    tones: [
-      "bg-amber-50 border-amber-700 text-amber-900",
-      "bg-amber-100 border-amber-700 text-amber-900",
-      "bg-yellow-50 border-yellow-700 text-yellow-900",
-      "bg-yellow-100 border-yellow-700 text-yellow-900",
-    ],
+    keys: ["facultad de teología y religión", "teología y religión"],
+    tone: "bg-amber-50 border-amber-700 text-amber-900",
   },
 ];
 
-const defaultFacultyTones = [
-  "bg-slate-50 border-slate-700 text-slate-900",
-  "bg-slate-100 border-slate-700 text-slate-900",
-  "bg-zinc-50 border-zinc-700 text-zinc-900",
-  "bg-zinc-100 border-zinc-700 text-zinc-900",
-];
+const defaultFacultyTone = "bg-slate-50 border-slate-700 text-slate-900";
+
+const facultyLegend = [
+  {
+    label: "Administrativas y contables",
+    tone: "bg-emerald-50 border-emerald-700",
+  },
+  {
+    label: "Humanas y de la educación",
+    tone: "bg-violet-50 border-violet-700",
+  },
+  {
+    label: "Ciencias de la salud",
+    tone: "bg-rose-50 border-rose-700",
+  },
+  {
+    label: "Ingeniería",
+    tone: "bg-blue-50 border-blue-700",
+  },
+  {
+    label: "Teología y religión",
+    tone: "bg-amber-50 border-amber-700",
+  },
+] as const;
 
 const inferReservationType = (event: ScheduleEvent): ReservationType => {
   if (event.reservationType) return event.reservationType;
@@ -425,12 +420,10 @@ const getEventVisualClass = (event: ScheduleEvent) => {
   }
 
   const facultyKey = normalizeKey(event.faculty);
-  const palette =
-    facultyToneMap.find((entry) => entry.keys.some((key) => facultyKey.includes(key)))?.tones ??
-    defaultFacultyTones;
-
-  const toneIndex = hashString(`${event.subject}|${event.code}`) % palette.length;
-  return palette[toneIndex] ?? palette[0] ?? defaultFacultyTones[0];
+  return (
+    facultyToneMap.find((entry) => entry.keys.some((key) => facultyKey.includes(normalizeKey(key))))?.tone ??
+    defaultFacultyTone
+  );
 };
 
 const getWeekdayName = (date: Date) => {
@@ -811,7 +804,7 @@ export default function SchedulesPage() {
       const selectedDateValue = dateValue(selectedDate);
 
       return events.filter((event) => {
-        if (event.day !== selectedDay || !filteredRooms.includes(event.room)) {
+        if (normalizeDayKey(event.day) !== normalizeDayKey(selectedDay) || !filteredRooms.includes(event.room)) {
           return false;
         }
 
@@ -836,7 +829,7 @@ export default function SchedulesPage() {
   const currentWeekEnd = useMemo(() => addDays(currentWeekStart, 6), [currentWeekStart]);
   const pickerMonthDays = useMemo(() => buildMonthGrid(pickerMonthCursor), [pickerMonthCursor]);
   const isTodayInVisibleWeek = dateValue(colombiaToday) >= dateValue(currentWeekStart) && dateValue(colombiaToday) <= dateValue(currentWeekEnd);
-  const showCurrentTimeMarker = selectedDay === getWeekdayName(colombiaToday) && isTodayInVisibleWeek;
+  const showCurrentTimeMarker = normalizeDayKey(selectedDay) === normalizeDayKey(getWeekdayName(colombiaToday)) && isTodayInVisibleWeek;
 
   const selectedEvent = events.find((event) => event.id === selectedEventId) ?? null;
   const selectedReservationType = selectedEvent ? inferReservationType(selectedEvent) : null;
@@ -1525,97 +1518,98 @@ export default function SchedulesPage() {
             {remoteLoadError}
           </div>
         ) : null}
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-          <div className="flex flex-wrap items-center gap-3">
-            <h1 className="text-lg font-bold">Academic Planner - Schedules</h1>
-            <span className="rounded-full bg-[#295786]/10 px-3 py-1 text-xs font-semibold text-[#295786]">
-              {weekRangeLabel}
-            </span>
-            <div className="relative" ref={weekPickerRef}>
-              <button
-                type="button"
-                onClick={() =>
-                  setIsWeekPickerOpen((open) => {
-                    const next = !open;
-                    if (next) {
-                      setPickerMonthCursor(startOfMonth(currentWeekStart));
-                    }
-                    return next;
-                  })
-                }
-                className="inline-flex items-center justify-center rounded-lg border border-slate-200 p-2 text-slate-600 transition hover:bg-slate-50"
-                title="Seleccionar semana"
-                aria-label="Seleccionar semana"
-              >
-                <span className="material-symbols-outlined text-[20px]">calendar_month</span>
-              </button>
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+<h1 className="text-lg font-bold">Horario Edificio Bolivar Rave</h1>
+          
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:flex-1 lg:justify-center lg:gap-2">
+            <div className="flex items-center gap-2">
+              <span className="rounded-full bg-[#295786]/10 px-3 py-1 text-xs font-semibold text-[#295786] whitespace-nowrap">
+                {weekRangeLabel}
+              </span>
+              <div className="relative" ref={weekPickerRef}>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setIsWeekPickerOpen((open) => {
+                      const next = !open;
+                      if (next) {
+                        setPickerMonthCursor(startOfMonth(currentWeekStart));
+                      }
+                      return next;
+                    })
+                  }
+                  className="inline-flex items-center justify-center rounded-lg border border-slate-200 p-2 text-slate-600 transition hover:bg-slate-50"
+                  title="Seleccionar semana"
+                  aria-label="Seleccionar semana"
+                >
+                  <span className="material-symbols-outlined text-[20px]">calendar_month</span>
+                </button>
 
-              {isWeekPickerOpen ? (
-                <div className="absolute left-0 top-11 z-40 w-80 rounded-lg border border-slate-200 bg-white p-3 shadow-lg">
-                  <div className="mb-2 flex items-center justify-between">
-                    <button
-                      type="button"
-                      onClick={() => setPickerMonthCursor((current) => new Date(current.getFullYear(), current.getMonth() - 1, 1))}
-                      className="rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
-                    >
-                      ←
-                    </button>
-                    <p className="text-sm font-semibold text-slate-800">
-                      {monthNames[pickerMonthCursor.getMonth()]} {pickerMonthCursor.getFullYear()}
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => setPickerMonthCursor((current) => new Date(current.getFullYear(), current.getMonth() + 1, 1))}
-                      className="rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
-                    >
-                      →
-                    </button>
+                {isWeekPickerOpen ? (
+                  <div className="absolute left-0 top-11 z-40 w-80 rounded-lg border border-slate-200 bg-white p-3 shadow-lg">
+                    <div className="mb-2 flex items-center justify-between">
+                      <button
+                        type="button"
+                        onClick={() => setPickerMonthCursor((current) => new Date(current.getFullYear(), current.getMonth() - 1, 1))}
+                        className="rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                      >
+                        ←
+                      </button>
+                      <p className="text-sm font-semibold text-slate-800">
+                        {monthNames[pickerMonthCursor.getMonth()]} {pickerMonthCursor.getFullYear()}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setPickerMonthCursor((current) => new Date(current.getFullYear(), current.getMonth() + 1, 1))}
+                        className="rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                      >
+                        →
+                      </button>
+                    </div>
+
+                    <div className="mb-2 grid grid-cols-7 gap-1">
+                      {pickerWeekDays.map((day) => (
+                        <div key={`picker-day-${day}`} className="text-center text-[11px] font-semibold text-slate-500">
+                          {day}
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="grid grid-cols-7 gap-1">
+                      {pickerMonthDays.map((day) => {
+                        const isCurrentMonth = day.getMonth() === pickerMonthCursor.getMonth();
+                        const inSelectedWeek = dateValue(day) >= dateValue(currentWeekStart) && dateValue(day) <= dateValue(currentWeekEnd);
+                        const isSelectedDay = getWeekdayName(day) === selectedDay && inSelectedWeek;
+                        const isToday = dateValue(day) === dateValue(colombiaToday);
+
+                        return (
+                          <button
+                            key={`picker-date-${day.toISOString()}`}
+                            type="button"
+                            onClick={() => {
+                              const monday = startOfWeekMonday(day);
+                              setCurrentWeekStart(monday);
+                              setSelectedDay(getWeekdayName(day));
+                              setIsWeekPickerOpen(false);
+                            }}
+                            className={`relative h-8 rounded-md text-xs font-medium transition ${
+                              isCurrentMonth ? "text-slate-700 hover:bg-slate-100" : "text-slate-400 hover:bg-slate-50"
+                            } ${inSelectedWeek ? "bg-[#295786]/10" : ""} ${isSelectedDay ? "ring-2 ring-[#295786]" : ""} ${isToday ? "font-bold text-[#295786]" : ""}`}
+                            title={isToday ? "Hoy (Colombia)" : undefined}
+                          >
+                            {day.getDate()}
+                            {isToday ? <span className="absolute bottom-1 left-1/2 h-1.5 w-1.5 -translate-x-1/2 rounded-full bg-[#295786]" /> : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+
                   </div>
-
-                  <div className="mb-2 grid grid-cols-7 gap-1">
-                    {pickerWeekDays.map((day) => (
-                      <div key={`picker-day-${day}`} className="text-center text-[11px] font-semibold text-slate-500">
-                        {day}
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="grid grid-cols-7 gap-1">
-                    {pickerMonthDays.map((day) => {
-                      const isCurrentMonth = day.getMonth() === pickerMonthCursor.getMonth();
-                      const inSelectedWeek = dateValue(day) >= dateValue(currentWeekStart) && dateValue(day) <= dateValue(currentWeekEnd);
-                      const isSelectedDay = getWeekdayName(day) === selectedDay && inSelectedWeek;
-                      const isToday = dateValue(day) === dateValue(colombiaToday);
-
-                      return (
-                        <button
-                          key={`picker-date-${day.toISOString()}`}
-                          type="button"
-                          onClick={() => {
-                            const monday = startOfWeekMonday(day);
-                            setCurrentWeekStart(monday);
-                            setSelectedDay(getWeekdayName(day));
-                            setIsWeekPickerOpen(false);
-                          }}
-                          className={`relative h-8 rounded-md text-xs font-medium transition ${
-                            isCurrentMonth ? "text-slate-700 hover:bg-slate-100" : "text-slate-400 hover:bg-slate-50"
-                          } ${inSelectedWeek ? "bg-[#295786]/10" : ""} ${isSelectedDay ? "ring-2 ring-[#295786]" : ""} ${isToday ? "font-bold text-[#295786]" : ""}`}
-                          title={isToday ? "Hoy (Colombia)" : undefined}
-                        >
-                          {day.getDate()}
-                          {isToday ? <span className="absolute bottom-1 left-1/2 h-1.5 w-1.5 -translate-x-1/2 rounded-full bg-[#295786]" /> : null}
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                </div>
-              ) : null}
+                ) : null}
+              </div>
             </div>
-          </div>
-
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <div className="flex gap-1 rounded-lg bg-slate-100 p-1">
+            
+            <div className="flex gap-1 rounded-lg bg-slate-100 p-1 flex-nowrap overflow-x-auto">
               {weekDays.map((day, index) => {
                 const thisDayDate = addDays(currentWeekStart, index);
                 const isToday = dateValue(thisDayDate) === dateValue(colombiaToday);
@@ -1625,7 +1619,7 @@ export default function SchedulesPage() {
                     key={day}
                     type="button"
                     onClick={() => setSelectedDay(day)}
-                    className={`relative rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${
+                    className={`relative rounded-md px-3 py-1.5 text-xs font-semibold transition-colors whitespace-nowrap flex-shrink-0 ${
                       selectedDay === day ? "bg-[#295786] text-white" : "text-slate-600 hover:bg-white"
                     } ${isToday ? "ring-1 ring-[#295786]/60" : ""}`}
                     title={isToday ? "Hoy (Colombia)" : undefined}
@@ -1636,27 +1630,27 @@ export default function SchedulesPage() {
                 );
               })}
             </div>
+          </div>
 
-            <div className="flex items-center gap-2">
-              <input
-                type="text"
-                value={roomQuery}
-                onChange={(e) => setRoomQuery(e.target.value)}
-                placeholder="Filtrar salón..."
-                className="h-10 w-56 rounded-lg border border-slate-200 px-3 text-sm outline-none ring-[#295786]/30 focus:ring"
-              />
-              <button
-                type="button"
-                onClick={() => {
-                  setAvailableRoomsError(null);
-                  setAvailableRoomsResult([]);
-                  setIsAvailableSearchOpen(true);
-                }}
-                className="h-10 rounded-lg border border-[#295786]/25 bg-[#295786] px-3 text-xs font-semibold text-white transition hover:bg-[#1f456a]"
-              >
-                Buscar salón disponible
-              </button>
-            </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={roomQuery}
+              onChange={(e) => setRoomQuery(e.target.value)}
+              placeholder="Filtrar salón..."
+              className="h-10 w-56 rounded-lg border border-slate-200 px-3 text-sm outline-none ring-[#295786]/30 focus:ring"
+            />
+            <button
+              type="button"
+              onClick={() => {
+                setAvailableRoomsError(null);
+                setAvailableRoomsResult([]);
+                setIsAvailableSearchOpen(true);
+              }}
+              className="h-10 rounded-lg border border-[#295786]/25 bg-[#295786] px-3 text-xs font-semibold text-white transition hover:bg-[#1f456a]"
+            >
+              Buscar salón disponible
+            </button>
           </div>
         </div>
       </div>
@@ -1817,7 +1811,7 @@ export default function SchedulesPage() {
                     <h3 className="mt-1 text-base font-bold">{selectedEvent.code} | {selectedEvent.subject}</h3>
                     <p className="mt-2 text-sm text-slate-600">Facultad: {selectedEvent.faculty}</p>
                     <p className="text-sm text-slate-600">Docente: {selectedEvent.teacher}</p>
-                    <p className="text-sm text-slate-600">Salon: {selectedEvent.room}</p>
+                    <p className="text-sm text-slate-600">Salón: {selectedEvent.room}</p>
                     <p className="text-sm text-slate-600">Horario: {selectedEvent.start} - {selectedEvent.end}</p>
                     <p className="text-sm text-slate-600">Rango: {selectedEvent.startDate} a {selectedEvent.endDate}</p>
 
@@ -1881,7 +1875,7 @@ export default function SchedulesPage() {
                     value={editEvent.code}
                     onChange={(e) => setEditEvent((s) => ({ ...s, code: e.target.value }))}
                     className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-                    placeholder="Codigo"
+                    placeholder="Código"
                   />
                   <input
                     required
@@ -2012,51 +2006,13 @@ export default function SchedulesPage() {
             <div className="mt-4 space-y-3">
               <div>
                 <p className="mb-2 text-xs font-semibold text-slate-600 uppercase">Por facultad</p>
-                <div className="space-y-1.5">
-                  <div className="flex items-center gap-2">
-                    <div className="h-3 w-3 rounded border-2 border-emerald-700 bg-emerald-100" />
-                    <span className="text-xs text-slate-600">Administrativas y</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="h-3 w-3 rounded border-2 border-emerald-700 bg-teal-100" />
-                    <span className="text-xs text-slate-600">contables</span>
-                  </div>
-
-                  <div className="mt-2 flex items-center gap-2">
-                    <div className="h-3 w-3 rounded border-2 border-violet-700 bg-violet-100" />
-                    <span className="text-xs text-slate-600">Humanas y de la</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="h-3 w-3 rounded border-2 border-fuchsia-700 bg-fuchsia-100" />
-                    <span className="text-xs text-slate-600">educación</span>
-                  </div>
-
-                  <div className="mt-2 flex items-center gap-2">
-                    <div className="h-3 w-3 rounded border-2 border-rose-700 bg-rose-100" />
-                    <span className="text-xs text-slate-600">Ciencias de la</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="h-3 w-3 rounded border-2 border-pink-700 bg-pink-100" />
-                    <span className="text-xs text-slate-600">salud</span>
-                  </div>
-
-                  <div className="mt-2 flex items-center gap-2">
-                    <div className="h-3 w-3 rounded border-2 border-blue-700 bg-blue-100" />
-                    <span className="text-xs text-slate-600">Ingeniería (color</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="h-3 w-3 rounded border-2 border-sky-700 bg-sky-100" />
-                    <span className="text-xs text-slate-600">principal)</span>
-                  </div>
-
-                  <div className="mt-2 flex items-center gap-2">
-                    <div className="h-3 w-3 rounded border-2 border-amber-700 bg-amber-100" />
-                    <span className="text-xs text-slate-600">Teología y religión</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="h-3 w-3 rounded border-2 border-yellow-700 bg-yellow-100" />
-                    <span className="text-xs text-slate-600">(tonalidad)</span>
-                  </div>
+                <div className="space-y-2">
+                  {facultyLegend.map((item) => (
+                    <div key={item.label} className="flex items-center gap-2">
+                      <div className={`h-3 w-3 rounded border-2 ${item.tone}`} />
+                      <span className="text-xs text-slate-600">{item.label}</span>
+                    </div>
+                  ))}
                 </div>
               </div>
 

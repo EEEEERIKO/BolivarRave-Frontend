@@ -2,11 +2,12 @@
 "use client";
 
 import { fetchApiJson } from "@/lib/api-client";
+import { getCachedData, setCachedData } from "@/lib/cache-storage";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 type StaffView = "directory" | "schedule";
 type ContractPlan = "Plan 1" | "Plan 2" | "Plan 3" | "Plan Monitoria" | "Plan Especial";
-type WeekDay = "Lunes" | "Martes" | "Miercoles" | "Jueves" | "Viernes" | "Sabado";
+type WeekDay = "Lunes" | "Martes" | "Miércoles" | "Jueves" | "Viernes" | "Sábado";
 type StaffAccessRoleId = 1 | 2 | 3;
 
 type BirthDateParts = {
@@ -92,6 +93,7 @@ type EditablePausaItem = {
 };
 
 const HOURS = [
+  "05:00",
   "06:00",
   "07:00",
   "08:00",
@@ -111,11 +113,11 @@ const HOURS = [
   "22:00",
 ];
 
-const TIMELINE_START_MINUTES = 6 * 60;
+const TIMELINE_START_MINUTES = 5 * 60;
 const TIMELINE_END_MINUTES = 22 * 60;
 const TIMELINE_TOTAL_MINUTES = TIMELINE_END_MINUTES - TIMELINE_START_MINUTES;
 
-const WEEK_DAYS: WeekDay[] = ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado"];
+const WEEK_DAYS: WeekDay[] = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
 
 function calculateHoursDifference(startTime: string, endTime: string): number {
   if (!startTime || !endTime) return 0;
@@ -128,10 +130,10 @@ function calculateHoursDifference(startTime: string, endTime: string): number {
 const ACADEMIC_DAY_COLUMNS = [
   { key: "lunes", label: "L", dayName: "Lunes" },
   { key: "martes", label: "M", dayName: "Martes" },
-  { key: "miercoles", label: "X", dayName: "Miercoles" },
+  { key: "miercoles", label: "X", dayName: "Miércoles" },
   { key: "jueves", label: "J", dayName: "Jueves" },
   { key: "viernes", label: "V", dayName: "Viernes" },
-  { key: "sabado", label: "S", dayName: "Sabado" },
+  { key: "sabado", label: "S", dayName: "Sábado" },
   { key: "domingo", label: "D", dayName: "Domingo" },
 ] as const;
 
@@ -142,7 +144,7 @@ const ACADEMIC_TIME_SEGMENTS = [
 ] as const;
 
 const ACADEMIC_SEGMENT_ROWS = [
-  { label: "Manana", range: "06:00-12:00" },
+  { label: "Mañana", range: "06:00-12:00" },
   { label: "Tarde", range: "12:00-18:00" },
   { label: "Noche", range: "18:00-22:00" },
 ] as const;
@@ -231,13 +233,13 @@ function buildBirthDate(parts: BirthDateParts): string {
 }
 
 const ACCESS_ROLE_OPTIONS: Array<{ value: StaffAccessRoleId; label: string }> = [
-  { value: 1, label: "Admin" },
+  { value: 1, label: "Administrador" },
   { value: 2, label: "Monitor" },
   { value: 3, label: "Colaborador" },
 ];
 
 const accessRoleLabelById: Record<StaffAccessRoleId, string> = {
-  1: "Admin",
+  1: "Administrador",
   2: "Monitor",
   3: "Colaborador",
 };
@@ -245,10 +247,10 @@ const accessRoleLabelById: Record<StaffAccessRoleId, string> = {
 const MASTER_WEEK_DAYS: WorkWeekDay[] = [
   "Lunes",
   "Martes",
-  "Miercoles",
+  "Miércoles",
   "Jueves",
   "Viernes",
-  "Sabado",
+  "Sábado",
   "Domingo",
 ];
 
@@ -256,16 +258,16 @@ const PAUSA_TIPOS: Array<"Comida" | "Descanso"> = ["Comida", "Descanso"];
 const WORK_DAY_ORDER: Record<WorkWeekDay, number> = {
   Lunes: 1,
   Martes: 2,
-  Miercoles: 3,
+  Miércoles: 3,
   Jueves: 4,
   Viernes: 5,
-  Sabado: 6,
+  Sábado: 6,
   Domingo: 7,
 };
 
 const getCurrentWorkWeekDay = (): WorkWeekDay => {
   const currentDay = new Date().getDay();
-  const dayMap: WorkWeekDay[] = ["Domingo", "Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado"];
+  const dayMap: WorkWeekDay[] = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
   return dayMap[currentDay] ?? "Lunes";
 };
 
@@ -306,7 +308,7 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
   const hourCells = useMemo(
     () =>
       HOURS.map((hour) => (
-        <div key={hour} className="flex h-[56px] items-center justify-center px-4 text-center text-[10px] font-bold text-[#566166]">
+        <div key={hour} className="flex h-[56px] items-center justify-center px-4 text-center text-[10px] font-bold leading-none whitespace-nowrap tabular-nums text-[#566166]">
           {hour}
         </div>
       )),
@@ -327,8 +329,21 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
       return;
     }
 
+    const staffIds = new Set(staffList.map((staff) => staff.id));
+    const cachedJornadas = getCachedData<Record<string, StaffJornadaItem[]>>("jornadas_map");
+    const hasCached = Boolean(cachedJornadas && Object.keys(cachedJornadas).length > 0);
+
     try {
-      setIsLoadingJornadas(true);
+      // Show cached data immediately; revalidate in background.
+      if (hasCached && cachedJornadas) {
+        const cachedMap: Record<string, StaffJornadaItem[]> = {};
+        for (const staffId of staffIds) {
+          cachedMap[staffId] = cachedJornadas[staffId] ?? [];
+        }
+        setJornadaByStaffId(cachedMap);
+      }
+
+      setIsLoadingJornadas(!hasCached);
       setScheduleError(null);
 
       const results = await Promise.all(
@@ -349,8 +364,11 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
       }
 
       setJornadaByStaffId(nextMap);
+      setCachedData("jornadas_map", nextMap, { ttl: 10 * 60 * 1000 });
     } catch (error) {
-      setScheduleError(error instanceof Error ? error.message : "No se pudo cargar la jornada semanal.");
+      if (!hasCached) {
+        setScheduleError(error instanceof Error ? error.message : "No se pudo cargar la jornada semanal.");
+      }
     } finally {
       setIsLoadingJornadas(false);
     }
@@ -573,7 +591,7 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
     <div className="space-y-6">
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight text-[#2a3439]">Staff Master Weekly Schedule</h2>
+          <h2 className="text-2xl font-bold tracking-tight text-[#2a3439]">Horario maestro semanal del personal</h2>
           <p className="mt-1 text-sm text-[#566166]">Vista diaria • {selectedScheduleDay}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2 rounded-lg bg-[#f0f4f7] p-1">
@@ -595,28 +613,28 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
         <div className="rounded-xl border border-slate-200 bg-white p-5">
-          <p className="text-[10px] font-bold tracking-widest text-[#566166] uppercase">Active Staff</p>
+          <p className="text-[10px] font-bold tracking-widest text-[#566166] uppercase">Personal activo</p>
           <div className="mt-1 flex items-baseline gap-2">
             <span className="text-2xl font-black text-[#2a3439]">{activeStaffCount}</span>
-            <span className="text-xs font-bold text-[#3a5f94]">/ {staffList.length} Total</span>
+            <span className="text-xs font-bold text-[#3a5f94]">/ {staffList.length} en total</span>
           </div>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white p-5">
-          <p className="text-[10px] font-bold tracking-widest text-[#566166] uppercase">Sin Horario</p>
+          <p className="text-[10px] font-bold tracking-widest text-[#566166] uppercase">Sin horario</p>
           <div className="mt-1 flex items-baseline gap-2">
             <span className="text-2xl font-black text-[#9f403d]">{withoutScheduleCount}</span>
-            <span className="text-xs font-medium text-[#566166]">pendientes de asignacion</span>
+            <span className="text-xs font-medium text-[#566166]">pendientes de asignación</span>
           </div>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white p-5">
-          <p className="text-[10px] font-bold tracking-widest text-[#566166] uppercase">Con Horario</p>
+          <p className="text-[10px] font-bold tracking-widest text-[#566166] uppercase">Con horario</p>
           <div className="mt-1 flex items-baseline gap-2">
             <span className="text-2xl font-black text-[#2a3439]">{staffWithSchedule}</span>
-            <span className="text-xs font-medium text-[#566166]">trabajadores</span>
+            <span className="text-xs font-medium text-[#566166]">personas</span>
           </div>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white p-5">
-          <p className="text-[10px] font-bold tracking-widest text-[#566166] uppercase">Horas Semanales</p>
+          <p className="text-[10px] font-bold tracking-widest text-[#566166] uppercase">Horas semanales</p>
           <div className="mt-1 flex items-baseline gap-2">
             <span className="text-2xl font-black text-[#2a3439]">{totalHoursScheduled.toFixed(1)}</span>
             <span className="text-xs font-medium text-[#566166]">programadas</span>
@@ -632,18 +650,31 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
           <div className="w-64 border-r border-slate-200 flex flex-col">
             <div className="flex h-[56px] items-center gap-2 border-b border-slate-200 bg-[#f0f4f7] px-4 text-xs font-bold tracking-wider text-[#2a3439] uppercase shadow-[6px_0_12px_rgba(15,23,42,0.04)]">
               <span className="material-symbols-outlined text-sm">badge</span>
-              Staff Member
+              Miembro del personal
             </div>
 
             <div className="flex-1 divide-y divide-slate-200 overflow-y-auto" ref={leftColumnRef}>
               {isLoadingStaff || isLoadingJornadas ? (
                 <p className="p-4 text-sm text-[#566166]">Cargando horario maestro...</p>
               ) : staffList.length === 0 ? (
-                <p className="p-4 text-sm text-[#566166]">No hay staff registrado.</p>
+                <p className="p-4 text-sm text-[#566166]">No hay personal registrado.</p>
               ) : (
-                staffList.map((staff) => {
+                [...staffList].sort((a, b) => {
+                  const aJornada = jornadaByStaffId[a.id] ?? [];
+                  const bJornada = jornadaByStaffId[b.id] ?? [];
+                  const aStart = aJornada
+                    .map((row) => timeToMinutes(row.horaEntrada))
+                    .filter((value) => value >= 0)
+                    .sort((left, right) => left - right)[0] ?? Infinity;
+                  const bStart = bJornada
+                    .map((row) => timeToMinutes(row.horaEntrada))
+                    .filter((value) => value >= 0)
+                    .sort((left, right) => left - right)[0] ?? Infinity;
+                  return aStart - bStart;
+                }).map((staff) => {
                   const jornada = jornadaByStaffId[staff.id] ?? [];
-                  const jornadaForSelectedDay = jornada.filter((row) => row.diaSemana === selectedScheduleDay);
+                  const selectedDayKey = normalizeDayName(selectedScheduleDay);
+                  const jornadaForSelectedDay = jornada.filter((row) => normalizeDayName(row.diaSemana) === selectedDayKey);
                   const hasJornada = jornadaForSelectedDay.length > 0;
 
                   return (
@@ -678,20 +709,33 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
             <div className="flex-1 overflow-x-auto overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden" ref={rightColumnRef}>
               <div className="w-max">
                 {/* Header with hours - sticky at top */}
-                <div className="sticky top-0 z-10 grid bg-[#f0f4f7] divide-x divide-slate-200" style={{ gridTemplateColumns: "repeat(17, minmax(80px, 1fr))" }}>
+                <div className="sticky top-0 z-10 grid bg-[#f0f4f7] divide-x divide-slate-200" style={{ gridTemplateColumns: `repeat(${HOURS.length}, minmax(80px, 1fr))` }}>
                   {hourCells}
                 </div>
 
-                {/* Staff rows with schedule bands */}
+                {/* Filas del personal con bandas de horario */}
                 <div className="divide-y divide-slate-200">
               {isLoadingStaff || isLoadingJornadas ? (
                 <p className="p-4 text-sm text-[#566166]">Cargando horario maestro...</p>
               ) : staffList.length === 0 ? (
-                <p className="p-4 text-sm text-[#566166]">No hay staff registrado.</p>
+                <p className="p-4 text-sm text-[#566166]">No hay personal registrado.</p>
               ) : (
-                staffList.map((staff) => {
+                [...staffList].sort((a, b) => {
+                  const aJornada = jornadaByStaffId[a.id] ?? [];
+                  const bJornada = jornadaByStaffId[b.id] ?? [];
+                  const aStart = aJornada
+                    .map((row) => timeToMinutes(row.horaEntrada))
+                    .filter((value) => value >= 0)
+                    .sort((left, right) => left - right)[0] ?? Infinity;
+                  const bStart = bJornada
+                    .map((row) => timeToMinutes(row.horaEntrada))
+                    .filter((value) => value >= 0)
+                    .sort((left, right) => left - right)[0] ?? Infinity;
+                  return aStart - bStart;
+                }).map((staff) => {
                   const jornada = jornadaByStaffId[staff.id] ?? [];
-                  const jornadaForSelectedDay = jornada.filter((row) => row.diaSemana === selectedScheduleDay);
+                  const selectedDayKey = normalizeDayName(selectedScheduleDay);
+                  const jornadaForSelectedDay = jornada.filter((row) => normalizeDayName(row.diaSemana) === selectedDayKey);
                   const hasJornada = jornadaForSelectedDay.length > 0;
                   const firstStart = hasJornada ? jornadaForSelectedDay.map((row) => row.horaEntrada).sort()[0] : null;
                   const lastEnd = hasJornada ? jornadaForSelectedDay.map((row) => row.horaSalida).sort().slice(-1)[0] : null;
@@ -699,11 +743,27 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
 
                   return (
                     <div className="relative h-[74px] bg-white" key={staff.id}>
-                      <div className="absolute inset-0 grid divide-x divide-slate-200/60" style={{ gridTemplateColumns: "repeat(17, minmax(80px, 1fr))" }}>
+                      <div className="absolute inset-0 grid divide-x divide-slate-200/60" style={{ gridTemplateColumns: `repeat(${HOURS.length}, minmax(80px, 1fr))` }}>
                         {HOURS.map((hour) => (
                           <div key={`${staff.id}-${hour}`} className="h-full" />
                         ))}
                       </div>
+
+                      {/* Current time indicator if today */}
+                      {selectedScheduleDay === getCurrentWorkWeekDay() && (() => {
+                        const now = new Date();
+                        const currentMinutes = now.getHours() * 60 + now.getMinutes();
+                        if (currentMinutes >= TIMELINE_START_MINUTES && currentMinutes <= TIMELINE_END_MINUTES) {
+                          const leftPct = ((currentMinutes - TIMELINE_START_MINUTES) / TIMELINE_TOTAL_MINUTES) * 100;
+                          return (
+                            <div
+                              className="absolute top-0 bottom-0 w-0.5 bg-red-500 z-20"
+                              style={{ left: `${leftPct}%` }}
+                            />
+                          );
+                        }
+                        return null;
+                      })()}
 
                       <div className="absolute inset-y-2 rounded-r-md border-l-4 border-[#3a5f94] bg-[#3a5f94]/10 px-4" style={bandStyle}>
                         <div className="flex h-full items-center gap-2 overflow-hidden">
@@ -731,7 +791,7 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
           <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
             <div className="mb-4 flex items-start justify-between gap-4">
               <div>
-                <h3 className="text-xl font-black text-[#2a3439]">Horario de Trabajo</h3>
+                <h3 className="text-xl font-black text-[#2a3439]">Horario de trabajo</h3>
                 <p className="text-sm text-[#566166]">
                   {editingStaff.nombres} {editingStaff.apellidos} • N.{editingStaff.numeroStaff}
                 </p>
@@ -863,7 +923,7 @@ export default function StaffPage() {
   const [editBirthDateParts, setEditBirthDateParts] = useState<BirthDateParts>({ year: "", month: "", day: "" });
   const isOnShift = true;
   const balanceHours = 4;
-  const formattedBalanceHours = `${balanceHours > 0 ? "+" : ""}${balanceHours} hours`;
+  const formattedBalanceHours = `${balanceHours > 0 ? "+" : ""}${balanceHours} horas`;
 
   const selectedStaff = useMemo(() => {
     if (staffList.length === 0) return null;
@@ -872,7 +932,7 @@ export default function StaffPage() {
   }, [selectedStaffId, staffList]);
 
   const selectedStaffBalanceHours = selectedStaff?.balanceHoras ?? 0;
-  const selectedStaffFormattedBalanceHours = `${selectedStaffBalanceHours > 0 ? "+" : ""}${selectedStaffBalanceHours} hours`;
+  const selectedStaffFormattedBalanceHours = `${selectedStaffBalanceHours > 0 ? "+" : ""}${selectedStaffBalanceHours} horas`;
 
   const academicUnavailabilityMatrix = useMemo(() => {
     const slots = (selectedStaff?.bloqueosClase ?? [])
@@ -971,6 +1031,16 @@ export default function StaffPage() {
 
   const loadStaff = async () => {
     try {
+      // Try to restore from cache first
+      const cachedStaff = getCachedData<StaffApi[]>("staff_list");
+      if (cachedStaff && cachedStaff.length > 0) {
+        setStaffList(cachedStaff);
+        if (cachedStaff.length > 0) {
+          setSelectedStaffId((prev) => prev ?? cachedStaff[0]?.id ?? null);
+        }
+      }
+
+      // Load fresh data in the background
       setIsLoadingStaff(true);
       setStaffError(null);
 
@@ -980,6 +1050,7 @@ export default function StaffPage() {
 
       const nextStaff = Array.isArray(response.staff) ? response.staff : [];
       setStaffList(nextStaff);
+      setCachedData("staff_list", nextStaff);
 
       if (nextStaff.length > 0) {
         setSelectedStaffId((prev) => prev ?? nextStaff[0]?.id ?? null);
@@ -1344,8 +1415,8 @@ export default function StaffPage() {
           <div className="flex max-h-[92vh] w-full max-w-2xl flex-col rounded-2xl bg-white p-6 shadow-2xl">
             <div className="mb-4 flex items-center justify-between">
               <div>
-                <h3 className="text-xl font-extrabold text-[#2a3439]">Nuevo Staff</h3>
-                <p className="text-xs text-[#566166]">Formulario simbolico (sin integracion a backend)</p>
+                <h3 className="text-xl font-extrabold text-[#2a3439]">Nuevo personal</h3>
+                <p className="text-xs text-[#566166]">Formulario simbólico (sin integración con el backend)</p>
               </div>
               <button
                 className="rounded-lg border border-slate-200 px-3 py-1 text-xs font-bold text-[#566166] hover:bg-slate-50"
@@ -1359,7 +1430,7 @@ export default function StaffPage() {
             <form autoComplete="off" className="flex min-h-0 flex-1 flex-col" onSubmit={handleAddStaffSubmit}>
               <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-y-auto pr-1 md:grid-cols-2">
               <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-500">Numero de Staff</label>
+                <label className="text-xs font-bold text-slate-500">Número de personal</label>
                 <input
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                   onChange={(event) => setNewStaff((prev) => ({ ...prev, staffNumber: event.target.value }))}
@@ -1395,7 +1466,7 @@ export default function StaffPage() {
               </div>
 
               <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-500">Cedula de Ciudadania</label>
+                <label className="text-xs font-bold text-slate-500">Cédula de ciudadanía</label>
                 <input
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                   onChange={(event) => setNewStaff((prev) => ({ ...prev, citizenshipId: event.target.value }))}
@@ -1430,7 +1501,7 @@ export default function StaffPage() {
               </div>
 
               <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-500">Numero de Telefono</label>
+                <label className="text-xs font-bold text-slate-500">Número de teléfono</label>
                 <input
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                   onChange={(event) => setNewStaff((prev) => ({ ...prev, phone: event.target.value }))}
@@ -1442,7 +1513,7 @@ export default function StaffPage() {
               </div>
 
               <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-500">Fecha de Nacimiento</label>
+                <label className="text-xs font-bold text-slate-500">Fecha de nacimiento</label>
                 <div className="grid grid-cols-3 gap-2">
                   <select
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
@@ -1450,7 +1521,7 @@ export default function StaffPage() {
                     required
                     value={newBirthDateParts.year}
                   >
-                    <option value="">Ano</option>
+                    <option value="">Año</option>
                     {birthYearOptions.map((year) => (
                       <option key={year} value={year}>
                         {year}
@@ -1480,7 +1551,7 @@ export default function StaffPage() {
                     required
                     value={newBirthDateParts.day}
                   >
-                    <option value="">Dia</option>
+                    <option value="">Día</option>
                     {newBirthDayOptions.map((day) => (
                       <option key={day} value={day}>
                         {day}
@@ -1491,7 +1562,7 @@ export default function StaffPage() {
               </div>
 
               <div className="space-y-1 md:col-span-2">
-                <label className="text-xs font-bold text-slate-500">Rol de Acceso</label>
+                <label className="text-xs font-bold text-slate-500">Rol de acceso</label>
                 <select
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                   onChange={(event) =>
@@ -1508,7 +1579,7 @@ export default function StaffPage() {
               </div>
 
               <div className="space-y-1 md:col-span-2">
-                <label className="text-xs font-bold text-slate-500">Tipo de Contrato</label>
+                <label className="text-xs font-bold text-slate-500">Tipo de contrato</label>
                 <select
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                   onChange={(event) => setNewStaff((prev) => ({ ...prev, contractPlan: event.target.value as ContractPlan }))}
@@ -1524,7 +1595,7 @@ export default function StaffPage() {
 
               <div className="space-y-2 md:col-span-2">
                 <div className="flex items-center justify-between">
-                  <label className="text-xs font-bold text-slate-500">Horas de Clase (No Disponible)</label>
+                  <label className="text-xs font-bold text-slate-500">Horas de clase no disponibles</label>
                   <button
                     className="rounded-md border border-slate-300 px-2 py-1 text-[10px] font-bold text-[#566166]"
                     onClick={addUnavailableClassSlot}
@@ -1535,8 +1606,8 @@ export default function StaffPage() {
                 </div>
 
                 {unavailableClassSlots.length === 0 ? (
-                  <p className="rounded-lg border border-dashed border-slate-300 px-3 py-2 text-xs text-[#566166]">
-                    Sin horarios de clase cargados. Este campo es opcional.
+                    <p className="rounded-lg border border-dashed border-slate-300 px-3 py-2 text-xs text-[#566166]">
+                    No hay horarios de clase cargados. Este campo es opcional.
                   </p>
                 ) : (
                   unavailableClassSlots.map((slot, index) => (
@@ -1546,7 +1617,7 @@ export default function StaffPage() {
                         onChange={(event) => updateUnavailableClassSlot(slot.id, "day", event.target.value)}
                         value={slot.day}
                       >
-                        <option value="">Selecciona dia</option>
+                        <option value="">Selecciona un día</option>
                         {WEEK_DAYS.map((day) => (
                           <option key={day} value={day}>
                             {day}
@@ -1559,7 +1630,7 @@ export default function StaffPage() {
                         onChange={(event) => updateUnavailableClassSlot(slot.id, "startTime", event.target.value)}
                         value={slot.startTime}
                       >
-                        <option value="">Hora inicio</option>
+                        <option value="">Hora de inicio</option>
                         {CLASS_TIME_OPTIONS.map((time) => (
                           <option key={time} value={time}>
                             {time}
@@ -1572,7 +1643,7 @@ export default function StaffPage() {
                         onChange={(event) => updateUnavailableClassSlot(slot.id, "endTime", event.target.value)}
                         value={slot.endTime}
                       >
-                        <option value="">Hora fin</option>
+                        <option value="">Hora de fin</option>
                         {CLASS_TIME_OPTIONS.map((time) => (
                           <option key={time} value={time}>
                             {time}
@@ -1629,15 +1700,15 @@ export default function StaffPage() {
           <div className="flex max-h-[92vh] w-full max-w-2xl flex-col rounded-2xl bg-white p-6 shadow-2xl">
             <div className="mb-4">
               <div>
-                <h3 className="text-xl font-extrabold text-[#2a3439]">Editar Staff</h3>
-                <p className="text-xs text-[#566166]">Actualiza la informacion del perfil seleccionado</p>
+                <h3 className="text-xl font-extrabold text-[#2a3439]">Editar personal</h3>
+                <p className="text-xs text-[#566166]">Actualiza la información del perfil seleccionado</p>
               </div>
             </div>
 
             <form className="flex min-h-0 flex-1 flex-col" onSubmit={handleEditStaffSubmit}>
               <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-y-auto pr-1 md:grid-cols-2">
               <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-500">Numero de Staff</label>
+                <label className="text-xs font-bold text-slate-500">Número de personal</label>
                 <input
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                   onChange={(event) => setEditStaff((prev) => ({ ...prev, staffNumber: event.target.value }))}
@@ -1670,7 +1741,7 @@ export default function StaffPage() {
               </div>
 
               <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-500">Cedula de Ciudadania</label>
+                <label className="text-xs font-bold text-slate-500">Cédula de ciudadanía</label>
                 <input
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                   onChange={(event) => setEditStaff((prev) => ({ ...prev, citizenshipId: event.target.value }))}
@@ -1702,7 +1773,7 @@ export default function StaffPage() {
               </div>
 
               <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-500">Numero de Telefono</label>
+                <label className="text-xs font-bold text-slate-500">Número de teléfono</label>
                 <input
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                   onChange={(event) => setEditStaff((prev) => ({ ...prev, phone: event.target.value }))}
@@ -1713,7 +1784,7 @@ export default function StaffPage() {
               </div>
 
               <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-500">Fecha de Nacimiento</label>
+                <label className="text-xs font-bold text-slate-500">Fecha de nacimiento</label>
                 <div className="grid grid-cols-3 gap-2">
                   <select
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
@@ -1721,7 +1792,7 @@ export default function StaffPage() {
                     required
                     value={editBirthDateParts.year}
                   >
-                    <option value="">Ano</option>
+                    <option value="">Año</option>
                     {birthYearOptions.map((year) => (
                       <option key={year} value={year}>
                         {year}
@@ -1751,7 +1822,7 @@ export default function StaffPage() {
                     required
                     value={editBirthDateParts.day}
                   >
-                    <option value="">Dia</option>
+                    <option value="">Día</option>
                     {editBirthDayOptions.map((day) => (
                       <option key={day} value={day}>
                         {day}
@@ -1762,7 +1833,7 @@ export default function StaffPage() {
               </div>
 
               <div className="space-y-1 md:col-span-2">
-                <label className="text-xs font-bold text-slate-500">Rol de Acceso</label>
+                <label className="text-xs font-bold text-slate-500">Rol de acceso</label>
                 <select
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                   onChange={(event) =>
@@ -1779,7 +1850,7 @@ export default function StaffPage() {
               </div>
 
               <div className="space-y-1 md:col-span-2">
-                <label className="text-xs font-bold text-slate-500">Tipo de Contrato</label>
+                <label className="text-xs font-bold text-slate-500">Tipo de contrato</label>
                 <select
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                   onChange={(event) => setEditStaff((prev) => ({ ...prev, contractPlan: event.target.value as ContractPlan }))}
@@ -1795,7 +1866,7 @@ export default function StaffPage() {
 
               <div className="space-y-2 md:col-span-2">
                 <div className="flex items-center justify-between">
-                  <label className="text-xs font-bold text-slate-500">Horas de Clase (No Disponible)</label>
+                  <label className="text-xs font-bold text-slate-500">Horas de clase no disponibles</label>
                   <button
                     className="rounded-md border border-slate-300 px-2 py-1 text-[10px] font-bold text-[#566166]"
                     onClick={addEditUnavailableClassSlot}
@@ -1806,8 +1877,8 @@ export default function StaffPage() {
                 </div>
 
                 {editUnavailableClassSlots.length === 0 ? (
-                  <p className="rounded-lg border border-dashed border-slate-300 px-3 py-2 text-xs text-[#566166]">
-                    Sin horarios de clase cargados. Este campo es opcional.
+                    <p className="rounded-lg border border-dashed border-slate-300 px-3 py-2 text-xs text-[#566166]">
+                    No hay horarios de clase cargados. Este campo es opcional.
                   </p>
                 ) : (
                   editUnavailableClassSlots.map((slot, index) => (
@@ -1817,7 +1888,7 @@ export default function StaffPage() {
                         onChange={(event) => updateEditUnavailableClassSlot(slot.id, "day", event.target.value)}
                         value={slot.day}
                       >
-                        <option value="">Selecciona dia</option>
+                        <option value="">Selecciona un día</option>
                         {WEEK_DAYS.map((day) => (
                           <option key={day} value={day}>
                             {day}
@@ -1830,7 +1901,7 @@ export default function StaffPage() {
                         onChange={(event) => updateEditUnavailableClassSlot(slot.id, "startTime", event.target.value)}
                         value={slot.startTime}
                       >
-                        <option value="">Hora inicio</option>
+                        <option value="">Hora de inicio</option>
                         {CLASS_TIME_OPTIONS.map((time) => (
                           <option key={time} value={time}>
                             {time}
@@ -1843,7 +1914,7 @@ export default function StaffPage() {
                         onChange={(event) => updateEditUnavailableClassSlot(slot.id, "endTime", event.target.value)}
                         value={slot.endTime}
                       >
-                        <option value="">Hora fin</option>
+                        <option value="">Hora de fin</option>
                         {CLASS_TIME_OPTIONS.map((time) => (
                           <option key={time} value={time}>
                             {time}
@@ -1890,7 +1961,7 @@ export default function StaffPage() {
                   disabled={isSavingEditStaff}
                   type="submit"
                 >
-                  {isSavingEditStaff ? "Guardando..." : "Guardar Cambios"}
+                  {isSavingEditStaff ? "Guardando..." : "Guardar cambios"}
                 </button>
               </div>
             </form>
@@ -1906,7 +1977,7 @@ export default function StaffPage() {
           onClick={() => setView("directory")}
           type="button"
         >
-          Staff Directory
+          Directorio del personal
         </button>
         <button
           className={`rounded-lg px-4 py-2 text-xs font-bold transition-colors ${
@@ -1926,13 +1997,13 @@ export default function StaffPage() {
         <div className="flex min-w-0 flex-1 flex-col gap-6">
           <div className="flex items-end justify-between">
             <div>
-              <h2 className="tracking-tight text-2xl font-extrabold text-[#2a3439]">Staff Directory</h2>
-              <p className="text-sm text-[#566166]">Managing {staffList.length} active academic personnel</p>
+              <h2 className="tracking-tight text-2xl font-extrabold text-[#2a3439]">Directorio del personal</h2>
+              <p className="text-sm text-[#566166]">Gestionando {staffList.length} integrantes académicos activos</p>
             </div>
             <div className="flex gap-2">
               <button className="flex items-center gap-2 rounded-lg bg-[#d9e4ea] px-4 py-2 text-xs font-bold text-[#2a3439]">
                 <span className="material-symbols-outlined text-sm">filter_list</span>
-                Filter
+                Filtrar
               </button>
               <button
                 className="flex items-center gap-2 rounded-lg bg-[#3a5f94] px-4 py-2 text-xs font-bold text-white shadow-sm"
@@ -1940,7 +2011,7 @@ export default function StaffPage() {
                 type="button"
               >
                 <span className="material-symbols-outlined text-sm">person_add</span>
-                Add Staff
+                Agregar personal
               </button>
             </div>
           </div>
@@ -1949,9 +2020,9 @@ export default function StaffPage() {
 
           <div className="grid grid-cols-1 gap-4 overflow-y-auto pr-2 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden xl:grid-cols-2">
             {isLoadingStaff ? (
-              <p className="text-sm text-[#566166]">Cargando staff...</p>
+              <p className="text-sm text-[#566166]">Cargando personal...</p>
             ) : staffList.length === 0 ? (
-              <p className="text-sm text-[#566166]">No hay staff registrado aun.</p>
+              <p className="text-sm text-[#566166]">Aún no hay personal registrado.</p>
             ) : (
               staffList.map((staff) => {
                 const isActiveCard = selectedStaff?.id === staff.id;
@@ -1980,7 +2051,7 @@ export default function StaffPage() {
                           staff.estado === "Active" ? "bg-green-50 text-green-600" : "bg-slate-50 text-slate-400"
                         }`}
                       >
-                        {staff.estado === "Active" ? "Active" : "Inactive"}
+                        {staff.estado === "Active" ? "Activo" : "Inactivo"}
                       </span>
                     </div>
                   </button>
@@ -1994,16 +2065,16 @@ export default function StaffPage() {
               <div className="mb-3 flex items-center justify-between">
                 <h3 className="flex items-center gap-2 text-sm font-black text-[#153f73]">
                   <span className="material-symbols-outlined">assignment</span>
-                  Assigned Tasks: {selectedStaff?.nombres ?? "Staff"}
+                  Tareas asignadas: {selectedStaff?.nombres ?? "Personal"}
                 </h3>
-                <span className="text-[11px] font-bold text-[#566166]">2 Tasks Pending</span>
+                <span className="text-[11px] font-bold text-[#566166]">2 tareas pendientes</span>
               </div>
               <div className="space-y-2">
                 <div className="flex items-center gap-3 rounded-lg bg-white p-3 shadow-sm">
                   <input checked className="rounded border-slate-300 text-[#3a5f94] focus:ring-[#3a5f94]" type="checkbox" readOnly />
                   <div className="flex-1">
-                    <p className="text-xs font-bold text-[#566166] line-through">Clean Hallway 3 (North Wing)</p>
-                    <p className="text-[10px] text-slate-400">Completed at 08:30 AM</p>
+                    <p className="text-xs font-bold text-[#566166] line-through">Pasillo 3 limpio (ala norte)</p>
+                    <p className="text-[10px] text-slate-400">Completado a las 08:30</p>
                   </div>
                   <span className="material-symbols-outlined text-base text-green-500">check_circle</span>
                 </div>
@@ -2011,8 +2082,8 @@ export default function StaffPage() {
                 <div className="flex items-center gap-3 rounded-lg border-l-4 border-amber-400 bg-white p-3 shadow-sm">
                   <input className="rounded border-slate-300 text-[#3a5f94] focus:ring-[#3a5f94]" type="checkbox" />
                   <div className="flex-1">
-                    <p className="text-xs font-bold text-[#2a3439]">Set up Room 101 (AV Rack)</p>
-                    <p className="text-[10px] text-[#566166]">Priority: High • Due by 11:00 AM</p>
+                    <p className="text-xs font-bold text-[#2a3439]">Preparar salón 101 (rack AV)</p>
+                    <p className="text-[10px] text-[#566166]">Prioridad: alta • Vence a las 11:00</p>
                   </div>
                   <span className="material-symbols-outlined text-base text-amber-500">schedule</span>
                 </div>
@@ -2022,20 +2093,20 @@ export default function StaffPage() {
             <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
               <h4 className="mb-4 flex items-center gap-2 text-[11px] font-black tracking-widest text-[#566166] uppercase">
                 <span className="h-1.5 w-1.5 rounded-full bg-[#3a5f94]" />
-                Staff Daily Schedule
+                Horario diario del personal
               </h4>
               <div className="space-y-2">
                 <div className="flex items-center justify-between border-b border-slate-50 py-2">
-                  <span className="text-xs font-bold text-[#2a3439]">Morning Shift</span>
-                  <span className="text-xs text-[#566166]">07:00 AM - 12:00 PM</span>
+                  <span className="text-xs font-bold text-[#2a3439]">Turno de la mañana</span>
+                  <span className="text-xs text-[#566166]">07:00 - 12:00</span>
                 </div>
                 <div className="flex items-center justify-between rounded bg-amber-50 px-2 py-2 border-b border-slate-50">
-                  <span className="text-xs font-bold text-amber-700">Lunch Break</span>
-                  <span className="text-xs text-amber-700">12:00 PM - 01:00 PM</span>
+                  <span className="text-xs font-bold text-amber-700">Almuerzo</span>
+                  <span className="text-xs text-amber-700">12:00 - 13:00</span>
                 </div>
                 <div className="flex items-center justify-between border-b border-slate-50 py-2">
-                  <span className="text-xs font-bold text-[#2a3439]">Afternoon Shift</span>
-                  <span className="text-xs text-[#566166]">01:00 PM - 04:00 PM</span>
+                  <span className="text-xs font-bold text-[#2a3439]">Turno de la tarde</span>
+                  <span className="text-xs text-[#566166]">13:00 - 16:00</span>
                 </div>
               </div>
             </section>
@@ -2045,7 +2116,7 @@ export default function StaffPage() {
             <section className="min-h-[370px] rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
               <h4 className="mb-4 flex items-center gap-2 text-[11px] font-black tracking-widest text-[#566166] uppercase">
                 <span className="h-1.5 w-1.5 rounded-full bg-[#3a5f94]" />
-                Academic Unavailability
+                No disponibilidad académica
               </h4>
               <div className="space-y-1">
                 <div className="grid grid-cols-[112px_repeat(7,minmax(0,1fr))] gap-1">
@@ -2090,11 +2161,11 @@ export default function StaffPage() {
               </div>
               {hasAcademicUnavailability ? (
                 <p className="mt-2 text-center text-[10px] italic text-[#566166]">
-                  Highlighted blocks indicate class times.
+                  Los bloques resaltados indican horarios de clase.
                 </p>
               ) : (
                 <p className="mt-2 text-center text-[10px] italic text-[#566166]">
-                  No class blocks registered for this staff.
+                  No hay bloques de clase registrados para este personal.
                 </p>
               )}
               {academicBlockedSlotDetails.length > 0 ? (
@@ -2111,26 +2182,26 @@ export default function StaffPage() {
             <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
               <h4 className="mb-4 flex items-center gap-2 text-[11px] font-black tracking-widest text-[#566166] uppercase">
                 <span className="h-1.5 w-1.5 rounded-full bg-[#3a5f94]" />
-                Recent Activities &amp; Reports
+                Actividades recientes e informes
               </h4>
               <div className="relative space-y-6 pl-6 before:absolute before:top-2 before:bottom-2 before:left-[7px] before:w-[2px] before:bg-[#cfdce3] before:content-['']">
                 <div className="relative">
                   <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-green-500" />
-                  <p className="text-[10px] font-bold text-slate-400">TODAY, 10:45 AM</p>
-                  <p className="text-sm font-bold text-[#2a3439]">Cleaned Room 302</p>
-                  <p className="text-xs text-[#566166]">Activity: Maintenance Log</p>
+                  <p className="text-[10px] font-bold text-slate-400">HOY, 10:45</p>
+                  <p className="text-sm font-bold text-[#2a3439]">Salón 302 limpiado</p>
+                  <p className="text-xs text-[#566166]">Actividad: registro de mantenimiento</p>
                 </div>
                 <div className="relative">
                   <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-[#9f403d]" />
-                  <p className="text-[10px] font-bold text-slate-400">YESTERDAY, 02:15 PM</p>
-                  <p className="text-sm font-bold text-[#9f403d]">Late Arrival Report</p>
-                  <p className="text-xs text-[#566166]">Infraction: 15min delay without notice.</p>
+                  <p className="text-[10px] font-bold text-slate-400">AYER, 14:15</p>
+                  <p className="text-sm font-bold text-[#9f403d]">Informe de llegada tardía</p>
+                  <p className="text-xs text-[#566166]">Infracción: 15 min de retraso sin aviso.</p>
                 </div>
                 <div className="relative">
                   <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-green-500" />
-                  <p className="text-[10px] font-bold text-slate-400">OCT 24, 09:00 AM</p>
-                  <p className="text-sm font-bold text-[#2a3439]">Inventory Check Complete</p>
-                  <p className="text-xs text-[#566166]">Activity: Equipment Audit</p>
+                  <p className="text-[10px] font-bold text-slate-400">24 OCT, 09:00</p>
+                  <p className="text-sm font-bold text-[#2a3439]">Inventario verificado</p>
+                  <p className="text-xs text-[#566166]">Actividad: auditoría de equipos</p>
                 </div>
               </div>
             </section>
@@ -2153,13 +2224,13 @@ export default function StaffPage() {
             </div>
             <div className="mt-4 grid w-full grid-cols-2 gap-3">
               <div className="flex flex-col items-center justify-center rounded-xl border border-slate-100 bg-white p-3">
-                <p className="text-[10px] font-black text-slate-400 uppercase">Status</p>
+                <p className="text-[10px] font-black text-slate-400 uppercase">Estado</p>
                 <p className={`text-lg font-black ${selectedStaff?.estado === "Active" ? "text-green-600" : "text-slate-500"}`}>
-                  {selectedStaff?.estado === "Active" ? "Active" : "Off Shift"}
+                  {selectedStaff?.estado === "Active" ? "Activo" : "Fuera de turno"}
                 </p>
               </div>
               <div className="flex flex-col items-center justify-center rounded-xl border border-slate-100 bg-white p-3">
-                <p className="text-[10px] font-black text-slate-400 uppercase">Balance Hours</p>
+                <p className="text-[10px] font-black text-slate-400 uppercase">Horas acumuladas</p>
                 <p className={`text-lg font-black ${selectedStaffBalanceHours >= 0 ? "text-green-600" : "text-[#9f403d]"}`}>
                   {selectedStaffFormattedBalanceHours}
                 </p>
@@ -2171,29 +2242,29 @@ export default function StaffPage() {
             <section>
               <h4 className="mb-4 flex items-center gap-2 text-[11px] font-black tracking-widest text-[#566166] uppercase">
                 <span className="h-1.5 w-1.5 rounded-full bg-[#3a5f94]" />
-                General Information
+                Información general
               </h4>
               <div className="grid grid-cols-1 gap-4">
                 <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase">National ID (Cedula)</label>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase">Documento de identidad (cédula)</label>
                   <p className="text-sm font-semibold text-[#2a3439]">{selectedStaff?.cedula ?? "-"}</p>
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase">Numero de Telefono</label>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase">Número de teléfono</label>
                   <p className="text-sm font-semibold text-[#2a3439]">{selectedStaff?.telefono ?? "-"}</p>
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase">Rol de Acceso</label>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase">Rol de acceso</label>
                   <p className="text-sm font-semibold text-[#2a3439]">
                     {accessRoleLabelById[(selectedStaff?.roleId as StaffAccessRoleId) ?? 3]}
                   </p>
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase">Tipo de Contrato</label>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase">Tipo de contrato</label>
                   <p className="text-sm font-semibold text-[#2a3439]">{selectedStaff?.tipoContrato ?? "-"}</p>
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase">Fecha de Nacimiento</label>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase">Fecha de nacimiento</label>
                   <p className="text-sm font-semibold text-[#2a3439]">{selectedStaff?.fechaNacimiento ?? "-"}</p>
                 </div>
                 <div className="space-y-1">
@@ -2212,7 +2283,7 @@ export default function StaffPage() {
               onClick={openEditStaffForm}
               type="button"
             >
-              Edit Profile
+              Editar perfil
             </button>
             <button 
               className="rounded-xl bg-[#9f403d] p-3 text-white transition-colors hover:bg-[#8a3631] disabled:opacity-60"
