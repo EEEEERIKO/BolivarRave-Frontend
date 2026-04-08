@@ -143,6 +143,12 @@ const DAY_LABELS: Record<ScheduleItem["day"], string> = {
 
 const ALL_DAYS: ScheduleItem["day"][] = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 const HOURS = Array.from({ length: 17 }, (_, idx) => 6 + idx);
+const TIME_OPTIONS = Array.from({ length: 33 }, (_, idx) => {
+  const totalMinutes = 6 * 60 + idx * 30;
+  const hour = Math.floor(totalMinutes / 60);
+  const minute = totalMinutes % 60;
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+});
 const DASHBOARD_CACHE_KEY = "dashboard_cache_v1";
 const DASHBOARD_CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -410,8 +416,13 @@ export default function Home() {
   const [submittedQuery, setSubmittedQuery] = useState("");
   const [quickMode, setQuickMode] = useState<"class" | "professor" | "availableRooms">("class");
   const [roomCheckDay, setRoomCheckDay] = useState<ScheduleItem["day"]>("Monday");
-  const [roomCheckTime, setRoomCheckTime] = useState("08:00");
-  const [submittedRoomCheck, setSubmittedRoomCheck] = useState<{ day: ScheduleItem["day"]; time: string } | null>(null);
+  const [roomCheckStartTime, setRoomCheckStartTime] = useState("08:00");
+  const [roomCheckEndTime, setRoomCheckEndTime] = useState("09:00");
+  const [submittedRoomCheck, setSubmittedRoomCheck] = useState<{
+    day: ScheduleItem["day"];
+    startTime: string;
+    endTime: string;
+  } | null>(null);
   const [scheduleItems, setScheduleItems] = useState<ScheduleItem[]>([]);
   const [importsHistory, setImportsHistory] = useState<ImportHistoryItem[]>([]);
   const [roomsCatalog, setRoomsCatalog] = useState<string[]>([]);
@@ -910,14 +921,21 @@ export default function Home() {
   const availableRoomsResult = useMemo(() => {
     if (!submittedRoomCheck || quickMode !== "availableRooms") return null;
 
-    const checkMinutes = toMinutes(submittedRoomCheck.time);
+    const checkStartMinutes = toMinutes(submittedRoomCheck.startTime);
+    const checkEndMinutes = toMinutes(submittedRoomCheck.endTime);
+
+    if (checkEndMinutes <= checkStartMinutes) {
+      return null;
+    }
 
     const occupiedRooms = new Set(
       scheduleItems
         .filter((item) => {
           if (item.day !== submittedRoomCheck.day) return false;
           if (!(item.startDate <= todayIso && todayIso <= item.endDate)) return false;
-          return toMinutes(item.start) <= checkMinutes && checkMinutes < toMinutes(item.end);
+          const itemStartMinutes = toMinutes(item.start);
+          const itemEndMinutes = toMinutes(item.end);
+          return itemStartMinutes < checkEndMinutes && checkStartMinutes < itemEndMinutes;
         })
         .map((item) => item.room)
     );
@@ -926,10 +944,10 @@ export default function Home() {
 
     return {
       availableRooms,
-      occupiedRooms: [...occupiedRooms].sort((a, b) => a.localeCompare(b)),
       totalRooms: roomUniverse.length,
       day: submittedRoomCheck.day,
-      time: submittedRoomCheck.time,
+      startTime: submittedRoomCheck.startTime,
+      endTime: submittedRoomCheck.endTime,
     };
   }, [submittedRoomCheck, quickMode, scheduleItems, roomUniverse, todayIso]);
 
@@ -937,12 +955,21 @@ export default function Home() {
     event.preventDefault();
 
     if (quickMode === "availableRooms") {
-      if (!roomCheckTime) {
+      if (!roomCheckStartTime || !roomCheckEndTime) {
         setIsSearchModalOpen(false);
         return;
       }
 
-      setSubmittedRoomCheck({ day: roomCheckDay, time: roomCheckTime });
+      if (toMinutes(roomCheckEndTime) <= toMinutes(roomCheckStartTime)) {
+        setIsSearchModalOpen(false);
+        return;
+      }
+
+      setSubmittedRoomCheck({
+        day: roomCheckDay,
+        startTime: roomCheckStartTime,
+        endTime: roomCheckEndTime,
+      });
       setSubmittedQuery("");
       setIsSearchModalOpen(true);
       return;
@@ -989,132 +1016,194 @@ export default function Home() {
       </section>
 
       <section className="grid grid-cols-1 gap-8 lg:grid-cols-12">
-        <div className="space-y-6 lg:col-span-9">
-          <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-            <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
-              <div className="mb-4 flex items-center justify-between gap-3">
-                <h4 className="text-sm font-bold tracking-wider text-slate-800 uppercase dark:text-slate-200">Acciones inmediatas</h4>
-                <span className="rounded-full bg-red-100 px-2.5 py-1 text-[10px] font-bold tracking-wider text-red-700 uppercase dark:bg-red-900/30 dark:text-red-300">
-                  {immediateActions.length} pendientes
-                </span>
+        <div className="grid grid-cols-1 gap-6 lg:col-span-12 lg:grid-cols-12">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900 lg:col-span-9 xl:p-5">
+            <h4 className="text-sm font-bold tracking-wider text-slate-800 uppercase dark:text-slate-200">BÚSQUEDA RÁPIDA</h4>
+            <div className="mt-1 rounded-2xl border border-slate-200 p-3 dark:border-slate-700">
+              <div className="mt-2 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setQuickMode("class");
+                    setSubmittedRoomCheck(null);
+                  }}
+                  className={`inline-flex h-9 items-center justify-center gap-1.5 rounded-lg px-3 text-xs font-semibold leading-none transition ${quickMode === "class" ? "bg-[#295786] text-white" : "border border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"}`}
+                >
+                  <span className="material-symbols-outlined text-base leading-none">menu_book</span>
+                  <span className="leading-none">Clase</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setQuickMode("professor");
+                    setSubmittedRoomCheck(null);
+                  }}
+                  className={`inline-flex h-9 items-center justify-center gap-1.5 rounded-lg px-3 text-xs font-semibold leading-none transition ${quickMode === "professor" ? "bg-[#295786] text-white" : "border border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"}`}
+                >
+                  <span className="material-symbols-outlined text-base leading-none">person_search</span>
+                  <span className="leading-none">Profesor</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setQuickMode("availableRooms");
+                    setQuery("");
+                  }}
+                  className={`inline-flex h-9 items-center justify-center gap-1.5 rounded-lg px-3 text-xs font-semibold leading-none transition ${quickMode === "availableRooms" ? "bg-[#295786] text-white" : "border border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"}`}
+                >
+                  <span className="material-symbols-outlined text-base leading-none">meeting_room</span>
+                  <span className="leading-none">Salones Disponibles</span>
+                </button>
               </div>
-              <div className="space-y-3">
-                {immediateActions.map((action) => (
-                  <div key={action.title} className={`flex gap-3 rounded-xl border p-4 ${action.classes}`}>
-                    <span className="material-symbols-outlined text-base">{action.icon}</span>
-                    <div className="min-w-0">
-                      <p className="text-xs font-bold">{action.title}</p>
-                      <p className="text-[11px] opacity-90">{action.detail}</p>
-                    </div>
-                    <span className="ml-auto h-fit rounded-full bg-white/80 px-2 py-0.5 text-[10px] font-bold tracking-wider uppercase text-slate-700 dark:bg-slate-950/20 dark:text-slate-100">
-                      {action.level}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900 xl:p-5">
-              <h4 className="text-sm font-bold tracking-wider text-slate-800 uppercase dark:text-slate-200">BÚSQUEDA RÁPIDA</h4>
-              <div className="mt-1 rounded-2xl border border-slate-200 p-3 dark:border-slate-700">
-                <div className="mt-2 flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setQuickMode("class");
-                      setSubmittedRoomCheck(null);
-                    }}
-                    className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${quickMode === "class" ? "bg-[#295786] text-white" : "border border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"}`}
-                  >
-                    <span className="material-symbols-outlined text-xs align-text-bottom">menu_book</span> Clase
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setQuickMode("professor");
-                      setSubmittedRoomCheck(null);
-                    }}
-                    className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${quickMode === "professor" ? "bg-[#295786] text-white" : "border border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"}`}
-                  >
-                    <span className="material-symbols-outlined text-xs align-text-bottom">person_search</span> Profesor
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setQuickMode("availableRooms");
-                      setQuery("");
-                    }}
-                    className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${quickMode === "availableRooms" ? "bg-[#295786] text-white" : "border border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"}`}
-                  >
-                    <span className="material-symbols-outlined text-xs align-text-bottom">meeting_room</span> Salones Disponibles
-                  </button>
-                </div>
-                <form onSubmit={handleSearchSubmit} className="mt-1 flex flex-col gap-1 sm:flex-row sm:items-center">
-                  {quickMode !== "availableRooms" ? (
-                    <input
-                      value={query}
-                      onChange={(event) => setQuery(event.target.value)}
-                      placeholder={quickMode === "class" ? "Ej: Programacion I, Calculo II" : "Ej: Perez, Mendez"}
-                      className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-800 outline-none ring-[#295786]/30 transition focus:ring-4 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
-                    />
+              <form onSubmit={handleSearchSubmit} className="mt-1 flex flex-col gap-1 sm:flex-row sm:items-center">
+                {quickMode !== "availableRooms" ? (
+                  <input
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                    placeholder={quickMode === "class" ? "Ej: Programacion I, Calculo II" : "Ej: Perez, Mendez"}
+                    className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-800 outline-none ring-[#295786]/30 transition focus:ring-4 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+                  />
                   ) : (
-                    <>
-                      <select
-                        value={roomCheckDay}
-                        onChange={(event) => setRoomCheckDay(event.target.value as ScheduleItem["day"])}
-                        className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none ring-[#295786]/30 transition focus:ring-4 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 sm:w-auto"
-                      >
-                        {ALL_DAYS.map((day) => (
-                          <option key={day} value={day}>{DAY_EN_TO_ES[day]}</option>
-                        ))}
-                      </select>
-                      <input
-                        type="time"
-                        value={roomCheckTime}
-                        onChange={(event) => setRoomCheckTime(event.target.value)}
-                        className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none ring-[#295786]/30 transition focus:ring-4 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 sm:w-auto"
-                      />
-                    </>
+                    <div className="grid w-full grid-cols-1 gap-2 md:grid-cols-3">
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[11px] font-bold text-slate-600">Día:</span>
+                        <select
+                          value={roomCheckDay}
+                          onChange={(event) => setRoomCheckDay(event.target.value as ScheduleItem["day"])}
+                          className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none ring-[#295786]/30 transition focus:ring-4 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+                        >
+                          {ALL_DAYS.map((day) => (
+                            <option key={day} value={day}>{DAY_EN_TO_ES[day]}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[11px] font-bold text-slate-600">Hora de Inicio:</span>
+                        <select
+                          value={roomCheckStartTime}
+                          onChange={(event) => {
+                            const nextStartTime = event.target.value;
+                            setRoomCheckStartTime(nextStartTime);
+                            if (toMinutes(roomCheckEndTime) <= toMinutes(nextStartTime)) {
+                              const fallbackEnd = TIME_OPTIONS.find((option) => toMinutes(option) > toMinutes(nextStartTime));
+                              if (fallbackEnd) setRoomCheckEndTime(fallbackEnd);
+                            }
+                          }}
+                          className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none ring-[#295786]/30 transition focus:ring-4 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+                        >
+                          {TIME_OPTIONS.map((time) => (
+                            <option key={time} value={time}>{time}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[11px] font-bold text-slate-600">Hora Final:</span>
+                        <select
+                          value={roomCheckEndTime}
+                          onChange={(event) => setRoomCheckEndTime(event.target.value)}
+                          className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none ring-[#295786]/30 transition focus:ring-4 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+                        >
+                          {TIME_OPTIONS.filter((time) => toMinutes(time) > toMinutes(roomCheckStartTime)).map((time) => (
+                            <option key={time} value={time}>{time}</option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
                   )}
-                  <button
-                    type="submit"
-                    className="rounded-xl bg-[#295786] px-4 py-2.5 text-sm font-bold text-white transition hover:brightness-110"
-                  >
-                    Buscar
-                  </button>
-                </form>
-                {quickMode === "availableRooms" ? <p className="mt-1 text-xs text-slate-500">Selecciona día y hora para validar disponibilidad de salones en el modal.</p> : null}
-              </div>
+                <button
+                  type="submit"
+                  className="rounded-xl bg-[#295786] px-4 py-2.5 text-sm font-bold text-white transition hover:brightness-110"
+                >
+                  Buscar
+                </button>
+              </form>
+              {quickMode === "availableRooms" ? <p className="mt-1 text-xs text-slate-500">Selecciona día, hora de inicio y hora final para validar disponibilidad de salones.</p> : null}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900 lg:col-span-3 lg:max-w-[320px] lg:justify-self-end">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <h4 className="text-xs font-bold tracking-wider text-slate-800 uppercase dark:text-slate-200">Acciones inmediatas</h4>
+              <span className="rounded-full bg-red-100 px-2 py-0.5 text-[9px] font-bold tracking-wider text-red-700 uppercase dark:bg-red-900/30 dark:text-red-300">
+                {immediateActions.length} pendientes
+              </span>
+            </div>
+            <div className="space-y-2">
+              {immediateActions.map((action) => (
+                <div key={action.title} className={`flex gap-2 rounded-lg border p-2.5 ${action.classes}`}>
+                  <span className="material-symbols-outlined text-sm">{action.icon}</span>
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-bold">{action.title}</p>
+                    <p className="line-clamp-2 text-[10px] opacity-90">{action.detail}</p>
+                  </div>
+                  <span className="ml-auto h-fit rounded-full bg-white/80 px-1.5 py-0.5 text-[9px] font-bold tracking-wider uppercase text-slate-700 dark:bg-slate-950/20 dark:text-slate-100">
+                    {action.level}
+                  </span>
+                </div>
+              ))}
             </div>
           </div>
         </div>
 
-        <div className="lg:col-span-3">
-          <div className="h-full rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-            <h4 className="text-sm font-bold tracking-wider text-slate-800 uppercase dark:text-slate-200">Estado del sistema</h4>
-            <div className="mt-4 space-y-3">
-              <div className="flex items-center justify-between rounded-xl border border-green-200 bg-green-50 p-2.5 dark:border-green-900/40 dark:bg-green-900/20">
-                <p className="text-[11px] font-bold text-green-700 dark:text-green-300">Estado del horario</p>
-                <span className="rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-bold text-green-700 dark:bg-green-900/50 dark:text-green-300">Saludable</span>
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900 lg:col-span-12">
+          <div className="mb-8 flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
+            <div>
+              <h4 className="text-sm font-bold tracking-wider text-slate-800 uppercase dark:text-slate-200">Vista previa del mapa del edificio</h4>
+              <p className="mt-1 text-xs text-slate-500">Visualización en tiempo real del estado de ocupación de salones</p>
+            </div>
+            <div className="flex gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800">
+              {floorNumbers.map((floor) => (
+                <button
+                  key={floor}
+                  type="button"
+                  onClick={() => setSelectedFloor(floor)}
+                  className={`rounded-lg px-3 py-1 text-[10px] font-bold uppercase ${selectedFloor === floor ? "bg-white text-[#295786] shadow-sm dark:bg-slate-700" : "text-slate-500 hover:bg-white/50 dark:hover:bg-slate-700/50"}`}
+                >
+                  Piso {floor}
+                </button>
+              ))}
+              {floorNumbers.length === 0 && (
+                <span className="px-2 py-1 text-[10px] font-bold text-slate-500 uppercase">Sin pisos</span>
+              )}
+            </div>
+          </div>
+
+          <div className="mb-8 grid grid-cols-2 gap-4 md:grid-cols-4 lg:grid-cols-6">
+            {miniMapRooms.map((room, index) => (
+              <div key={`${room.id}-${index}`} className={`group flex min-h-[98px] cursor-default flex-col justify-between rounded-xl border-2 p-3 ${room.classes}`}>
+                <span className="line-clamp-2 text-center text-xs font-black leading-tight md:text-sm">{room.room}</span>
+                <span className={`text-center text-[10px] font-bold uppercase ${room.textClass}`}>{room.label || "Disponible"}</span>
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="rounded-xl bg-slate-100 p-2.5 dark:bg-slate-800">
-                  <p className="text-[10px] font-bold tracking-wider text-slate-500 uppercase">Conflictos</p>
-                  <p className="mt-1 text-lg font-black text-slate-800 dark:text-slate-100">{pendientesConflictos}</p>
-                </div>
-                <div className="rounded-xl bg-slate-100 p-2.5 dark:bg-slate-800">
-                  <p className="text-[10px] font-bold tracking-wider text-slate-500 uppercase">Integridad de datos</p>
-                  <p className="mt-1 text-lg font-black text-slate-800 dark:text-slate-100">{scheduleItems.length > 0 ? "Correcta" : "Vacía"}</p>
-                </div>
+            ))}
+            {miniMapRooms.length === 0 && (
+              <div className="col-span-2 rounded-xl border border-slate-200 p-4 text-sm text-slate-500 md:col-span-4 lg:col-span-6">
+                {isLoadingData ? "Cargando mapa de salones..." : "No hay datos de salones para este piso."}
               </div>
-              <div className="flex items-center gap-2 rounded-xl border border-[#295786]/20 bg-[#295786]/5 p-2.5 text-[#295786]">
-                <span className="material-symbols-outlined text-base">sync</span>
-                <div>
-                  <p className="text-xs font-bold">Última sincronización</p>
-                  <p className="text-[11px] opacity-80">{latestImport ? formatRelativeTime(latestImport.imported_at) : "Sin importaciones"}</p>
-                </div>
+            )}
+          </div>
+
+          <div className="flex flex-col items-center justify-between gap-6 border-t border-slate-100 pt-6 dark:border-slate-800 sm:flex-row">
+            <div className="flex gap-6">
+              <div className="flex items-center gap-2">
+                <span className="size-3 rounded bg-green-500" />
+                <span className="text-xs font-medium text-slate-600">Disponible</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="size-3 rounded bg-red-500" />
+                <span className="text-xs font-medium text-slate-600">En clase</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="size-3 rounded bg-amber-500" />
+                <span className="text-xs font-medium text-slate-600">Inicia pronto</span>
               </div>
             </div>
+            <button
+              type="button"
+              onClick={() => router.push("/rooms")}
+              className="w-full rounded-xl bg-[#295786] px-6 py-2.5 text-sm font-bold text-white shadow-lg shadow-[#295786]/20 transition-all hover:scale-105 active:scale-95 sm:w-auto"
+            >
+              Abrir mapa completo del edificio
+            </button>
           </div>
         </div>
 
@@ -1292,68 +1381,6 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
-        <div className="mb-8 flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
-          <div>
-            <h4 className="text-sm font-bold tracking-wider text-slate-800 uppercase dark:text-slate-200">Vista previa del mapa del edificio</h4>
-            <p className="mt-1 text-xs text-slate-500">Visualización en tiempo real del estado de ocupación de salones</p>
-          </div>
-          <div className="flex gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800">
-            {floorNumbers.map((floor) => (
-              <button
-                key={floor}
-                type="button"
-                onClick={() => setSelectedFloor(floor)}
-                className={`rounded-lg px-3 py-1 text-[10px] font-bold uppercase ${selectedFloor === floor ? "bg-white text-[#295786] shadow-sm dark:bg-slate-700" : "text-slate-500 hover:bg-white/50 dark:hover:bg-slate-700/50"}`}
-              >
-                Piso {floor}
-              </button>
-            ))}
-            {floorNumbers.length === 0 && (
-              <span className="px-2 py-1 text-[10px] font-bold text-slate-500 uppercase">Sin pisos</span>
-            )}
-          </div>
-        </div>
-
-        <div className="mb-8 grid grid-cols-2 gap-4 md:grid-cols-4 lg:grid-cols-6">
-          {miniMapRooms.map((room, index) => (
-            <div key={`${room.id}-${index}`} className={`group flex min-h-[98px] cursor-default flex-col justify-between rounded-xl border-2 p-3 ${room.classes}`}>
-              <span className="line-clamp-2 text-center text-xs font-black leading-tight md:text-sm">{room.room}</span>
-              <span className={`text-center text-[10px] font-bold uppercase ${room.textClass}`}>{room.label || "Disponible"}</span>
-            </div>
-          ))}
-          {miniMapRooms.length === 0 && (
-            <div className="col-span-2 rounded-xl border border-slate-200 p-4 text-sm text-slate-500 md:col-span-4 lg:col-span-6">
-              {isLoadingData ? "Cargando mapa de salones..." : "No hay datos de salones para este piso."}
-            </div>
-          )}
-        </div>
-
-        <div className="flex flex-col items-center justify-between gap-6 border-t border-slate-100 pt-6 dark:border-slate-800 sm:flex-row">
-          <div className="flex gap-6">
-            <div className="flex items-center gap-2">
-              <span className="size-3 rounded bg-green-500" />
-              <span className="text-xs font-medium text-slate-600">Disponible</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="size-3 rounded bg-red-500" />
-              <span className="text-xs font-medium text-slate-600">En clase</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="size-3 rounded bg-amber-500" />
-              <span className="text-xs font-medium text-slate-600">Inicia pronto</span>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => router.push("/rooms")}
-            className="w-full rounded-xl bg-[#295786] px-6 py-2.5 text-sm font-bold text-white shadow-lg shadow-[#295786]/20 transition-all hover:scale-105 active:scale-95 sm:w-auto"
-          >
-            Abrir mapa completo del edificio
-          </button>
-        </div>
-      </section>
-
       {isSearchModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4" role="dialog" aria-modal="true">
           <button
@@ -1375,7 +1402,7 @@ export default function Home() {
                   <p className="text-xs text-slate-500">Búsqueda: {submittedQuery}</p>
                 ) : (
                   <p className="text-xs text-slate-500">
-                    Consulta: {submittedRoomCheck ? `${DAY_EN_TO_ES[submittedRoomCheck.day]} ${submittedRoomCheck.time}` : "N/D"}
+                    Consulta: {submittedRoomCheck ? `${DAY_EN_TO_ES[submittedRoomCheck.day]} ${submittedRoomCheck.startTime} - ${submittedRoomCheck.endTime}` : "N/D"}
                   </p>
                 )}
               </div>
@@ -1421,25 +1448,16 @@ export default function Home() {
                       Disponibles: {availableRoomsResult.availableRooms.length} de {availableRoomsResult.totalRooms}
                     </p>
                     <p className="mt-1 text-xs text-emerald-700/90 dark:text-emerald-200/90">
-                      Dia: {DAY_EN_TO_ES[availableRoomsResult.day]} • Hora: {availableRoomsResult.time}
+                      Día: {DAY_EN_TO_ES[availableRoomsResult.day]} • Hora: {availableRoomsResult.startTime} - {availableRoomsResult.endTime}
                     </p>
                   </div>
 
                   <div className="rounded-xl border border-slate-200 p-4 dark:border-slate-700">
                     <p className="mb-2 text-xs font-bold tracking-wider text-slate-500 uppercase">Salones Disponibles</p>
                     {availableRoomsResult.availableRooms.length === 0 ? (
-                      <p className="text-sm text-slate-500">No hay salones disponibles en ese horario.</p>
+                      <p className="text-sm text-slate-500">No hay salones disponibles en ese rango de horario.</p>
                     ) : (
                       <p className="text-sm text-slate-700 dark:text-slate-200">{availableRoomsResult.availableRooms.join(", ")}</p>
-                    )}
-                  </div>
-
-                  <div className="rounded-xl border border-slate-200 p-4 dark:border-slate-700">
-                    <p className="mb-2 text-xs font-bold tracking-wider text-slate-500 uppercase">Salones Ocupados</p>
-                    {availableRoomsResult.occupiedRooms.length === 0 ? (
-                      <p className="text-sm text-slate-500">Ninguno.</p>
-                    ) : (
-                      <p className="text-sm text-slate-700 dark:text-slate-200">{availableRoomsResult.occupiedRooms.join(", ")}</p>
                     )}
                   </div>
                 </>
