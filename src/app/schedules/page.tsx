@@ -643,6 +643,7 @@ export default function SchedulesPage() {
   const [deleteAllError, setDeleteAllError] = useState<string | null>(null);
   const [newEvent, setNewEvent] = useState<NewEventForm>(getInitialNewEvent);
   const [editEvent, setEditEvent] = useState<EditEventForm>(getInitialEditEvent);
+  const [gridViewportWidth, setGridViewportWidth] = useState(0);
 
   const normalizeColor = (value: string): ScheduleEvent["color"] => {
     if (value === "blue" || value === "emerald" || value === "amber" || value === "violet" || value === "red") {
@@ -760,6 +761,22 @@ export default function SchedulesPage() {
     writeSchedulesCache(events, roomCatalog);
   }, [events, roomCatalog]);
 
+  useLayoutEffect(() => {
+    const node = gridScrollRef.current;
+    if (!node) return;
+
+    const syncWidth = () => {
+      setGridViewportWidth(node.clientWidth);
+    };
+
+    syncWidth();
+
+    const observer = new ResizeObserver(syncWidth);
+    observer.observe(node);
+
+    return () => observer.disconnect();
+  }, []);
+
   // WebSocket sync para actualización en tiempo real
   useWebSocketSchedules({
     onScheduleRefresh: () => {
@@ -834,8 +851,20 @@ export default function SchedulesPage() {
   const selectedEvent = events.find((event) => event.id === selectedEventId) ?? null;
   const selectedReservationType = selectedEvent ? inferReservationType(selectedEvent) : null;
 
-  const timeColWidth = 130;
-  const roomColWidth = 220;
+  const timeColWidth = gridViewportWidth > 0 && gridViewportWidth < 640 ? 78 : 96;
+  const roomColWidth = useMemo(() => {
+    const roomCount = Math.max(filteredRooms.length, 1);
+    const minRoomWidth = gridViewportWidth > 0 && gridViewportWidth < 640 ? 140 : 160;
+    const maxRoomWidth = 220;
+
+    if (gridViewportWidth <= 0) return 190;
+
+    const availableWidth = Math.max(gridViewportWidth - timeColWidth, 0);
+    if (availableWidth <= 0) return 190;
+
+    const fittedWidth = Math.floor(availableWidth / roomCount);
+    return Math.max(minRoomWidth, Math.min(maxRoomWidth, fittedWidth));
+  }, [filteredRooms.length, gridViewportWidth, timeColWidth]);
   const headerHeight = 64;
   const slotHeight = 44;
 
@@ -1511,15 +1540,15 @@ export default function SchedulesPage() {
   };
 
   return (
-    <div className="p-4 md:p-6">
-      <div className="sticky top-20 z-30 mb-4 rounded-xl border border-slate-200 bg-white px-5 py-3 shadow-sm">
+    <div className="p-3 sm:p-4 md:p-6">
+      <div className="relative z-10 mb-4 rounded-xl border border-slate-200 bg-white px-3 py-3 shadow-sm sm:px-5 lg:sticky lg:top-24">
         {remoteLoadError ? (
           <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
             {remoteLoadError}
           </div>
         ) : null}
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-<h1 className="text-lg font-bold">Horario Edificio Bolivar Rave</h1>
+      <h1 className="text-base font-bold sm:text-lg">Horario Edificio Bolivar Rave</h1>
           
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:flex-1 lg:justify-center lg:gap-2">
             <div className="flex items-center gap-2">
@@ -1632,13 +1661,13 @@ export default function SchedulesPage() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center lg:w-auto">
             <input
               type="text"
               value={roomQuery}
               onChange={(e) => setRoomQuery(e.target.value)}
               placeholder="Filtrar salón..."
-              className="h-10 w-56 rounded-lg border border-slate-200 px-3 text-sm outline-none ring-[#295786]/30 focus:ring"
+              className="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none ring-[#295786]/30 focus:ring sm:w-56"
             />
             <button
               type="button"
@@ -1647,7 +1676,7 @@ export default function SchedulesPage() {
                 setAvailableRoomsResult([]);
                 setIsAvailableSearchOpen(true);
               }}
-              className="h-10 rounded-lg border border-[#295786]/25 bg-[#295786] px-3 text-xs font-semibold text-white transition hover:bg-[#1f456a]"
+              className="h-10 w-full rounded-lg border border-[#295786]/25 bg-[#295786] px-3 text-xs font-semibold text-white transition hover:bg-[#1f456a] sm:w-auto"
             >
               Buscar salón disponible
             </button>
@@ -1655,7 +1684,7 @@ export default function SchedulesPage() {
         </div>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[1fr_330px] xl:items-start">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px] xl:items-start">
         <section className="relative isolate self-start overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
           <div ref={gridScrollRef} className="overflow-auto" style={{ maxHeight: "75vh" }}>
             <div

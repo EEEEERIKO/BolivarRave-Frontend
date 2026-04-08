@@ -6,6 +6,7 @@ import { getCachedData, setCachedData } from "@/lib/cache-storage";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 type StaffView = "directory" | "schedule";
+type StaffMobileDetailTab = "profile" | "tasks" | "daily" | "academic" | "activity";
 type ContractPlan = "Plan 1" | "Plan 2" | "Plan 3" | "Plan Monitoria" | "Plan Especial";
 type WeekDay = "Lunes" | "Martes" | "Miércoles" | "Jueves" | "Viernes" | "Sábado";
 type StaffAccessRoleId = 1 | 2 | 3;
@@ -889,6 +890,8 @@ export default function StaffPage() {
   const [formFeedback, setFormFeedback] = useState<string | null>(null);
   const [staffList, setStaffList] = useState<StaffApi[]>([]);
   const [selectedStaffId, setSelectedStaffId] = useState<string | null>(null);
+  const [isStaffDetailModalOpen, setIsStaffDetailModalOpen] = useState(false);
+  const [mobileDetailTab, setMobileDetailTab] = useState<StaffMobileDetailTab>("profile");
   const [isLoadingStaff, setIsLoadingStaff] = useState(false);
   const [staffError, setStaffError] = useState<string | null>(null);
   const [isSavingNewStaff, setIsSavingNewStaff] = useState(false);
@@ -2040,7 +2043,11 @@ export default function StaffPage() {
                         : "border border-slate-200 shadow-sm hover:shadow-md"
                     }`}
                     key={staff.id}
-                    onClick={() => setSelectedStaffId(staff.id)}
+                    onClick={() => {
+                      setSelectedStaffId(staff.id);
+                      setMobileDetailTab("profile");
+                      setIsStaffDetailModalOpen(true);
+                    }}
                     type="button"
                   >
                     <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#e8eff3] text-xs font-black text-[#375c91] sm:h-14 sm:w-14 sm:text-sm">
@@ -2066,7 +2073,7 @@ export default function StaffPage() {
             )}
           </div>
 
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.55fr_1fr] xl:gap-6">
+          <div className="hidden grid-cols-1 gap-4 xl:grid xl:grid-cols-[1.55fr_1fr] xl:gap-6">
             <section className="rounded-2xl bg-[#e8eff3] p-4 sm:p-5">
               <div className="mb-3 flex items-center justify-between">
                 <h3 className="flex items-center gap-2 text-sm font-black text-[#153f73]">
@@ -2118,7 +2125,7 @@ export default function StaffPage() {
             </section>
           </div>
 
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.55fr_1fr] xl:gap-6">
+          <div className="hidden grid-cols-1 gap-4 xl:grid xl:grid-cols-[1.55fr_1fr] xl:gap-6">
             <section className="min-h-[340px] rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5 lg:min-h-[370px] lg:p-6">
               <h4 className="mb-4 flex items-center gap-2 text-[11px] font-black tracking-widest text-[#566166] uppercase">
                 <span className="h-1.5 w-1.5 rounded-full bg-[#3a5f94]" />
@@ -2216,7 +2223,7 @@ export default function StaffPage() {
           </div>
         </div>
 
-        <div className="flex h-auto w-full flex-col overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-2xl xl:h-full xl:w-[320px]">
+        <div className="hidden h-auto w-full flex-col overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-2xl xl:flex xl:h-full xl:w-[320px]">
           <div className="flex flex-col items-center gap-2.5 border-b border-slate-200 bg-[#f0f4f7] p-4 sm:p-5 lg:p-6">
             <div className="relative">
               <div className="flex h-20 w-20 items-center justify-center rounded-full border-4 border-white bg-[#d5e3ff] text-xl font-black text-[#153f73] shadow-lg sm:h-24 sm:w-24 sm:text-2xl">
@@ -2306,6 +2313,255 @@ export default function StaffPage() {
             </button>
           </div>
         </div>
+
+        {isStaffDetailModalOpen && selectedStaff ? (
+          <div className="fixed inset-0 z-50 flex items-end bg-black/50 p-0 xl:hidden" role="dialog" aria-modal="true">
+            <button
+              type="button"
+              aria-label="Cerrar detalle del personal"
+              className="absolute inset-0"
+              onClick={() => setIsStaffDetailModalOpen(false)}
+            />
+            <div className="relative z-10 flex h-[88vh] w-full flex-col rounded-t-2xl bg-white p-4 shadow-2xl">
+              <div className="mb-4 flex shrink-0 items-center justify-between">
+                <h3 className="text-sm font-bold tracking-wide text-slate-500 uppercase">Detalle del personal</h3>
+                <button
+                  type="button"
+                  onClick={() => setIsStaffDetailModalOpen(false)}
+                  className="rounded-lg border border-slate-200 px-3 py-1 text-xs font-bold text-[#566166]"
+                >
+                  Cerrar
+                </button>
+              </div>
+
+              <div className="mb-4 shrink-0 overflow-x-auto">
+                <div className="flex min-w-max items-center gap-1 rounded-lg bg-[#f0f4f7] p-1">
+                  {[
+                    { key: "profile", label: "Perfil" },
+                    { key: "tasks", label: "Tareas" },
+                    { key: "daily", label: "Horario" },
+                    { key: "academic", label: "No disp." },
+                    { key: "activity", label: "Actividad" },
+                  ].map((tab) => (
+                    <button
+                      key={tab.key}
+                      type="button"
+                      onClick={() => setMobileDetailTab(tab.key as StaffMobileDetailTab)}
+                      className={`rounded-md px-3 py-1.5 text-[11px] font-bold transition ${
+                        mobileDetailTab === tab.key ? "bg-white text-[#3a5f94] shadow-sm" : "text-[#566166]"
+                      }`}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+              <div className="rounded-2xl border border-slate-100 bg-white shadow-sm">
+                <div className="flex flex-col items-center gap-2.5 border-b border-slate-200 bg-[#f0f4f7] p-4">
+                  <div className="flex h-20 w-20 items-center justify-center rounded-full border-4 border-white bg-[#d5e3ff] text-xl font-black text-[#153f73] shadow-lg">
+                    N.{selectedStaff.numeroStaff}
+                  </div>
+                  <div className="text-center">
+                    <h2 className="text-xl font-black text-[#2a3439]">{selectedStaff.nombres}</h2>
+                    <p className="text-sm font-medium text-[#566166]">{selectedStaff.apellidos}</p>
+                  </div>
+                </div>
+
+                <div className="space-y-4 p-4">
+                  {mobileDetailTab === "profile" ? (
+                    <>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                          <p className="text-[10px] font-black text-slate-400 uppercase">Estado</p>
+                          <p className={`text-base font-black ${selectedStaff.estado === "Active" ? "text-green-600" : "text-slate-500"}`}>
+                            {selectedStaff.estado === "Active" ? "Activo" : "Inactivo"}
+                          </p>
+                        </div>
+                        <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                          <p className="text-[10px] font-black text-slate-400 uppercase">Horas</p>
+                          <p className={`text-base font-black ${selectedStaffBalanceHours >= 0 ? "text-green-600" : "text-[#9f403d]"}`}>
+                            {selectedStaffFormattedBalanceHours}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <p className="text-[10px] font-bold tracking-wider text-slate-400 uppercase">Información general</p>
+                        <p className="text-sm text-[#2a3439]"><span className="font-semibold">Cédula:</span> {selectedStaff.cedula}</p>
+                        <p className="text-sm text-[#2a3439]"><span className="font-semibold">Teléfono:</span> {selectedStaff.telefono}</p>
+                        <p className="text-sm text-[#2a3439]"><span className="font-semibold">Rol:</span> {selectedStaff.rol}</p>
+                        <p className="text-sm text-[#2a3439]"><span className="font-semibold">Acceso:</span> {accessRoleLabelById[(selectedStaff.roleId as StaffAccessRoleId) ?? 3]}</p>
+                        <p className="text-sm text-[#2a3439]"><span className="font-semibold">Contrato:</span> {selectedStaff.tipoContrato}</p>
+                        <p className="text-sm text-[#2a3439]"><span className="font-semibold">Carrera:</span> {selectedStaff.carrera}</p>
+                      </div>
+                    </>
+                  ) : null}
+
+                  {mobileDetailTab === "tasks" ? (
+                    <section className="rounded-2xl bg-[#e8eff3] p-4">
+                      <div className="mb-3 flex items-center justify-between">
+                        <h3 className="flex items-center gap-2 text-sm font-black text-[#153f73]">
+                          <span className="material-symbols-outlined">assignment</span>
+                          Tareas asignadas: {selectedStaff.nombres}
+                        </h3>
+                        <span className="text-[11px] font-bold text-[#566166]">2 pendientes</span>
+                      </div>
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-3 rounded-lg bg-white p-3 shadow-sm">
+                          <input checked className="rounded border-slate-300 text-[#3a5f94] focus:ring-[#3a5f94]" type="checkbox" readOnly />
+                          <div className="flex-1">
+                            <p className="text-xs font-bold text-[#566166] line-through">Pasillo 3 limpio (ala norte)</p>
+                            <p className="text-[10px] text-slate-400">Completado a las 08:30</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3 rounded-lg border-l-4 border-amber-400 bg-white p-3 shadow-sm">
+                          <input className="rounded border-slate-300 text-[#3a5f94] focus:ring-[#3a5f94]" type="checkbox" />
+                          <div className="flex-1">
+                            <p className="text-xs font-bold text-[#2a3439]">Preparar salón 101 (rack AV)</p>
+                            <p className="text-[10px] text-[#566166]">Prioridad: alta • Vence a las 11:00</p>
+                          </div>
+                        </div>
+                      </div>
+                    </section>
+                  ) : null}
+
+                  {mobileDetailTab === "daily" ? (
+                    <section className="rounded-2xl border border-slate-200 bg-white p-4">
+                      <h4 className="mb-4 flex items-center gap-2 text-[11px] font-black tracking-widest text-[#566166] uppercase">
+                        <span className="h-1.5 w-1.5 rounded-full bg-[#3a5f94]" />
+                        Horario diario del personal
+                      </h4>
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between border-b border-slate-50 py-2">
+                          <span className="text-xs font-bold text-[#2a3439]">Turno de la mañana</span>
+                          <span className="text-xs text-[#566166]">07:00 - 12:00</span>
+                        </div>
+                        <div className="flex items-center justify-between rounded bg-amber-50 px-2 py-2 border-b border-slate-50">
+                          <span className="text-xs font-bold text-amber-700">Almuerzo</span>
+                          <span className="text-xs text-amber-700">12:00 - 13:00</span>
+                        </div>
+                        <div className="flex items-center justify-between border-b border-slate-50 py-2">
+                          <span className="text-xs font-bold text-[#2a3439]">Turno de la tarde</span>
+                          <span className="text-xs text-[#566166]">13:00 - 16:00</span>
+                        </div>
+                      </div>
+                    </section>
+                  ) : null}
+
+                  {mobileDetailTab === "academic" ? (
+                    <section className="rounded-2xl border border-slate-200 bg-white p-4">
+                      <h4 className="mb-4 flex items-center gap-2 text-[11px] font-black tracking-widest text-[#566166] uppercase">
+                        <span className="h-1.5 w-1.5 rounded-full bg-[#3a5f94]" />
+                        No disponibilidad académica
+                      </h4>
+                      <div className="overflow-x-auto">
+                        <div className="min-w-[640px] space-y-1">
+                          <div className="grid grid-cols-[112px_repeat(7,minmax(0,1fr))] gap-1">
+                            <div />
+                            {ACADEMIC_DAY_COLUMNS.map((column) => (
+                              <div className="h-4 text-center text-[8px] font-black text-slate-400 uppercase" key={`modal-${column.dayName}`}>
+                                {column.label}
+                              </div>
+                            ))}
+                          </div>
+
+                          {ACADEMIC_TIME_SEGMENTS.map((segment, segmentIndex) => (
+                            <div className="grid grid-cols-[112px_repeat(7,minmax(0,1fr))] gap-1" key={`modal-${segment.key}`}>
+                              <div className="flex items-center justify-end gap-1 pr-1 text-[9px] whitespace-nowrap">
+                                <span className="font-bold text-[#566166]">{ACADEMIC_SEGMENT_ROWS[segmentIndex].label}</span>
+                                <span className="text-slate-400">{ACADEMIC_SEGMENT_ROWS[segmentIndex].range}</span>
+                              </div>
+
+                              {ACADEMIC_DAY_COLUMNS.map((column, dayIndex) => {
+                                const isBlocked = academicUnavailabilityMatrix[dayIndex]?.[segmentIndex] ?? false;
+
+                                return (
+                                  <div
+                                    className={`h-8 rounded-sm ${isBlocked ? "bg-[#3a5f94]" : "bg-[#f0f4f7]"}`}
+                                    key={`modal-${column.key}-${segment.key}`}
+                                  />
+                                );
+                              })}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                      {academicBlockedSlotDetails.length > 0 ? (
+                        <div className="mt-3 space-y-1 rounded-lg border border-slate-200 bg-white p-3">
+                          <p className="text-[10px] font-bold tracking-wider text-slate-400 uppercase">Detalle de Bloques</p>
+                          {academicBlockedSlotDetails.map((slot, index) => (
+                            <p className="text-xs text-[#2a3439]" key={`modal-${slot.dayKey}-${slot.start}-${index}`}>
+                              {slot.dayName}: {slot.start} - {slot.end}
+                            </p>
+                          ))}
+                        </div>
+                      ) : null}
+                    </section>
+                  ) : null}
+
+                  {mobileDetailTab === "activity" ? (
+                    <section className="rounded-2xl border border-slate-200 bg-white p-4">
+                      <h4 className="mb-4 flex items-center gap-2 text-[11px] font-black tracking-widest text-[#566166] uppercase">
+                        <span className="h-1.5 w-1.5 rounded-full bg-[#3a5f94]" />
+                        Actividades recientes e informes
+                      </h4>
+                      <div className="relative space-y-6 pl-6 before:absolute before:top-2 before:bottom-2 before:left-[7px] before:w-[2px] before:bg-[#cfdce3] before:content-['']">
+                        <div className="relative">
+                          <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-green-500" />
+                          <p className="text-[10px] font-bold text-slate-400">HOY, 10:45</p>
+                          <p className="text-sm font-bold text-[#2a3439]">Salón 302 limpiado</p>
+                          <p className="text-xs text-[#566166]">Actividad: registro de mantenimiento</p>
+                        </div>
+                        <div className="relative">
+                          <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-[#9f403d]" />
+                          <p className="text-[10px] font-bold text-slate-400">AYER, 14:15</p>
+                          <p className="text-sm font-bold text-[#9f403d]">Informe de llegada tardía</p>
+                          <p className="text-xs text-[#566166]">Infracción: 15 min de retraso sin aviso.</p>
+                        </div>
+                        <div className="relative">
+                          <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-green-500" />
+                          <p className="text-[10px] font-bold text-slate-400">24 OCT, 09:00</p>
+                          <p className="text-sm font-bold text-[#2a3439]">Inventario verificado</p>
+                          <p className="text-xs text-[#566166]">Actividad: auditoría de equipos</p>
+                        </div>
+                      </div>
+                    </section>
+                  ) : null}
+
+                  {mobileDetailTab === "profile" ? (
+                    <div className="flex gap-2.5 pt-2">
+                      <button
+                        className="flex-1 rounded-xl bg-[#3a5f94] py-3 text-xs font-bold text-white shadow-lg shadow-[#3a5f94]/20 disabled:opacity-60"
+                        disabled={!selectedStaff}
+                        onClick={() => {
+                          setIsStaffDetailModalOpen(false);
+                          openEditStaffForm();
+                        }}
+                        type="button"
+                      >
+                        Editar perfil
+                      </button>
+                      <button
+                        className="rounded-xl bg-[#9f403d] p-3 text-white transition-colors hover:bg-[#8a3631] disabled:opacity-60"
+                        disabled={!selectedStaff}
+                        onClick={() => {
+                          setIsStaffDetailModalOpen(false);
+                          void handleDeleteStaff();
+                        }}
+                        type="button"
+                      >
+                        <span className="material-symbols-outlined text-lg">delete</span>
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </main>
       )}
     </div>
