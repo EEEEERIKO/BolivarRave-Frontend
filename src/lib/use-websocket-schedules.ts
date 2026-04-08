@@ -23,6 +23,12 @@ export const useWebSocketSchedules = ({
     const getServerUrl = () => {
       if (typeof window === "undefined") return "http://localhost:4000";
 
+      const wsFromEnv = (process.env.NEXT_PUBLIC_WS_URL ?? "").trim();
+      if (wsFromEnv) {
+        console.log("[WebSocket] Usando WS desde NEXT_PUBLIC_WS_URL:", wsFromEnv);
+        return wsFromEnv;
+      }
+
       const fromEnv = (process.env.NEXT_PUBLIC_BACKEND_URL ?? process.env.NEXT_PUBLIC_API_BASE_URL ?? "").trim();
       if (fromEnv) {
         console.log("[WebSocket] Usando backend desde variable de entorno:", fromEnv);
@@ -55,7 +61,9 @@ export const useWebSocketSchedules = ({
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
       reconnectionAttempts: 10,
-      transports: ["websocket", "polling"],
+      // Iniciar con polling reduce errores de "WebSocket closed before established"
+      // cuando el backend aún no terminó de iniciar o no acepta upgrade inmediato.
+      transports: ["polling", "websocket"],
       forceNew: false,
       upgrade: true,
     });

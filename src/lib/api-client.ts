@@ -9,8 +9,8 @@ const getCandidates = () => {
   ).trim();
 
   if (typeof window !== "undefined") {
-    // Keep same-origin as fallback (for setups using Next rewrites).
-    candidates.push(trimSlash(window.location.origin));
+    // Prefer the same-origin proxy route first to avoid browser CORS blocks.
+    candidates.push("");
 
     if (fromEnv) candidates.push(trimSlash(fromEnv));
 
@@ -29,9 +29,6 @@ const getCandidates = () => {
     candidates.push("http://localhost:4000");
     candidates.push("http://127.0.0.1:4000");
   }
-
-  // Try relative path at the end to reduce false failures when no rewrite exists.
-  candidates.push("");
 
   return [...new Set(candidates)];
 };

@@ -91,6 +91,40 @@ type DashboardCachePayload = {
   roomsByFloor: Array<{ floor: number; rooms: RoomsInfoRoom[] }>;
 };
 
+const mergeRoomsByFloor = (floors: Array<{ floor: number; rooms: RoomsInfoRoom[] }>) =>
+  floors
+    .map((entry) => {
+      const roomsById = new Map<string, RoomsInfoRoom>();
+
+      for (const room of entry.rooms) {
+        const existing = roomsById.get(room.id);
+        if (!existing) {
+          roomsById.set(room.id, {
+            ...room,
+            horarios: [...room.horarios],
+          });
+          continue;
+        }
+
+        const scheduleKeys = new Set(
+          existing.horarios.map((slot) => `${slot.diaSemana}|${slot.horaInicio}|${slot.horaFin}`)
+        );
+
+        for (const slot of room.horarios) {
+          const slotKey = `${slot.diaSemana}|${slot.horaInicio}|${slot.horaFin}`;
+          if (scheduleKeys.has(slotKey)) continue;
+          scheduleKeys.add(slotKey);
+          existing.horarios.push(slot);
+        }
+      }
+
+      return {
+        floor: entry.floor,
+        rooms: Array.from(roomsById.values()),
+      };
+    })
+    .sort((a, b) => a.floor - b.floor);
+
 const DAY_COLORS: Record<ScheduleItem["day"], string> = {
   Monday: "#295786",
   Tuesday: "#1f8f6a",
@@ -100,11 +134,11 @@ const DAY_COLORS: Record<ScheduleItem["day"], string> = {
 };
 
 const DAY_LABELS: Record<ScheduleItem["day"], string> = {
-  Monday: "Mon",
-  Tuesday: "Tue",
-  Wednesday: "Wed",
-  Thursday: "Thu",
-  Friday: "Fri",
+  Monday: "Lun",
+  Tuesday: "Mar",
+  Wednesday: "Mié",
+  Thursday: "Jue",
+  Friday: "Vie",
 };
 
 const ALL_DAYS: ScheduleItem["day"][] = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
@@ -126,7 +160,7 @@ const DAY_ES_TO_EN: Record<string, ScheduleItem["day"]> = {
 const DAY_EN_TO_ES: Record<ScheduleItem["day"], string> = {
   Monday: "Lunes",
   Tuesday: "Martes",
-  Wednesday: "Miercoles",
+  Wednesday: "Miércoles",
   Thursday: "Jueves",
   Friday: "Viernes",
 };
@@ -393,8 +427,9 @@ export default function Home() {
       setScheduleItems(cached.scheduleItems);
       setImportsHistory(cached.importsHistory);
       setRoomsCatalog(cached.roomsCatalog);
-      setRoomsByFloor(cached.roomsByFloor);
-      setSelectedFloor((prev) => prev ?? cached.roomsByFloor[0]?.floor ?? null);
+      const mergedCachedFloors = mergeRoomsByFloor(cached.roomsByFloor);
+      setRoomsByFloor(mergedCachedFloors);
+      setSelectedFloor((prev) => prev ?? mergedCachedFloors[0]?.floor ?? null);
       setIsLoadingData(false);
     }
 
@@ -420,13 +455,14 @@ export default function Home() {
         );
         setImportsHistory(importsBody.imports ?? []);
 
-        const floors = (roomsInfoBody?.roomsByFloor ?? [])
-          .map((group) => {
-            const floor = group[0]?.piso ?? null;
-            return floor ? { floor, rooms: group } : null;
-          })
-          .filter((entry): entry is { floor: number; rooms: RoomsInfoRoom[] } => entry !== null)
-          .sort((a, b) => a.floor - b.floor);
+        const floors = mergeRoomsByFloor(
+          (roomsInfoBody?.roomsByFloor ?? [])
+            .map((group) => {
+              const floor = group[0]?.piso ?? null;
+              return floor ? { floor, rooms: group } : null;
+            })
+            .filter((entry): entry is { floor: number; rooms: RoomsInfoRoom[] } => entry !== null)
+        );
 
         const selectedFloorFromData = floors[0]?.floor ?? null;
 
@@ -509,7 +545,7 @@ export default function Home() {
   }, [todayDay, scheduleItems, currentMinutes, todayIso, roomUniverseNormalized]);
 
   const roomsInClassNow = activeRoomsNow.size;
-  const roomsAvailableNow = Math.max(totalRooms - roomsInClassNow, 0);
+  const roomsDisponibleNow = Math.max(totalRooms - roomsInClassNow, 0);
 
   const uniqueWeeklyClasses = useMemo(
     () => new Set(scheduleItems.map((item) => item.classId)).size,
@@ -517,7 +553,7 @@ export default function Home() {
   );
 
   const latestImport = importsHistory[0];
-  const pendingConflicts = Math.max(
+  const pendientesConflictos = Math.max(
     (latestImport?.conflicts_detected ?? 0) -
       (latestImport?.conflicts_accepted ?? 0) -
       (latestImport?.conflicts_rejected ?? 0),
@@ -551,27 +587,27 @@ export default function Home() {
 
   const kpis = [
     {
-      title: "Rooms in Class Now",
+      title: "Salones en clase ahora",
       value: String(roomsInClassNow),
-      chip: totalRooms > 0 ? `${Math.round((roomsInClassNow / totalRooms) * 100)}% Active` : "No rooms",
+      chip: totalRooms > 0 ? `${Math.round((roomsInClassNow / totalRooms) * 100)}% Activos` : "Sin salones",
       chipClasses: "bg-green-50 text-green-600 dark:bg-green-900/20",
     },
     {
-      title: "Rooms Available",
-      value: String(roomsAvailableNow),
-      chip: "Ready for Booking",
+      title: "Salones disponibles",
+      value: String(roomsDisponibleNow),
+      chip: "Listos para reserva",
       chipClasses: "bg-[#295786]/10 text-[#295786]",
     },
     {
-      title: "Total Weekly Classes",
-      value: uniqueWeeklyClasses.toLocaleString("en-US"),
-      chip: "From database",
+      title: "Total de clases semanales",
+      value: uniqueWeeklyClasses.toLocaleString("es-ES"),
+      chip: "Desde base de datos",
       chipClasses: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300",
     },
     {
-      title: "Last Import",
-      value: latestImport ? new Intl.DateTimeFormat("en-US", { month: "short", day: "2-digit" }).format(new Date(latestImport.imported_at)) : "N/A",
-      chip: latestImport ? latestImport.status : "No history",
+      title: "Ultima importacion",
+      value: latestImport ? new Intl.DateTimeFormat("es-ES", { month: "short", day: "2-digit" }).format(new Date(latestImport.imported_at)) : "N/D",
+      chip: latestImport ? latestImport.status : "Sin historial",
       chipClasses: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300",
     },
   ];
@@ -579,11 +615,11 @@ export default function Home() {
   const immediateActions = useMemo(() => {
     const actions: Array<{ title: string; detail: string; level: string; icon: string; classes: string }> = [];
 
-    if (pendingConflicts > 0) {
+    if (pendientesConflictos > 0) {
       actions.push({
-        title: `Resolve ${pendingConflicts} schedule conflict${pendingConflicts === 1 ? "" : "s"}`,
-        detail: "Revisa conflictos pendientes en la ultima importacion.",
-        level: "High",
+        title: `Resolver ${pendientesConflictos} conflicto${pendientesConflictos === 1 ? "" : "s"} de horario`,
+        detail: "Revisa conflictos pendientes en la última importación.",
+        level: "Alta",
         icon: "warning",
         classes: "border-red-200 bg-red-50 text-red-700 dark:border-red-900/40 dark:bg-red-900/20",
       });
@@ -591,9 +627,9 @@ export default function Home() {
 
     if (!isLoadingData && scheduleItems.length === 0) {
       actions.push({
-        title: "No schedule loaded",
+        title: "No hay horario cargado",
         detail: "Importa un archivo para comenzar a poblar la agenda.",
-        level: "Medium",
+        level: "Media",
         icon: "upload_file",
         classes: "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/40 dark:bg-amber-900/20",
       });
@@ -601,9 +637,9 @@ export default function Home() {
 
     if (isLoadingData) {
       actions.push({
-        title: "Syncing dashboard data",
+        title: "Sincronizando datos del tablero",
         detail: "Actualizando eventos e historial desde la base de datos.",
-        level: "Low",
+        level: "Baja",
         icon: "sync",
         classes: "border-[#295786]/20 bg-[#295786]/5 text-[#295786]",
       });
@@ -611,8 +647,8 @@ export default function Home() {
 
     if (actions.length === 0) {
       actions.push({
-        title: "System running normally",
-        detail: "No critical actions pending right now.",
+        title: "Sistema funcionando normalmente",
+        detail: "No hay acciones críticas pendientes en este momento.",
         level: "Info",
         icon: "task_alt",
         classes: "border-green-200 bg-green-50 text-green-700 dark:border-green-900/40 dark:bg-green-900/20",
@@ -620,7 +656,7 @@ export default function Home() {
     }
 
     return actions.slice(0, 3);
-  }, [pendingConflicts, isLoadingData, scheduleItems.length]);
+  }, [pendientesConflictos, isLoadingData, scheduleItems.length]);
 
   const todayEvents = useMemo(() => {
     if (!todayDay) return [];
@@ -628,7 +664,7 @@ export default function Home() {
   }, [scheduleItems, todayDay, todayIso]);
 
   const peakToday = useMemo(() => {
-    if (!todayDay) return "N/A";
+    if (!todayDay) return "N/D";
     let bestHour = "06:00";
     let maxRooms = -1;
 
@@ -644,7 +680,7 @@ export default function Home() {
   }, [occupancyByHour, todayDay]);
 
   const mostOccupiedRoomsToday = useMemo(() => {
-    if (todayEvents.length === 0) return "N/A";
+    if (todayEvents.length === 0) return "N/D";
 
     const occupancyByRoom = new Map<string, number>();
 
@@ -660,7 +696,7 @@ export default function Home() {
       }
     }
 
-    if (maxMinutes === 0) return "N/A";
+    if (maxMinutes === 0) return "N/D";
 
     const winners = [...occupancyByRoom.entries()]
       .filter(([, minutes]) => minutes === maxMinutes)
@@ -671,10 +707,10 @@ export default function Home() {
   }, [todayEvents]);
 
   const todayOverview = [
-    { label: "Classes Today", value: String(todayEvents.length), icon: "calendar_today" },
-    { label: "Peak Hour", value: peakToday, icon: "schedule" },
-    { label: "Rooms Fully Booked", value: String(new Set(todayEvents.map((item) => item.room)).size), icon: "meeting_room" },
-    { label: "Most Occupied Room", value: mostOccupiedRoomsToday, icon: "bar_chart" },
+    { label: "Clases hoy", value: String(todayEvents.length), icon: "calendar_today" },
+    { label: "Hora pico", value: peakToday, icon: "schedule" },
+    { label: "Salones ocupados", value: String(new Set(todayEvents.map((item) => item.room)).size), icon: "meeting_room" },
+    { label: "Salón más ocupado", value: mostOccupiedRoomsToday, icon: "bar_chart" },
   ];
 
   const nextClasses = useMemo(() => {
@@ -688,7 +724,7 @@ export default function Home() {
       .map((item) => {
         const start = toMinutes(item.start);
         const diff = start - currentMinutes;
-        const status = `Starts in ${Math.max(diff, 0)} min`;
+        const status = `Inicia en ${Math.max(diff, 0)} min`;
         return {
           time: item.start,
           period: start < 720 ? "AM" : "PM",
@@ -736,7 +772,7 @@ export default function Home() {
         subject: item.subject,
         room: item.room,
         professor: item.professor,
-        status: daysAhead === 0 ? "Today" : DAY_LABELS[item.day],
+        status: daysAhead === 0 ? "Hoy" : DAY_LABELS[item.day],
         statusClasses: "bg-slate-100 text-slate-600 dark:bg-slate-800",
       }));
   }, [todayEvents, scheduleItems, currentMinutes, todayDay, todayIso]);
@@ -745,7 +781,7 @@ export default function Home() {
     () =>
       importsHistory.slice(0, 4).map((item) => ({
         key: item.id,
-        text: `Import ${item.source_file} (${item.status})`,
+        text: `Importacion ${item.source_file} (${item.status})`,
         when: formatRelativeTime(item.imported_at),
         icon: "upload_file",
       })),
@@ -767,10 +803,10 @@ export default function Home() {
         return {
           day: DAY_LABELS[day],
           occupancy: avg,
-          conflicts: day === todayDay ? pendingConflicts : 0,
+          conflicts: day === todayDay ? pendientesConflictos : 0,
         };
       }),
-    [occupancyByHour, totalRooms, pendingConflicts, todayDay]
+    [occupancyByHour, totalRooms, pendientesConflictos, todayDay]
   );
 
   const floorNumbers = useMemo(() => roomsByFloor.map((entry) => entry.floor), [roomsByFloor]);
@@ -811,8 +847,9 @@ export default function Home() {
 
       if (inClass) {
         return {
+          id: room.id,
           room: room.nombre,
-          label: "In Class" as const,
+          label: "En clase" as const,
           classes: "border-red-500/30 bg-red-100 text-red-700 dark:bg-red-900/20",
           textClass: "text-red-600/70",
         };
@@ -820,16 +857,18 @@ export default function Home() {
 
       if (startingSoon) {
         return {
+          id: room.id,
           room: room.nombre,
-          label: "Starting Soon" as const,
+          label: "Inicia pronto" as const,
           classes: "border-amber-500/30 bg-amber-100 text-amber-700 dark:bg-amber-900/20",
           textClass: "text-amber-600/70",
         };
       }
 
       return {
+        id: room.id,
         room: room.nombre,
-        label: "Available" as const,
+        label: "Disponible" as const,
         classes: "border-green-500/30 bg-green-100 text-green-700 dark:bg-green-900/20",
         textClass: "text-green-600/70",
       };
@@ -928,8 +967,8 @@ export default function Home() {
           <div className="flex items-center gap-3 text-[#295786]">
             <span className="material-symbols-outlined animate-spin text-base">progress_activity</span>
             <div>
-              <p className="text-sm font-bold">Cargando dashboard...</p>
-              <p className="text-xs opacity-80">Puedes navegar la pagina mientras se actualizan los datos.</p>
+              <p className="text-sm font-bold">Cargando tablero...</p>
+              <p className="text-xs opacity-80">Puedes navegar la página mientras se actualizan los datos.</p>
             </div>
           </div>
         </section>
@@ -954,9 +993,9 @@ export default function Home() {
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
             <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
               <div className="mb-4 flex items-center justify-between gap-3">
-                <h4 className="text-sm font-bold tracking-wider text-slate-800 uppercase dark:text-slate-200">Immediate Actions</h4>
+                <h4 className="text-sm font-bold tracking-wider text-slate-800 uppercase dark:text-slate-200">Acciones inmediatas</h4>
                 <span className="rounded-full bg-red-100 px-2.5 py-1 text-[10px] font-bold tracking-wider text-red-700 uppercase dark:bg-red-900/30 dark:text-red-300">
-                  {immediateActions.length} pending
+                  {immediateActions.length} pendientes
                 </span>
               </div>
               <div className="space-y-3">
@@ -976,17 +1015,8 @@ export default function Home() {
             </div>
 
             <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900 xl:p-5">
-              <h4 className="text-sm font-bold tracking-wider text-slate-800 uppercase dark:text-slate-200">Quick Actions</h4>
+              <h4 className="text-sm font-bold tracking-wider text-slate-800 uppercase dark:text-slate-200">BÚSQUEDA RÁPIDA</h4>
               <div className="mt-1 rounded-2xl border border-slate-200 p-3 dark:border-slate-700">
-                <div className="mb-1 flex items-center gap-3">
-                  <div className="flex size-11 items-center justify-center rounded-xl bg-[#295786]/10 text-[#295786]">
-                    <span className="material-symbols-outlined">person_search</span>
-                  </div>
-                  <div>
-                    <p className="text-sm font-bold text-slate-900 dark:text-slate-100">Search Actions</p>
-                    <p className="text-xs text-slate-500">Elige una opcion: Clase, Profesor o Salones Disponibles.</p>
-                  </div>
-                </div>
                 <div className="mt-2 flex flex-wrap gap-2">
                   <button
                     type="button"
@@ -1053,11 +1083,7 @@ export default function Home() {
                     Buscar
                   </button>
                 </form>
-                <p className="mt-1 text-xs text-slate-500">
-                  {quickMode === "availableRooms"
-                    ? "Selecciona dia y hora para validar disponibilidad de salones en el modal."
-                    : "Escribe y busca para ver resultados en un modal."}
-                </p>
+                {quickMode === "availableRooms" ? <p className="mt-1 text-xs text-slate-500">Selecciona día y hora para validar disponibilidad de salones en el modal.</p> : null}
               </div>
             </div>
           </div>
@@ -1065,27 +1091,27 @@ export default function Home() {
 
         <div className="lg:col-span-3">
           <div className="h-full rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-            <h4 className="text-sm font-bold tracking-wider text-slate-800 uppercase dark:text-slate-200">System Health</h4>
+            <h4 className="text-sm font-bold tracking-wider text-slate-800 uppercase dark:text-slate-200">Estado del sistema</h4>
             <div className="mt-4 space-y-3">
               <div className="flex items-center justify-between rounded-xl border border-green-200 bg-green-50 p-2.5 dark:border-green-900/40 dark:bg-green-900/20">
-                <p className="text-[11px] font-bold text-green-700 dark:text-green-300">Schedule Status</p>
-                <span className="rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-bold text-green-700 dark:bg-green-900/50 dark:text-green-300">Healthy</span>
+                <p className="text-[11px] font-bold text-green-700 dark:text-green-300">Estado del horario</p>
+                <span className="rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-bold text-green-700 dark:bg-green-900/50 dark:text-green-300">Saludable</span>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="rounded-xl bg-slate-100 p-2.5 dark:bg-slate-800">
-                  <p className="text-[10px] font-bold tracking-wider text-slate-500 uppercase">Conflicts</p>
-                  <p className="mt-1 text-lg font-black text-slate-800 dark:text-slate-100">{pendingConflicts}</p>
+                  <p className="text-[10px] font-bold tracking-wider text-slate-500 uppercase">Conflictos</p>
+                  <p className="mt-1 text-lg font-black text-slate-800 dark:text-slate-100">{pendientesConflictos}</p>
                 </div>
                 <div className="rounded-xl bg-slate-100 p-2.5 dark:bg-slate-800">
-                  <p className="text-[10px] font-bold tracking-wider text-slate-500 uppercase">Data Integrity</p>
-                  <p className="mt-1 text-lg font-black text-slate-800 dark:text-slate-100">{scheduleItems.length > 0 ? "Good" : "Empty"}</p>
+                  <p className="text-[10px] font-bold tracking-wider text-slate-500 uppercase">Integridad de datos</p>
+                  <p className="mt-1 text-lg font-black text-slate-800 dark:text-slate-100">{scheduleItems.length > 0 ? "Correcta" : "Vacía"}</p>
                 </div>
               </div>
               <div className="flex items-center gap-2 rounded-xl border border-[#295786]/20 bg-[#295786]/5 p-2.5 text-[#295786]">
                 <span className="material-symbols-outlined text-base">sync</span>
                 <div>
-                  <p className="text-xs font-bold">Last sync</p>
-                  <p className="text-[11px] opacity-80">{latestImport ? formatRelativeTime(latestImport.imported_at) : "No imports yet"}</p>
+                  <p className="text-xs font-bold">Última sincronización</p>
+                  <p className="text-[11px] opacity-80">{latestImport ? formatRelativeTime(latestImport.imported_at) : "Sin importaciones"}</p>
                 </div>
               </div>
             </div>
@@ -1095,13 +1121,13 @@ export default function Home() {
         <div className="grid grid-cols-1 gap-6 lg:col-span-12 lg:grid-cols-12">
           <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900 lg:col-span-8">
             <div className="mb-3 flex items-center justify-between">
-              <h4 className="text-sm font-bold tracking-wider text-slate-800 uppercase dark:text-slate-200">Hourly Room Occupancy</h4>
+              <h4 className="text-sm font-bold tracking-wider text-slate-800 uppercase dark:text-slate-200">Ocupación por hora de salones</h4>
               <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-bold tracking-wider text-slate-600 uppercase dark:bg-slate-800 dark:text-slate-300">
-                {isLoadingData ? "Cargando" : "Live Data"}
+                {isLoadingData ? "Cargando" : "Datos en vivo"}
               </span>
             </div>
             {isLoadingData ? (
-              <p className="mb-2 text-xs text-slate-500">Actualizando ocupacion por hora...</p>
+              <p className="mb-2 text-xs text-slate-500">Actualizando ocupación por hora...</p>
             ) : null}
             <div className="h-72 w-full">
               <ResponsiveContainer width="100%" height="100%">
@@ -1171,7 +1197,7 @@ export default function Home() {
           </div>
 
           <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900 lg:col-span-4">
-            <h4 className="text-sm font-bold tracking-wider text-slate-800 uppercase dark:text-slate-200">Today Overview</h4>
+            <h4 className="text-sm font-bold tracking-wider text-slate-800 uppercase dark:text-slate-200">Resumen de hoy</h4>
             <div className="mt-4 flex flex-col gap-2">
               {todayOverview.map((item) => (
                 <div key={item.label} className="rounded-xl border border-slate-200 p-3 dark:border-slate-700">
@@ -1190,8 +1216,8 @@ export default function Home() {
       <section className="grid grid-cols-1 gap-8 lg:grid-cols-2 lg:items-stretch">
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 lg:flex lg:h-full lg:flex-col">
           <div className="flex items-center justify-between border-b border-slate-100 p-5 dark:border-slate-800">
-            <h4 className="text-sm font-bold tracking-wider text-slate-800 uppercase dark:text-slate-200">Next Classes</h4>
-            <button className="text-xs font-bold text-[#295786] hover:underline">View All</button>
+            <h4 className="text-sm font-bold tracking-wider text-slate-800 uppercase dark:text-slate-200">Próximas clases</h4>
+            <button className="text-xs font-bold text-[#295786] hover:underline">Ver todo</button>
           </div>
           <div className="divide-y divide-slate-50 dark:divide-slate-800 lg:flex-1 lg:overflow-y-auto">
             {nextClasses.map((nextClass) => (
@@ -1215,7 +1241,7 @@ export default function Home() {
             ))}
             {nextClasses.length === 0 && (
               <div className="p-4 text-sm text-slate-500">
-                {isLoadingData ? "Cargando proximas clases..." : "No classes starting in the next 30 minutes."}
+                {isLoadingData ? "Cargando proximas clases..." : "No hay clases que inicien en los proximos 30 minutos."}
               </div>
             )}
           </div>
@@ -1224,15 +1250,15 @@ export default function Home() {
         <div className="flex flex-col gap-6 lg:h-full">
           <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
             <div className="border-b border-slate-100 p-5 dark:border-slate-800">
-              <h4 className="text-sm font-bold tracking-wider text-slate-800 uppercase dark:text-slate-200">Weekly Building Overview</h4>
-              <p className="mt-1 text-[11px] text-slate-500">Compact weekly trend for planning, not real-time operations.</p>
+              <h4 className="text-sm font-bold tracking-wider text-slate-800 uppercase dark:text-slate-200">Resumen semanal del edificio</h4>
+              <p className="mt-1 text-[11px] text-slate-500">Tendencia semanal compacta para planificación, no para operación en tiempo real.</p>
             </div>
             <div className="space-y-2 p-4">
               {compactWeeklyOverview.map((day) => (
                 <div key={day.day} className="rounded-xl border border-slate-200 p-3 dark:border-slate-700">
                   <div className="mb-2 flex items-center justify-between">
                     <p className="text-xs font-bold text-slate-800 dark:text-slate-200">{day.day}</p>
-                    <p className="text-[11px] text-slate-600 dark:text-slate-300">{day.occupancy}% occupancy</p>
+                    <p className="text-[11px] text-slate-600 dark:text-slate-300">{day.occupancy}% ocupación</p>
                   </div>
                   <div className="h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
                     <div className="h-full bg-[#295786]" style={{ width: `${day.occupancy}%` }} />
@@ -1244,7 +1270,7 @@ export default function Home() {
 
           <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 lg:flex lg:flex-1 lg:flex-col">
             <div className="border-b border-slate-100 p-5 dark:border-slate-800">
-              <h4 className="text-sm font-bold tracking-wider text-slate-800 uppercase dark:text-slate-200">Recent Activity</h4>
+              <h4 className="text-sm font-bold tracking-wider text-slate-800 uppercase dark:text-slate-200">Actividad reciente</h4>
             </div>
             <div className="divide-y divide-slate-100 dark:divide-slate-800 lg:flex-1 lg:overflow-y-auto">
               {recentActivity.map((activity) => (
@@ -1258,7 +1284,7 @@ export default function Home() {
               ))}
               {recentActivity.length === 0 && (
                 <div className="p-4 text-sm text-slate-500">
-                  {isLoadingData ? "Cargando actividad reciente..." : "No import activity recorded yet."}
+                  {isLoadingData ? "Cargando actividad reciente..." : "Aún no hay actividad de importación registrada."}
                 </div>
               )}
             </div>
@@ -1269,8 +1295,8 @@ export default function Home() {
       <section className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
         <div className="mb-8 flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
           <div>
-            <h4 className="text-sm font-bold tracking-wider text-slate-800 uppercase dark:text-slate-200">Mini Building Map Preview</h4>
-            <p className="mt-1 text-xs text-slate-500">Real-time room occupancy status visualization</p>
+            <h4 className="text-sm font-bold tracking-wider text-slate-800 uppercase dark:text-slate-200">Vista previa del mapa del edificio</h4>
+            <p className="mt-1 text-xs text-slate-500">Visualización en tiempo real del estado de ocupación de salones</p>
           </div>
           <div className="flex gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800">
             {floorNumbers.map((floor) => (
@@ -1280,25 +1306,25 @@ export default function Home() {
                 onClick={() => setSelectedFloor(floor)}
                 className={`rounded-lg px-3 py-1 text-[10px] font-bold uppercase ${selectedFloor === floor ? "bg-white text-[#295786] shadow-sm dark:bg-slate-700" : "text-slate-500 hover:bg-white/50 dark:hover:bg-slate-700/50"}`}
               >
-                FL {floor}
+                Piso {floor}
               </button>
             ))}
             {floorNumbers.length === 0 && (
-              <span className="px-2 py-1 text-[10px] font-bold text-slate-500 uppercase">No floors</span>
+              <span className="px-2 py-1 text-[10px] font-bold text-slate-500 uppercase">Sin pisos</span>
             )}
           </div>
         </div>
 
         <div className="mb-8 grid grid-cols-2 gap-4 md:grid-cols-4 lg:grid-cols-6">
-          {miniMapRooms.map((room) => (
-            <div key={room.room} className={`group flex min-h-[98px] cursor-default flex-col justify-between rounded-xl border-2 p-3 ${room.classes}`}>
+          {miniMapRooms.map((room, index) => (
+            <div key={`${room.id}-${index}`} className={`group flex min-h-[98px] cursor-default flex-col justify-between rounded-xl border-2 p-3 ${room.classes}`}>
               <span className="line-clamp-2 text-center text-xs font-black leading-tight md:text-sm">{room.room}</span>
-              <span className={`text-center text-[10px] font-bold uppercase ${room.textClass}`}>{room.label || "Available"}</span>
+              <span className={`text-center text-[10px] font-bold uppercase ${room.textClass}`}>{room.label || "Disponible"}</span>
             </div>
           ))}
           {miniMapRooms.length === 0 && (
             <div className="col-span-2 rounded-xl border border-slate-200 p-4 text-sm text-slate-500 md:col-span-4 lg:col-span-6">
-              {isLoadingData ? "Cargando mapa de salones..." : "No room data available for this floor."}
+              {isLoadingData ? "Cargando mapa de salones..." : "No hay datos de salones para este piso."}
             </div>
           )}
         </div>
@@ -1307,15 +1333,15 @@ export default function Home() {
           <div className="flex gap-6">
             <div className="flex items-center gap-2">
               <span className="size-3 rounded bg-green-500" />
-              <span className="text-xs font-medium text-slate-600">Available</span>
+              <span className="text-xs font-medium text-slate-600">Disponible</span>
             </div>
             <div className="flex items-center gap-2">
               <span className="size-3 rounded bg-red-500" />
-              <span className="text-xs font-medium text-slate-600">In Class</span>
+              <span className="text-xs font-medium text-slate-600">En clase</span>
             </div>
             <div className="flex items-center gap-2">
               <span className="size-3 rounded bg-amber-500" />
-              <span className="text-xs font-medium text-slate-600">Starting Soon</span>
+              <span className="text-xs font-medium text-slate-600">Inicia pronto</span>
             </div>
           </div>
           <button
@@ -1323,7 +1349,7 @@ export default function Home() {
             onClick={() => router.push("/rooms")}
             className="w-full rounded-xl bg-[#295786] px-6 py-2.5 text-sm font-bold text-white shadow-lg shadow-[#295786]/20 transition-all hover:scale-105 active:scale-95 sm:w-auto"
           >
-            Open Full Building Map
+            Abrir mapa completo del edificio
           </button>
         </div>
       </section>
@@ -1346,10 +1372,10 @@ export default function Home() {
                       : "Disponibilidad de Salones"}
                 </p>
                 {quickMode !== "availableRooms" ? (
-                  <p className="text-xs text-slate-500">Busqueda: {submittedQuery}</p>
+                  <p className="text-xs text-slate-500">Búsqueda: {submittedQuery}</p>
                 ) : (
                   <p className="text-xs text-slate-500">
-                    Consulta: {submittedRoomCheck ? `${DAY_EN_TO_ES[submittedRoomCheck.day]} ${submittedRoomCheck.time}` : "N/A"}
+                    Consulta: {submittedRoomCheck ? `${DAY_EN_TO_ES[submittedRoomCheck.day]} ${submittedRoomCheck.time}` : "N/D"}
                   </p>
                 )}
               </div>
@@ -1358,13 +1384,13 @@ export default function Home() {
                 onClick={() => setIsSearchModalOpen(false)}
                 className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
               >
-                Close
+                Cerrar
               </button>
             </div>
             <div className="max-h-[68vh] space-y-3 overflow-y-auto p-5">
               {quickMode === "class" && classSearchResults.length === 0 && (
                 <p className="rounded-xl bg-slate-100 p-4 text-sm text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                  No encontramos clases para esa busqueda.
+                  No encontramos clases para esa búsqueda.
                 </p>
               )}
               {quickMode === "class" && classSearchResults.map(({ item }) => (
