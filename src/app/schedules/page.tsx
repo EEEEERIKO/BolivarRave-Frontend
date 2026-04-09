@@ -18,8 +18,26 @@ type ScheduleEvent = {
   teacher: string;
   startDate: string;
   endDate: string;
+  overrides?: Array<{
+    date: string;
+    day: string;
+    room: string;
+    start: string;
+    end: string;
+  }>;
   reservationType?: "normal" | "momentanea" | "iglesia";
   color: "blue" | "emerald" | "amber" | "violet" | "red";
+};
+
+type UpdateScope = "week" | "always";
+
+type PendingScopedUpdate = {
+  id: string;
+  eventId: string;
+  slotId: string;
+  targetDate: string;
+  source: "drag" | "resize";
+  updatedEvent: ScheduleEvent;
 };
 
 type ReservationType = "normal" | "momentanea" | "iglesia";
@@ -180,6 +198,13 @@ function getColombiaTodayIsoDate() {
 
   return `${year}-${month}-${day}`;
 }
+
+const toIsoLocalDate = (date: Date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
 
 const getInitialSlot = (): ScheduleSlotForm => ({
   day: "",
@@ -644,6 +669,8 @@ export default function SchedulesPage() {
   const [newEvent, setNewEvent] = useState<NewEventForm>(getInitialNewEvent);
   const [editEvent, setEditEvent] = useState<EditEventForm>(getInitialEditEvent);
   const [gridViewportWidth, setGridViewportWidth] = useState(0);
+  const [pendingScopedUpdate, setPendingScopedUpdate] = useState<PendingScopedUpdate | null>(null);
+  const [isApplyingScopedUpdate, setIsApplyingScopedUpdate] = useState(false);
 
   const normalizeColor = (value: string): ScheduleEvent["color"] => {
     if (value === "blue" || value === "emerald" || value === "amber" || value === "violet" || value === "red") {
@@ -819,20 +846,149 @@ export default function SchedulesPage() {
 
       const selectedDate = addDays(currentWeekStart, selectedDayIndex);
       const selectedDateValue = dateValue(selectedDate);
+      const selectedDateIso = toIsoLocalDate(selectedDate);
+      const matchesVisibleDate = (value: string) => {
+        if (value === selectedDateIso) return true;
+        const parsedValue = parseIsoDateToLocal(value);
+        return dateValue(parsedValue) === selectedDateValue;
+      };
 
-      return events.filter((event) => {
-        if (normalizeDayKey(event.day) !== normalizeDayKey(selectedDay) || !filteredRooms.includes(event.room)) {
-          return false;
-        }
+      return events
+        .map((event) => {
+          const override = event.overrides?.find((item) => matchesVisibleDate(item.date));
+          const effectiveDay = override?.day ?? event.day;
+          const effectiveRoom = override?.room ?? event.room;
+          const effectiveStart = override?.start ?? event.start;
+          const effectiveEnd = override?.end ?? event.end;
 
-        const eventStartValue = dateValue(parseIsoDateToLocal(event.startDate));
-        const eventEndValue = dateValue(parseIsoDateToLocal(event.endDate));
+          return {
+            ...event,
+            day: effectiveDay,
+            room: effectiveRoom,
+            start: effectiveStart,
+            end: effectiveEnd,
+          };
+        })
+        .filter((event) => {
+          if (normalizeDayKey(event.day) !== normalizeDayKey(selectedDay) || !filteredRooms.includes(event.room)) {
+            return false;
+          }
 
-        return selectedDateValue >= eventStartValue && selectedDateValue <= eventEndValue;
-      });
+          const eventStartValue = dateValue(parseIsoDateToLocal(event.startDate));
+          const eventEndValue = dateValue(parseIsoDateToLocal(event.endDate));
+
+          return selectedDateValue >= eventStartValue && selectedDateValue <= eventEndValue;
+        });
     },
     [events, selectedDay, filteredRooms, currentWeekStart]
   );
+
+  const selectedDayDateIso = useMemo(() => {
+    const selectedDayIndex = weekDays.indexOf(selectedDay);
+    if (selectedDayIndex < 0) return toIsoLocalDate(currentWeekStart);
+    return toIsoLocalDate(addDays(currentWeekStart, selectedDayIndex));
+  }, [currentWeekStart, selectedDay]);
+
+  const applyLocalScopedUpdate = (id: string, updatedEvent: ScheduleEvent, targetDate: string, updateScope: UpdateScope) => {
+    if (updateScope === "always") {
+      setEvents((current) => current.map((event) => (event.id === id ? updatedEvent : event)));
+      return;
+    }
+
+    setEvents((current) =>
+      current.map((event) => {
+        if (event.id !== id) return event;
+
+        const currentOverrides = event.overrides ?? [];
+        const nextOverrides = [
+          ...currentOverrides.filter((item) => item.date !== targetDate),
+          {
+            date: targetDate,
+            day: updatedEvent.day,
+            room: updatedEvent.room,
+            start: updatedEvent.start,
+            end: updatedEvent.end,
+          },
+        ];
+
+        return {
+          ...event,
+          overrides: nextOverrides,
+        };
+      })
+    );
+  };
+
+  const requestScopedUpdate = (id: string, updatedEvent: ScheduleEvent, source: "drag" | "resize") => {
+    const [eventIdFromComposite, slotId] = updatedEvent.id.split(":");
+    const eventId = updatedEvent.classId || eventIdFromComposite;
+
+    if (!eventId || !slotId) {
+      console.warn(`❌ [${source === "drag" ? "Drag" : "Resize"}] No se pudo obtener eventId o slotId`, {
+        eventIdFromComposite,
+        slotId,
+      });
+      return;
+    }
+
+    setPendingScopedUpdate({
+      id,
+      eventId,
+      slotId,
+      targetDate: selectedDayDateIso,
+      source,
+      updatedEvent,
+    });
+  };
+
+  const confirmScopedUpdate = async (updateScope: UpdateScope) => {
+    if (!pendingScopedUpdate) return;
+
+    const { id, eventId, slotId, targetDate, source, updatedEvent } = pendingScopedUpdate;
+    setIsApplyingScopedUpdate(true);
+
+    try {
+      await fetchApiJson<{ message: string }>(`/api/schedules/events/${eventId}/${slotId}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          faculty: updatedEvent.faculty,
+          code: updatedEvent.code,
+          subject: updatedEvent.subject,
+          teacher: updatedEvent.teacher,
+          startDate: updatedEvent.startDate,
+          endDate: updatedEvent.endDate,
+          day: updatedEvent.day,
+          room: updatedEvent.room,
+          start: updatedEvent.start,
+          end: updatedEvent.end,
+          updateScope,
+          ...(updateScope === "week" ? { targetDate } : {}),
+        }),
+      });
+
+      applyLocalScopedUpdate(id, updatedEvent, targetDate, updateScope);
+      setRemoteLoadError(null);
+      setPendingScopedUpdate(null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "No se pudo actualizar la clase en base de datos";
+      console.error(`❌ [${source === "drag" ? "Drag" : "Resize"}] Error al actualizar:`, message);
+      setRemoteLoadError(message);
+      setPendingScopedUpdate(null);
+      if (!message.includes("Solapamiento")) {
+        window.alert(message);
+      }
+      try {
+        await syncSchedulesFromApi();
+      } catch {
+        // noop
+      }
+    } finally {
+      setIsApplyingScopedUpdate(false);
+    }
+  };
 
   const weekDates = useMemo(() => {
     const map: Record<string, string> = {};
@@ -920,52 +1076,11 @@ export default function SchedulesPage() {
       newRoom: updatedEvent.room,
       newStart: updatedEvent.start,
       newEnd: updatedEvent.end,
+      targetDate: selectedDayDateIso,
+      source: "drag",
     });
 
-    setEvents((current) => current.map((event) => (event.id === id ? updatedEvent : event)));
-
-    const [eventIdFromComposite, slotId] = updatedEvent.id.split(":");
-    const eventId = updatedEvent.classId || eventIdFromComposite;
-
-    if (!eventId || !slotId) {
-      console.warn("❌ [Drag] No se pudo obtener eventId o slotId", { eventIdFromComposite, slotId });
-      return;
-    }
-
-    void (async () => {
-      try {
-        console.log("📤 [Drag] Enviando petición PUT al backend...");
-        const response = await fetchApiJson<{ message: string }>(`/api/schedules/events/${eventId}/${slotId}`, {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            faculty: updatedEvent.faculty,
-            code: updatedEvent.code,
-            subject: updatedEvent.subject,
-            teacher: updatedEvent.teacher,
-            startDate: updatedEvent.startDate,
-            endDate: updatedEvent.endDate,
-            day: updatedEvent.day,
-            room: updatedEvent.room,
-            start: updatedEvent.start,
-            end: updatedEvent.end,
-          }),
-        });
-        console.log("✅ [Drag] Evento actualizado en backend:", response);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "No se pudo actualizar la clase en base de datos";
-        console.error("❌ [Drag] Error al actualizar:", message);
-        setRemoteLoadError(message);
-        window.alert(message);
-        try {
-          await syncSchedulesFromApi();
-        } catch {
-          // noop
-        }
-      }
-    })();
+    requestScopedUpdate(id, updatedEvent, "drag");
   };
 
   const handleDragStop = (id: string, span: number): RndDragCallback => {
@@ -1002,43 +1117,7 @@ export default function SchedulesPage() {
         end: slotEnds[endSlotIndex],
       };
 
-      setEvents((all) => all.map((event) => (event.id === id ? updatedEvent : event)));
-
-      const [eventIdFromComposite, slotId] = updatedEvent.id.split(":");
-      const eventId = updatedEvent.classId || eventIdFromComposite;
-      if (!eventId || !slotId) return;
-
-      void (async () => {
-        try {
-          await fetchApiJson<{ message: string }>(`/api/schedules/events/${eventId}/${slotId}`, {
-            method: "PUT",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              faculty: updatedEvent.faculty,
-              code: updatedEvent.code,
-              subject: updatedEvent.subject,
-              teacher: updatedEvent.teacher,
-              startDate: updatedEvent.startDate,
-              endDate: updatedEvent.endDate,
-              day: updatedEvent.day,
-              room: updatedEvent.room,
-              start: updatedEvent.start,
-              end: updatedEvent.end,
-            }),
-          });
-        } catch (error) {
-          const message = error instanceof Error ? error.message : "No se pudo actualizar la clase en base de datos";
-          setRemoteLoadError(message);
-          window.alert(message);
-          try {
-            await syncSchedulesFromApi();
-          } catch {
-            // noop
-          }
-        }
-      })();
+      requestScopedUpdate(id, updatedEvent, "resize");
     };
   };
 
@@ -1056,10 +1135,15 @@ export default function SchedulesPage() {
     const candidateEndDate =
       newEvent.reservationType === "momentanea" ? newEvent.oneDayDate : newEvent.endDate;
 
+    if (candidateStartDate && candidateEndDate && candidateStartDate > candidateEndDate) {
+      const message = "Rango de fechas invalido: la fecha de inicio no puede ser mayor que la fecha de fin.";
+      setCreateError(message);
+      return;
+    }
+
     if (!newEvent.slots.length) {
       const message = "Debes agregar al menos un horario.";
       setCreateError(message);
-      window.alert(message);
       return;
     }
 
@@ -1069,28 +1153,24 @@ export default function SchedulesPage() {
       if (!slot.day) {
         const message = "Debes seleccionar un dia.";
         setCreateError(message);
-        window.alert(message);
         return;
       }
 
       if (!slot.room) {
         const message = "Debes seleccionar un salon.";
         setCreateError(message);
-        window.alert(message);
         return;
       }
 
       if (!slot.start || !slot.end) {
         const message = "Debes seleccionar hora inicio y hora fin.";
         setCreateError(message);
-        window.alert(message);
         return;
       }
 
       if (!roomCatalog.includes(slot.room)) {
         const message = `Salon invalido en horario ${i + 1}: debes seleccionar un salon de la lista disponible.`;
         setCreateError(message);
-        window.alert(message);
         return;
       }
 
@@ -1100,7 +1180,6 @@ export default function SchedulesPage() {
       if (slotStartIndex < 0 || slotEndExclusive < 0 || slotEndExclusive <= slotStartIndex) {
         const message = `Horario invalido en bloque ${i + 1}: la hora fin debe ser mayor que la hora inicio.`;
         setCreateError(message);
-        window.alert(message);
         return;
       }
 
@@ -1128,7 +1207,6 @@ export default function SchedulesPage() {
       if (overlappingClass) {
         const message = `Conflicto detectado: ya existe "${overlappingClass.code} | ${overlappingClass.subject}" en ${slot.room} (${slot.day}) para ese horario.`;
         setCreateError(message);
-        window.alert(message);
         return;
       }
 
@@ -1146,7 +1224,6 @@ export default function SchedulesPage() {
       if (overlapInForm) {
         const message = `Hay solape entre los horarios del formulario en ${slot.room} (${slot.day}).`;
         setCreateError(message);
-        window.alert(message);
         return;
       }
     }
@@ -1155,7 +1232,6 @@ export default function SchedulesPage() {
       if (!newEvent.faculty || !newEvent.code || !newEvent.subject || !newEvent.teacher) {
         const message = "Completa Facultad, Codigo, Materia y Docente para la reserva normal.";
         setCreateError(message);
-        window.alert(message);
         return;
       }
     }
@@ -1163,7 +1239,6 @@ export default function SchedulesPage() {
     if (newEvent.reservationType === "momentanea" && !newEvent.subject.trim()) {
       const message = "En reserva por dia debes indicar el motivo o nombre de la reserva.";
       setCreateError(message);
-      window.alert(message);
       return;
     }
 
@@ -1171,14 +1246,12 @@ export default function SchedulesPage() {
       if (!newEvent.churchGroup.trim() || !newEvent.churchEvent.trim() || !newEvent.churchContact.trim()) {
         const message = "Para reserva de iglesia completa grupo, actividad y contacto.";
         setCreateError(message);
-        window.alert(message);
         return;
       }
 
       if (!newEvent.startDate || !newEvent.endDate) {
         const message = "Para reserva de iglesia debes seleccionar fecha de inicio y fecha de fin.";
         setCreateError(message);
-        window.alert(message);
         return;
       }
     }
@@ -1275,7 +1348,6 @@ export default function SchedulesPage() {
     } catch (error) {
       const message = error instanceof Error ? error.message : "No se pudo crear la clase en base de datos";
       setCreateError(message);
-      window.alert(message);
     } finally {
       setIsCreatingEvent(false);
     }
@@ -1541,10 +1613,24 @@ export default function SchedulesPage() {
 
   return (
     <div className="p-3 sm:p-4 md:p-6">
-      <div className="relative z-10 mb-4 rounded-xl border border-slate-200 bg-white px-3 py-3 shadow-sm sm:px-5 lg:sticky lg:top-24">
+      <div className="relative z-10 mb-5 rounded-xl border border-slate-200 bg-white px-3 py-3 shadow-sm sm:px-5">
         {remoteLoadError ? (
-          <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-            {remoteLoadError}
+          <div className="mb-4 rounded-lg border-l-4 border-red-500 bg-red-50 px-4 py-3 shadow-sm">
+            <div className="flex items-start gap-3">
+              <div className="flex-shrink-0">
+                <span className="text-lg font-bold text-red-600">⚠️</span>
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-red-900 mb-1">Error al actualizar clase</p>
+                <p className="text-sm text-red-800 whitespace-pre-wrap">{remoteLoadError}</p>
+              </div>
+              <button
+                onClick={() => setRemoteLoadError(null)}
+                className="flex-shrink-0 px-2 py-1 text-xs text-red-600 hover:bg-red-100 rounded"
+              >
+                ✕
+              </button>
+            </div>
           </div>
         ) : null}
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -1747,6 +1833,7 @@ export default function SchedulesPage() {
                 const geom = eventGeometry(event, filteredRooms);
                 if (geom.roomIndex < 0) return null;
 
+                const isEventSelected = selectedEventId === event.id;
                 const hasEnoughSpace = geom.span >= 4;
                 const reservationType = inferReservationType(event);
                 const reservationBadge =
@@ -1762,18 +1849,32 @@ export default function SchedulesPage() {
                     bounds="parent"
                     dragGrid={[roomColWidth, slotHeight]}
                     resizeGrid={[roomColWidth, slotHeight]}
+                    disableDragging={!isEventSelected}
                     size={{ width: geom.width, height: geom.height }}
                     position={{ x: geom.x, y: geom.y }}
-                    enableResizing={{
-                      top: true,
-                      right: false,
-                      bottom: true,
-                      left: false,
-                      topRight: false,
-                      bottomRight: false,
-                      bottomLeft: false,
-                      topLeft: false,
-                    }}
+                    enableResizing={
+                      isEventSelected
+                        ? {
+                            top: true,
+                            right: false,
+                            bottom: true,
+                            left: false,
+                            topRight: false,
+                            bottomRight: false,
+                            bottomLeft: false,
+                            topLeft: false,
+                          }
+                        : {
+                            top: false,
+                            right: false,
+                            bottom: false,
+                            left: false,
+                            topRight: false,
+                            bottomRight: false,
+                            bottomLeft: false,
+                            topLeft: false,
+                          }
+                    }
                     onDragStop={handleDragStop(event.id, geom.span)}
                     onResizeStop={handleResizeStop(event.id)}
                     onClick={() => {
@@ -1782,7 +1883,7 @@ export default function SchedulesPage() {
                       setEditError(null);
                     }}
                     className={`z-10 overflow-hidden rounded-lg border-l-4 p-2 text-left shadow-sm transition hover:shadow-md ${getEventVisualClass(event)} ${
-                      selectedEventId === event.id ? "ring-2 ring-[#295786]" : ""
+                      isEventSelected ? "ring-2 ring-[#295786] cursor-grab active:cursor-grabbing" : "cursor-pointer"
                     }`}
                     minHeight={slotHeight - 8}
                     minWidth={roomColWidth - 8}
@@ -2451,6 +2552,50 @@ export default function SchedulesPage() {
                 className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {isDeletingAll ? "Eliminando..." : "Confirmar eliminacion"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pendingScopedUpdate && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/45 p-4">
+          <div className="w-full max-w-md rounded-xl bg-white p-5 shadow-2xl">
+            <h3 className="text-lg font-bold text-slate-900">Aplicar cambio de horario</h3>
+            <p className="mt-2 text-sm text-slate-600">
+              Elige si este cambio se aplica solo a esta semana o a todas las semanas del evento.
+            </p>
+            <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+              <p className="font-semibold text-slate-800">Vista previa</p>
+              <p className="mt-1">Día: {pendingScopedUpdate.updatedEvent.day}</p>
+              <p>Salón: {pendingScopedUpdate.updatedEvent.room}</p>
+              <p>Horario: {pendingScopedUpdate.updatedEvent.start} - {pendingScopedUpdate.updatedEvent.end}</p>
+              <p>Fecha actual: {pendingScopedUpdate.targetDate}</p>
+            </div>
+            <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={() => setPendingScopedUpdate(null)}
+                disabled={isApplyingScopedUpdate}
+                className="rounded-lg border border-slate-200 px-4 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => void confirmScopedUpdate("week")}
+                disabled={isApplyingScopedUpdate}
+                className="rounded-lg border border-[#295786]/30 bg-[#295786]/10 px-4 py-2 text-sm font-semibold text-[#295786] disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isApplyingScopedUpdate ? "Aplicando..." : "Solo esta semana"}
+              </button>
+              <button
+                type="button"
+                onClick={() => void confirmScopedUpdate("always")}
+                disabled={isApplyingScopedUpdate}
+                className="rounded-lg bg-[#295786] px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isApplyingScopedUpdate ? "Aplicando..." : "Para siempre"}
               </button>
             </div>
           </div>

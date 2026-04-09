@@ -115,7 +115,8 @@ const HOURS = [
 ];
 
 const TIMELINE_START_MINUTES = 5 * 60;
-const TIMELINE_END_MINUTES = 22 * 60;
+// Keep this aligned with the rendered hour grid (05:00..22:00 = 18 columns => 05:00..23:00 span).
+const TIMELINE_END_MINUTES = 23 * 60;
 const TIMELINE_TOTAL_MINUTES = TIMELINE_END_MINUTES - TIMELINE_START_MINUTES;
 
 const WEEK_DAYS: WeekDay[] = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
@@ -583,12 +584,17 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
 
     const normalizedStart = Math.max(start, TIMELINE_START_MINUTES);
     const normalizedEnd = Math.min(end, TIMELINE_END_MINUTES);
+
+    if (normalizedEnd <= normalizedStart) {
+      return { left: "0%", right: "100%" };
+    }
+
     const leftPct = ((normalizedStart - TIMELINE_START_MINUTES) / TIMELINE_TOTAL_MINUTES) * 100;
     const rightPct = ((TIMELINE_END_MINUTES - normalizedEnd) / TIMELINE_TOTAL_MINUTES) * 100;
 
     return {
-      left: `${Math.max(0, leftPct)}%`,
-      right: `${Math.max(0, rightPct)}%`,
+      left: `${Math.max(0, Math.min(100, leftPct))}%`,
+      right: `${Math.max(0, Math.min(100, rightPct))}%`,
     };
   };
 
@@ -888,11 +894,13 @@ export default function StaffPage() {
   const [showAddStaffForm, setShowAddStaffForm] = useState(false);
   const [showEditStaffForm, setShowEditStaffForm] = useState(false);
   const [formFeedback, setFormFeedback] = useState<string | null>(null);
-  const [staffList, setStaffList] = useState<StaffApi[]>([]);
+  const [staffList, setStaffList] = useState<StaffApi[]>(() => getCachedData<StaffApi[]>("staff_list") ?? []);
   const [selectedStaffId, setSelectedStaffId] = useState<string | null>(null);
   const [isStaffDetailModalOpen, setIsStaffDetailModalOpen] = useState(false);
   const [mobileDetailTab, setMobileDetailTab] = useState<StaffMobileDetailTab>("profile");
-  const [isLoadingStaff, setIsLoadingStaff] = useState(false);
+  const [isLoadingStaff, setIsLoadingStaff] = useState(
+    () => ((getCachedData<StaffApi[]>("staff_list") ?? []).length === 0),
+  );
   const [staffError, setStaffError] = useState<string | null>(null);
   const [isSavingNewStaff, setIsSavingNewStaff] = useState(false);
   const [isSavingEditStaff, setIsSavingEditStaff] = useState(false);
@@ -934,8 +942,8 @@ export default function StaffPage() {
 
   const selectedStaff = useMemo(() => {
     if (staffList.length === 0) return null;
-    if (!selectedStaffId) return staffList[0] ?? null;
-    return staffList.find((staff) => staff.id === selectedStaffId) ?? staffList[0] ?? null;
+    if (!selectedStaffId) return null;
+    return staffList.find((staff) => staff.id === selectedStaffId) ?? null;
   }, [selectedStaffId, staffList]);
 
   const selectedStaffBalanceHours = selectedStaff?.balanceHoras ?? 0;
@@ -1040,15 +1048,14 @@ export default function StaffPage() {
     try {
       // Try to restore from cache first
       const cachedStaff = getCachedData<StaffApi[]>("staff_list");
+      const hasCachedStaff = Array.isArray(cachedStaff) && cachedStaff.length > 0;
+
       if (cachedStaff && cachedStaff.length > 0) {
         setStaffList(cachedStaff);
-        if (cachedStaff.length > 0) {
-          setSelectedStaffId((prev) => prev ?? cachedStaff[0]?.id ?? null);
-        }
       }
 
       // Load fresh data in the background
-      setIsLoadingStaff(true);
+      setIsLoadingStaff(!hasCachedStaff);
       setStaffError(null);
 
       const response = await fetchApiJson<{ staff?: StaffApi[] }>("/api/staff", {
@@ -1059,9 +1066,7 @@ export default function StaffPage() {
       setStaffList(nextStaff);
       setCachedData("staff_list", nextStaff);
 
-      if (nextStaff.length > 0) {
-        setSelectedStaffId((prev) => prev ?? nextStaff[0]?.id ?? null);
-      } else {
+      if (nextStaff.length === 0) {
         setSelectedStaffId(null);
       }
     } catch (error) {
@@ -1976,8 +1981,8 @@ export default function StaffPage() {
         </div>
       ) : null}
 
-      <div className="mb-6 w-full max-w-full overflow-x-auto">
-        <div className="flex min-w-max items-center gap-2 rounded-xl border border-slate-200 bg-white p-1.5">
+      <div className="mb-6 overflow-x-auto">
+        <div className="inline-flex min-w-max items-center gap-2 rounded-xl border border-slate-200 bg-white p-1.5">
         <button
           className={`rounded-lg px-4 py-2 text-xs font-bold transition-colors ${
             view === "directory" ? "bg-[#3a5f94] text-white" : "text-[#566166] hover:bg-slate-100"
@@ -2028,11 +2033,7 @@ export default function StaffPage() {
           {staffError ? <p className="text-sm font-medium text-[#9f403d]">{staffError}</p> : null}
 
           <div className="grid grid-cols-1 gap-3 overflow-y-auto pr-0.5 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden xl:grid-cols-2">
-            {isLoadingStaff ? (
-              <p className="text-sm text-[#566166]">Cargando personal...</p>
-            ) : staffList.length === 0 ? (
-              <p className="text-sm text-[#566166]">Aún no hay personal registrado.</p>
-            ) : (
+            {staffList.length > 0 ? (
               staffList.map((staff) => {
                 const isActiveCard = selectedStaff?.id === staff.id;
                 return (
@@ -2070,9 +2071,15 @@ export default function StaffPage() {
                   </button>
                 );
               })
+            ) : isLoadingStaff ? (
+              <p className="text-sm text-[#566166]">Cargando personal...</p>
+            ) : (
+              <p className="text-sm text-[#566166]">Aún no hay personal registrado.</p>
             )}
           </div>
 
+          {selectedStaff ? (
+          <>
           <div className="hidden grid-cols-1 gap-4 xl:grid xl:grid-cols-[1.55fr_1fr] xl:gap-6">
             <section className="rounded-2xl bg-[#e8eff3] p-4 sm:p-5">
               <div className="mb-3 flex items-center justify-between">
@@ -2221,8 +2228,15 @@ export default function StaffPage() {
               </div>
             </section>
           </div>
+          </>
+          ) : (
+            <div className="hidden xl:flex items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-[#566166]">
+              Selecciona un miembro del personal para ver su información detallada.
+            </div>
+          )}
         </div>
 
+        {selectedStaff ? (
         <div className="hidden h-auto w-full flex-col overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-2xl xl:flex xl:h-full xl:w-[320px]">
           <div className="flex flex-col items-center gap-2.5 border-b border-slate-200 bg-[#f0f4f7] p-4 sm:p-5 lg:p-6">
             <div className="relative">
@@ -2313,6 +2327,11 @@ export default function StaffPage() {
             </button>
           </div>
         </div>
+        ) : (
+          <div className="hidden w-full items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white p-6 text-center text-sm text-[#566166] xl:flex xl:w-[320px]">
+            Sin personal seleccionado.
+          </div>
+        )}
 
         {isStaffDetailModalOpen && selectedStaff ? (
           <div className="fixed inset-0 z-50 flex items-end bg-black/50 p-0 xl:hidden" role="dialog" aria-modal="true">
