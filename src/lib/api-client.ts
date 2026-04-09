@@ -1,5 +1,15 @@
 const trimSlash = (value: string) => value.replace(/\/+$/, "");
 
+class HttpResponseError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "HttpResponseError";
+    this.status = status;
+  }
+}
+
 const getCandidates = () => {
   const candidates: string[] = [];
   const fromEnv = (
@@ -62,7 +72,7 @@ export async function fetchApiJson<T>(path: string, init?: RequestInit): Promise
             ? body.error
             : `HTTP ${response.status}`;
         attemptDetails.push(`${url} -> ${errorMessage}`);
-        throw new Error(errorMessage);
+        throw new HttpResponseError(errorMessage, response.status);
       }
 
       if (body === null) {
@@ -75,6 +85,12 @@ export async function fetchApiJson<T>(path: string, init?: RequestInit): Promise
       lastError = error instanceof Error ? error : new Error("Load failed");
       if (attemptDetails.length < candidates.length) {
         attemptDetails.push(`${url} -> ${lastError.message}`);
+      }
+
+      // If the upstream responded with an HTTP error, stop trying other hosts.
+      // Retrying alternate origins after a real 4xx/5xx usually adds CORS noise.
+      if (error instanceof HttpResponseError) {
+        break;
       }
     }
   }

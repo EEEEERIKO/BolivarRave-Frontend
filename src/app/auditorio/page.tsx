@@ -196,6 +196,30 @@ function getEventScheduleSummary(event: AuditoriumEvent) {
     .join(" | ");
 }
 
+function getEventResourcesLabel(event: AuditoriumEvent) {
+  const resources = [
+    event.needsScreen ? "Pantalla" : null,
+    event.needsSound ? "Sonido" : null,
+    event.needsMonitor ? "Monitor" : null,
+    event.needsProjector ? "Proyector" : null,
+    event.needsWaterFilter ? "Filtro de agua" : null,
+  ].filter((resource): resource is string => Boolean(resource));
+
+  if (resources.length === 0) {
+    return "Sin recursos adicionales";
+  }
+
+  if (resources.length === 1) {
+    return resources[0];
+  }
+
+  if (resources.length === 2) {
+    return `${resources[0]} y ${resources[1]}`;
+  }
+
+  return `${resources.slice(0, -1).join(", ")} y ${resources[resources.length - 1]}`;
+}
+
 function toMinutes(value: string) {
   const [hour, minute] = value.split(":").map(Number);
   return (hour ?? 0) * 60 + (minute ?? 0);
@@ -1124,16 +1148,7 @@ export default function AuditorioPage() {
                   <span className="font-semibold">Asistentes:</span> {selectedEvent.attendees}
                 </p>
                 <p>
-                  <span className="font-semibold">Recursos:</span>{" "}
-                  [
-                    selectedEvent.needsScreen ? "Pantalla" : null,
-                    selectedEvent.needsSound ? "Sonido" : null,
-                    selectedEvent.needsMonitor ? "Monitor" : null,
-                    selectedEvent.needsProjector ? "Proyector" : null,
-                    selectedEvent.needsWaterFilter ? "Filtro de Agua" : null,
-                  ]
-                    .filter(Boolean)
-                    .join(", ") || "Ninguno"
+                  <span className="font-semibold">Recursos:</span> {getEventResourcesLabel(selectedEvent)}
                 </p>
                 <p>
                   <span className="font-semibold">Horarios:</span> {getEventScheduleSummary(selectedEvent)}
