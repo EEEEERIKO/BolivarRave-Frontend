@@ -4,6 +4,8 @@ import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { fetchApiJson } from "@/lib/api-client";
 
 type TaskType = "Recurrente" | "Esporadica";
+type AssignmentMode = "manual" | "automatica";
+type RecurrentScheduleMode = "programada" | "diaria_libre";
 type TaskPriority = "Baja" | "Media" | "Alta" | "Urgente";
 type TaskState = "Pendiente" | "En Progreso" | "En Revision" | "Completada" | "Rechazada" | "Corregir" | "Cancelada";
 
@@ -11,9 +13,19 @@ type TaskCatalogItem = {
   id: string;
   nombre: string;
   tipo: TaskType;
-  habilidadRequeridaId: string | null;
+  sector: string;
+  modoAsignacion: AssignmentMode;
+  cantidadPersonal: number;
+  habilidadesRequeridasIds: string[];
+  diasSemana: number[];
+  horaProgramada: string | null;
+  fechaEsporadica: string | null;
+  horaEsporadica: string | null;
+  requiereFinalizacion: boolean;
+  tareaFinalizacion: string | null;
+  fechaFinalizacion: string | null;
+  horaFinalizacion: string | null;
   tiempoEstimadoMin: number;
-  puntosOtorgados: number;
 };
 
 type SkillItem = {
@@ -96,9 +108,20 @@ type NoticeState = {
 type CatalogFormState = {
   nombre: string;
   tipo: TaskType;
-  habilidadRequeridaId: string;
+  sector: string;
+  modoAsignacion: AssignmentMode;
+  programacionRecurrente: RecurrentScheduleMode;
+  cantidadPersonal: string;
+  habilidadesRequeridasIds: string[];
+  diasSemana: number[];
+  horaProgramada: string;
+  fechaEsporadica: string;
+  horaEsporadica: string;
+  requiereFinalizacion: boolean;
+  tareaFinalizacion: string;
+  fechaFinalizacion: string;
+  horaFinalizacion: string;
   tiempoEstimadoMin: string;
-  puntosOtorgados: string;
 };
 
 type InstanceFormState = {
@@ -151,6 +174,13 @@ const taskTypeLabels: Record<TaskType, string> = {
   Esporadica: "Esporadica",
 };
 
+const dayLabels = ["Dom", "Lun", "Mar", "Mie", "Jue", "Vie", "Sab"] as const;
+
+const assignmentModeLabels: Record<AssignmentMode, string> = {
+  manual: "Manual",
+  automatica: "Automatica",
+};
+
 function formatDateLabel(dateValue: string): string {
   if (!dateValue) {
     return "Sin fecha";
@@ -184,6 +214,15 @@ function staffLabel(staff: StaffItem): string {
   return `${staff.nombres} ${staff.apellidos}`.trim();
 }
 
+function staffMatchesAllSkills(staffId: string, requiredSkills: string[], links: StaffSkillLink[]): boolean {
+  if (requiredSkills.length === 0) {
+    return true;
+  }
+
+  const skillSet = new Set(links.filter((link) => link.staffId === staffId).map((link) => link.habilidadId));
+  return requiredSkills.every((skillId) => skillSet.has(skillId));
+}
+
 export default function TasksPage() {
   const [catalog, setCatalog] = useState<TaskCatalogItem[]>([]);
   const [instances, setInstances] = useState<TaskInstanceItem[]>([]);
@@ -202,9 +241,20 @@ export default function TasksPage() {
   const [catalogForm, setCatalogForm] = useState<CatalogFormState>({
     nombre: "",
     tipo: "Recurrente",
-    habilidadRequeridaId: "",
+    sector: "General",
+    modoAsignacion: "manual",
+    programacionRecurrente: "diaria_libre",
+    cantidadPersonal: "1",
+    habilidadesRequeridasIds: [],
+    diasSemana: [1, 2, 3, 4, 5],
+    horaProgramada: "08:00",
+    fechaEsporadica: new Date().toISOString().slice(0, 10),
+    horaEsporadica: "08:00",
+    requiereFinalizacion: false,
+    tareaFinalizacion: "",
+    fechaFinalizacion: new Date().toISOString().slice(0, 10),
+    horaFinalizacion: "09:00",
     tiempoEstimadoMin: "45",
-    puntosOtorgados: "5",
   });
   const [instanceForm, setInstanceForm] = useState<InstanceFormState>({
     tareaCatalogoId: "",
@@ -235,29 +285,17 @@ export default function TasksPage() {
   const skillById = useMemo(() => new Map(skills.map((item) => [item.id, item])), [skills]);
   const roomById = useMemo(() => new Map(rooms.map((item) => [item.id, item])), [rooms]);
 
-  const selectedCatalogSkillId = catalogById.get(instanceForm.tareaCatalogoId)?.habilidadRequeridaId ?? null;
+  const selectedCatalogSkillIds = catalogById.get(instanceForm.tareaCatalogoId)?.habilidadesRequeridasIds ?? [];
   const eligibleStaffIds = useMemo(() => {
-    if (!selectedCatalogSkillId) {
-      return new Set<string>(staff.map((person) => person.id));
-    }
+    return new Set(staff.filter((person) => staffMatchesAllSkills(person.id, selectedCatalogSkillIds, staffSkills)).map((person) => person.id));
+  }, [selectedCatalogSkillIds, staff, staffSkills]);
 
-    return new Set(
-      staffSkills.filter((link) => link.habilidadId === selectedCatalogSkillId).map((link) => link.staffId),
-    );
-  }, [selectedCatalogSkillId, staff, staffSkills]);
-
-  const selectedAssignmentCatalogSkillId = catalogById.get(
+  const selectedAssignmentCatalogSkillIds = catalogById.get(
     instances.find((task) => task.id === assignmentForm.tareaInstanciaId)?.tareaCatalogoId ?? "",
-  )?.habilidadRequeridaId ?? null;
+  )?.habilidadesRequeridasIds ?? [];
   const assignmentEligibleStaffIds = useMemo(() => {
-    if (!selectedAssignmentCatalogSkillId) {
-      return new Set<string>(staff.map((person) => person.id));
-    }
-
-    return new Set(
-      staffSkills.filter((link) => link.habilidadId === selectedAssignmentCatalogSkillId).map((link) => link.staffId),
-    );
-  }, [selectedAssignmentCatalogSkillId, staff, staffSkills]);
+    return new Set(staff.filter((person) => staffMatchesAllSkills(person.id, selectedAssignmentCatalogSkillIds, staffSkills)).map((person) => person.id));
+  }, [selectedAssignmentCatalogSkillIds, staff, staffSkills]);
 
   const reviewQueue = useMemo(
     () => instances.filter((task) => task.estado === "En Revision" && Boolean(task.asignacionId)),
@@ -304,7 +342,8 @@ export default function TasksPage() {
 
       setCatalogForm((current) => ({
         ...current,
-        habilidadRequeridaId: current.habilidadRequeridaId || skillsBody.skills?.[0]?.id || "",
+        sector: current.sector === "General" || current.sector ? current.sector : (uniqueRooms[0] ? roomLabel(uniqueRooms[0]) : "General"),
+        habilidadesRequeridasIds: current.habilidadesRequeridasIds.filter((id) => (skillsBody.skills ?? []).some((skill) => skill.id === id)),
       }));
       setInstanceForm((current) => ({
         ...current,
@@ -447,15 +486,45 @@ export default function TasksPage() {
     }
 
     const tiempoEstimadoMin = Number(catalogForm.tiempoEstimadoMin);
-    const puntosOtorgados = Number(catalogForm.puntosOtorgados);
+    const cantidadPersonal = Number(catalogForm.cantidadPersonal);
 
     if (!Number.isFinite(tiempoEstimadoMin) || tiempoEstimadoMin < 1) {
       setNotice({ kind: "error", text: "El tiempo estimado debe ser mayor a 0." });
       return;
     }
 
-    if (!Number.isFinite(puntosOtorgados) || puntosOtorgados < 0) {
-      setNotice({ kind: "error", text: "Los puntos deben ser un numero valido." });
+    if (!Number.isFinite(cantidadPersonal) || cantidadPersonal < 1) {
+      setNotice({ kind: "error", text: "La cantidad de personal debe ser mayor a 0." });
+      return;
+    }
+
+    if (catalogForm.tipo === "Recurrente" && catalogForm.programacionRecurrente === "programada" && catalogForm.diasSemana.length === 0) {
+      setNotice({ kind: "error", text: "Selecciona al menos un dia para tareas recurrentes." });
+      return;
+    }
+
+    if (catalogForm.tipo === "Recurrente" && catalogForm.programacionRecurrente === "programada" && !catalogForm.horaProgramada) {
+      setNotice({ kind: "error", text: "Define una hora para la tarea recurrente." });
+      return;
+    }
+
+    if (catalogForm.tipo === "Esporadica" && !catalogForm.fechaEsporadica) {
+      setNotice({ kind: "error", text: "Define una fecha para la tarea esporadica." });
+      return;
+    }
+
+    if (catalogForm.tipo === "Esporadica" && !catalogForm.horaEsporadica) {
+      setNotice({ kind: "error", text: "Define una hora para la tarea esporadica." });
+      return;
+    }
+
+    if (catalogForm.requiereFinalizacion && !catalogForm.tareaFinalizacion.trim()) {
+      setNotice({ kind: "error", text: "Describe la tarea de finalizacion." });
+      return;
+    }
+
+    if (catalogForm.requiereFinalizacion && (!catalogForm.fechaFinalizacion || !catalogForm.horaFinalizacion)) {
+      setNotice({ kind: "error", text: "Completa fecha y hora de finalizacion." });
       return;
     }
 
@@ -467,18 +536,46 @@ export default function TasksPage() {
         body: JSON.stringify({
           nombre,
           tipo: catalogForm.tipo,
-          habilidadRequeridaId: catalogForm.habilidadRequeridaId || null,
+          sector: catalogForm.sector.trim() || "General",
+          modoAsignacion: catalogForm.modoAsignacion,
+          programacionRecurrente: catalogForm.programacionRecurrente,
+          cantidadPersonal,
+          habilidadesRequeridasIds: catalogForm.habilidadesRequeridasIds,
+          diasSemana:
+            catalogForm.tipo === "Recurrente" && catalogForm.programacionRecurrente === "programada"
+              ? catalogForm.diasSemana
+              : [],
+          horaProgramada:
+            catalogForm.tipo === "Recurrente" && catalogForm.programacionRecurrente === "programada"
+              ? catalogForm.horaProgramada
+              : null,
+          fechaEsporadica: catalogForm.tipo === "Esporadica" ? catalogForm.fechaEsporadica : null,
+          horaEsporadica: catalogForm.tipo === "Esporadica" ? catalogForm.horaEsporadica : null,
+          requiereFinalizacion: catalogForm.requiereFinalizacion,
+          tareaFinalizacion: catalogForm.requiereFinalizacion ? catalogForm.tareaFinalizacion.trim() : null,
+          fechaFinalizacion: catalogForm.requiereFinalizacion ? catalogForm.fechaFinalizacion : null,
+          horaFinalizacion: catalogForm.requiereFinalizacion ? catalogForm.horaFinalizacion : null,
           tiempoEstimadoMin,
-          puntosOtorgados,
         }),
       });
       setCatalogForm((current) => ({
         ...current,
         nombre: "",
         tipo: "Recurrente",
-        habilidadRequeridaId: skills[0]?.id ?? "",
+        sector: "General",
+        modoAsignacion: "manual",
+        programacionRecurrente: "diaria_libre",
+        cantidadPersonal: "1",
+        habilidadesRequeridasIds: [],
+        diasSemana: [1, 2, 3, 4, 5],
+        horaProgramada: "08:00",
+        fechaEsporadica: new Date().toISOString().slice(0, 10),
+        horaEsporadica: "08:00",
+        requiereFinalizacion: false,
+        tareaFinalizacion: "",
+        fechaFinalizacion: new Date().toISOString().slice(0, 10),
+        horaFinalizacion: "09:00",
         tiempoEstimadoMin: "45",
-        puntosOtorgados: "5",
       }));
       setNotice({ kind: "success", text: "Tarea de catalogo creada correctamente." });
       await refresh();
@@ -606,7 +703,7 @@ export default function TasksPage() {
       });
       setNotice({
         kind: "success",
-        text: reviewForm.decision === "aprobar" ? "Tarea aprobada y puntaje aplicado." : "Tarea enviada a correccion.",
+        text: reviewForm.decision === "aprobar" ? "Tarea aprobada." : "Tarea enviada a correccion.",
       });
       setReviewForm((current) => ({
         ...current,
@@ -901,7 +998,14 @@ export default function TasksPage() {
                 <select
                   style={selectChevronStyle}
                   value={catalogForm.tipo}
-                  onChange={(event) => setCatalogForm((current) => ({ ...current, tipo: event.target.value as TaskType }))}
+                  onChange={(event) => {
+                    const nextType = event.target.value as TaskType;
+                    setCatalogForm((current) => ({
+                      ...current,
+                      tipo: nextType,
+                      programacionRecurrente: nextType === "Recurrente" ? "diaria_libre" : current.programacionRecurrente,
+                    }));
+                  }}
                   className="w-full rounded-md border-none bg-[#e8eff3] px-2 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                 >
                   {(["Recurrente", "Esporadica"] as TaskType[]).map((type) => (
@@ -913,19 +1017,22 @@ export default function TasksPage() {
               </label>
 
               <label className="block space-y-1">
-                <span className="text-xs font-bold text-slate-500">Habilidad requerida</span>
+                <span className="text-xs font-bold text-slate-500">Sector</span>
                 <select
                   style={selectChevronStyle}
-                  value={catalogForm.habilidadRequeridaId}
-                  onChange={(event) => setCatalogForm((current) => ({ ...current, habilidadRequeridaId: event.target.value }))}
+                  value={catalogForm.sector}
+                  onChange={(event) => setCatalogForm((current) => ({ ...current, sector: event.target.value }))}
                   className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                 >
-                  <option value="">Sin habilidad obligatoria</option>
-                  {skills.map((skill) => (
-                    <option key={skill.id} value={skill.id}>
-                      {skill.nombre}
-                    </option>
-                  ))}
+                  <option value="General">General</option>
+                  {rooms.map((room) => {
+                    const label = roomLabel(room);
+                    return (
+                      <option key={room.id} value={label}>
+                        {label}
+                      </option>
+                    );
+                  })}
                 </select>
               </label>
 
@@ -941,15 +1048,196 @@ export default function TasksPage() {
               </label>
 
               <label className="block space-y-1">
-                <span className="text-xs font-bold text-slate-500">Puntos otorgados</span>
+                <span className="text-xs font-bold text-slate-500">Modo de asignación</span>
+                <select
+                  style={selectChevronStyle}
+                  value={catalogForm.modoAsignacion}
+                  onChange={(event) => setCatalogForm((current) => ({ ...current, modoAsignacion: event.target.value as AssignmentMode }))}
+                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
+                >
+                  <option value="manual">Manual</option>
+                  <option value="automatica">Automatica</option>
+                </select>
+              </label>
+
+              <label className="block space-y-1">
+                <span className="text-xs font-bold text-slate-500">Cantidad de personal</span>
                 <input
                   type="number"
-                  min={0}
-                  value={catalogForm.puntosOtorgados}
-                  onChange={(event) => setCatalogForm((current) => ({ ...current, puntosOtorgados: event.target.value }))}
+                  min={1}
+                  max={50}
+                  value={catalogForm.cantidadPersonal}
+                  onChange={(event) => setCatalogForm((current) => ({ ...current, cantidadPersonal: event.target.value }))}
                   className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                 />
               </label>
+
+              <div className="space-y-2 rounded-md border border-[#d9e4ea] bg-[#f3f7fa] px-3 py-2 sm:col-span-2">
+                <span className="text-xs font-bold text-slate-500">Habilidades requeridas (múltiple)</span>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {skills.map((skill) => {
+                    const checked = catalogForm.habilidadesRequeridasIds.includes(skill.id);
+                    return (
+                      <label key={skill.id} className="flex items-center gap-2 rounded-md bg-white px-2 py-1 text-xs font-semibold text-slate-700">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(event) => {
+                            const enabled = event.target.checked;
+                            setCatalogForm((current) => ({
+                              ...current,
+                              habilidadesRequeridasIds: enabled
+                                ? [...current.habilidadesRequeridasIds, skill.id]
+                                : current.habilidadesRequeridasIds.filter((id) => id !== skill.id),
+                            }));
+                          }}
+                          className="h-4 w-4 rounded border-slate-300 text-slate-900"
+                        />
+                        {skill.nombre}
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {catalogForm.tipo === "Recurrente" ? (
+                <>
+                  <div className="space-y-2 rounded-md border border-[#d9e4ea] bg-[#f3f7fa] px-3 py-2 sm:col-span-2">
+                    <span className="text-xs font-bold text-slate-500">Tipo de recurrencia</span>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <label className="flex items-center gap-2 rounded-md bg-white px-2 py-1 text-xs font-semibold text-slate-700">
+                        <input
+                          type="radio"
+                          name="programacionRecurrente"
+                          checked={catalogForm.programacionRecurrente === "programada"}
+                          onChange={() => setCatalogForm((current) => ({ ...current, programacionRecurrente: "programada" }))}
+                          className="h-4 w-4 border-slate-300 text-slate-900"
+                        />
+                        Programada por dias y hora
+                      </label>
+                      <label className="flex items-center gap-2 rounded-md bg-white px-2 py-1 text-xs font-semibold text-slate-700">
+                        <input
+                          type="radio"
+                          name="programacionRecurrente"
+                          checked={catalogForm.programacionRecurrente === "diaria_libre"}
+                          onChange={() => setCatalogForm((current) => ({ ...current, programacionRecurrente: "diaria_libre" }))}
+                          className="h-4 w-4 border-slate-300 text-slate-900"
+                        />
+                        Diaria en cualquier momento
+                      </label>
+                    </div>
+                  </div>
+
+                  {catalogForm.programacionRecurrente === "programada" ? (
+                    <>
+                  <div className="space-y-2 rounded-md border border-[#d9e4ea] bg-[#f3f7fa] px-3 py-2 sm:col-span-2">
+                    <span className="text-xs font-bold text-slate-500">Dias recurrentes</span>
+                    <div className="grid grid-cols-4 gap-2 sm:grid-cols-7">
+                      {dayLabels.map((label, dayIndex) => (
+                        <label key={label} className="flex items-center gap-1 rounded-md bg-white px-2 py-1 text-[11px] font-semibold text-slate-700">
+                          <input
+                            type="checkbox"
+                            checked={catalogForm.diasSemana.includes(dayIndex)}
+                            onChange={(event) => {
+                              const enabled = event.target.checked;
+                              setCatalogForm((current) => ({
+                                ...current,
+                                diasSemana: enabled
+                                  ? [...current.diasSemana, dayIndex].sort((a, b) => a - b)
+                                  : current.diasSemana.filter((day) => day !== dayIndex),
+                              }));
+                            }}
+                            className="h-4 w-4 rounded border-slate-300 text-slate-900"
+                          />
+                          {label}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                  <label className="block space-y-1 sm:col-span-2">
+                    <span className="text-xs font-bold text-slate-500">Hora recurrente</span>
+                    <input
+                      type="time"
+                      min="05:00"
+                      max="22:00"
+                      value={catalogForm.horaProgramada}
+                      onChange={(event) => setCatalogForm((current) => ({ ...current, horaProgramada: event.target.value }))}
+                      className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
+                    />
+                  </label>
+                    </>
+                  ) : (
+                    <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 sm:col-span-2">
+                      Esta tarea se tratara como recurrente diaria, sin horario fijo.
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  <label className="block space-y-1">
+                    <span className="text-xs font-bold text-slate-500">Fecha esporádica</span>
+                    <input
+                      type="date"
+                      value={catalogForm.fechaEsporadica}
+                      onChange={(event) => setCatalogForm((current) => ({ ...current, fechaEsporadica: event.target.value }))}
+                      className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
+                    />
+                  </label>
+                  <label className="block space-y-1">
+                    <span className="text-xs font-bold text-slate-500">Hora esporádica</span>
+                    <input
+                      type="time"
+                      value={catalogForm.horaEsporadica}
+                      onChange={(event) => setCatalogForm((current) => ({ ...current, horaEsporadica: event.target.value }))}
+                      className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
+                    />
+                  </label>
+
+                  <div className="space-y-2 rounded-md border border-[#d9e4ea] bg-[#f3f7fa] px-3 py-2 sm:col-span-2">
+                    <label className="flex items-center gap-2 text-xs font-semibold text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={catalogForm.requiereFinalizacion}
+                        onChange={(event) => setCatalogForm((current) => ({ ...current, requiereFinalizacion: event.target.checked }))}
+                        className="h-4 w-4 rounded border-slate-300 text-slate-900"
+                      />
+                      Requiere tarea de finalización
+                    </label>
+
+                    {catalogForm.requiereFinalizacion ? (
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <label className="block space-y-1 sm:col-span-2">
+                          <span className="text-xs font-bold text-slate-500">¿Qué tarea de finalización?</span>
+                          <input
+                            value={catalogForm.tareaFinalizacion}
+                            onChange={(event) => setCatalogForm((current) => ({ ...current, tareaFinalizacion: event.target.value }))}
+                            className="w-full appearance-none rounded-md border-none bg-white px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
+                            placeholder="Ej: Verificación final, cierre de inventario, limpieza de cierre"
+                          />
+                        </label>
+                        <label className="block space-y-1">
+                          <span className="text-xs font-bold text-slate-500">Fecha finalización</span>
+                          <input
+                            type="date"
+                            value={catalogForm.fechaFinalizacion}
+                            onChange={(event) => setCatalogForm((current) => ({ ...current, fechaFinalizacion: event.target.value }))}
+                            className="w-full appearance-none rounded-md border-none bg-white px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
+                          />
+                        </label>
+                        <label className="block space-y-1">
+                          <span className="text-xs font-bold text-slate-500">Hora finalización</span>
+                          <input
+                            type="time"
+                            value={catalogForm.horaFinalizacion}
+                            onChange={(event) => setCatalogForm((current) => ({ ...current, horaFinalizacion: event.target.value }))}
+                            className="w-full appearance-none rounded-md border-none bg-white px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
+                          />
+                        </label>
+                      </div>
+                    ) : null}
+                  </div>
+                </>
+              )}
 
               <button
                 type="submit"
@@ -1247,15 +1535,17 @@ export default function TasksPage() {
                   <tr>
                     <th className="px-5 py-3 text-[10px] font-black tracking-[0.2em] text-slate-500 uppercase">Nombre</th>
                     <th className="px-5 py-3 text-[10px] font-black tracking-[0.2em] text-slate-500 uppercase">Tipo</th>
-                    <th className="px-5 py-3 text-[10px] font-black tracking-[0.2em] text-slate-500 uppercase">Habilidad</th>
+                    <th className="px-5 py-3 text-[10px] font-black tracking-[0.2em] text-slate-500 uppercase">Sector</th>
+                    <th className="px-5 py-3 text-[10px] font-black tracking-[0.2em] text-slate-500 uppercase">Habilidades</th>
                     <th className="px-5 py-3 text-[10px] font-black tracking-[0.2em] text-slate-500 uppercase">Tiempo</th>
-                    <th className="px-5 py-3 text-[10px] font-black tracking-[0.2em] text-slate-500 uppercase">Puntos</th>
+                    <th className="px-5 py-3 text-[10px] font-black tracking-[0.2em] text-slate-500 uppercase">Asignación</th>
+                    <th className="px-5 py-3 text-[10px] font-black tracking-[0.2em] text-slate-500 uppercase">Programación</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {catalog.length === 0 ? (
                     <tr>
-                      <td colSpan={5} className="px-5 py-10 text-center text-sm text-slate-500">
+                      <td colSpan={7} className="px-5 py-10 text-center text-sm text-slate-500">
                         No hay tareas de catalogo todavia.
                       </td>
                     </tr>
@@ -1267,11 +1557,28 @@ export default function TasksPage() {
                           <p className="mt-1 text-[11px] text-slate-500">{task.id}</p>
                         </td>
                         <td className="px-5 py-4 text-sm text-slate-600">{task.tipo}</td>
+                        <td className="px-5 py-4 text-sm text-slate-600">{task.sector}</td>
                         <td className="px-5 py-4 text-sm text-slate-600">
-                          {task.habilidadRequeridaId ? skillById.get(task.habilidadRequeridaId)?.nombre ?? task.habilidadRequeridaId : "Sin requisito"}
+                          {task.habilidadesRequeridasIds.length > 0
+                            ? task.habilidadesRequeridasIds.map((skillId) => skillById.get(skillId)?.nombre ?? skillId).join(", ")
+                            : "Sin requisito"}
                         </td>
                         <td className="px-5 py-4 text-sm text-slate-600">{task.tiempoEstimadoMin} min</td>
-                        <td className="px-5 py-4 text-sm text-slate-600">{task.puntosOtorgados}</td>
+                        <td className="px-5 py-4 text-sm text-slate-600">
+                          {assignmentModeLabels[task.modoAsignacion]} · {task.cantidadPersonal} persona(s)
+                        </td>
+                        <td className="px-5 py-4 text-sm text-slate-600">
+                          {task.tipo === "Recurrente"
+                            ? task.horaProgramada && task.diasSemana.length > 0
+                              ? `${task.diasSemana.map((day) => dayLabels[day] ?? day).join("/")} ${task.horaProgramada}`
+                              : "Diaria en cualquier momento"
+                            : `${task.fechaEsporadica ?? "Sin fecha"}${task.horaEsporadica ? ` ${task.horaEsporadica}` : ""}`}
+                          {task.requiereFinalizacion ? (
+                            <p className="mt-1 text-xs text-slate-500">
+                              Finalización: {task.tareaFinalizacion ?? "(sin detalle)"} · {task.fechaFinalizacion ?? "sin fecha"} {task.horaFinalizacion ?? ""}
+                            </p>
+                          ) : null}
+                        </td>
                       </tr>
                     ))
                   )}

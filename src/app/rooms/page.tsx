@@ -28,8 +28,8 @@ type ApiSalon = {
     horaInicio: string;
     horaFin: string;
     evento: {
-      nombrePrincipal: string;
-      responsable: string;
+      nombrePrincipal: string | null;
+      responsable: string | null;
       codigoMateria: string | null;
       actividad: string | null;
     };
@@ -48,7 +48,7 @@ type RoomsCachePayload = {
   rooms: RoomData[];
 };
 
-const ROOMS_CACHE_KEY = "rooms-page-cache-v1";
+const ROOMS_CACHE_KEY = "rooms-page-cache-v2";
 const ROOMS_CACHE_TTL_MS = 2 * 60 * 1000;
 let roomsMemoryCache: RoomsCachePayload | null = null;
 
@@ -171,6 +171,11 @@ function getStatusMeta(status: RoomStatus) {
     icon: "check_circle",
     pillClass: "bg-emerald-100 text-emerald-700 border border-emerald-200",
   };
+}
+
+function hasSessionName(value: string | null | undefined): value is string {
+  if (!value) return false;
+  return value.trim().length > 0;
 }
 
 function readRoomsCache(): RoomsCachePayload | null {
@@ -309,6 +314,9 @@ export default function RoomsPage() {
               if (!Number.isFinite(start) || !Number.isFinite(end)) {
                 return false;
               }
+              if (!hasSessionName(item.evento.nombrePrincipal)) {
+                return false;
+              }
               return currentMinutes >= start && currentMinutes < end;
             });
 
@@ -317,9 +325,14 @@ export default function RoomsPage() {
               displaySchedule = currentSchedule;
               const end = parseTimeToMinutes(currentSchedule.horaFin);
               remaining = `${Math.max(end - currentMinutes, 1)}m left`;
-              cardDetail = currentSchedule.evento.nombrePrincipal;
+              cardDetail = currentSchedule.evento.nombrePrincipal?.trim() || "Clase en curso";
             } else {
-              const nextSchedule = todaySchedules.find((item) => parseTimeToMinutes(item.horaInicio) > currentMinutes);
+              const nextSchedule = todaySchedules.find((item) => {
+                if (!hasSessionName(item.evento.nombrePrincipal)) {
+                  return false;
+                }
+                return parseTimeToMinutes(item.horaInicio) > currentMinutes;
+              });
               if (nextSchedule) {
                 const minutesUntilStart = parseTimeToMinutes(nextSchedule.horaInicio) - currentMinutes;
                 if (minutesUntilStart <= 60) {
@@ -336,8 +349,12 @@ export default function RoomsPage() {
               }
             }
 
-            const session = displaySchedule ? displaySchedule.evento.nombrePrincipal : "No active class";
-            const professor = displaySchedule ? displaySchedule.evento.responsable : "N/A";
+            const session = displaySchedule && hasSessionName(displaySchedule.evento.nombrePrincipal)
+              ? displaySchedule.evento.nombrePrincipal.trim()
+              : "No active class";
+            const professor = displaySchedule && displaySchedule.evento.responsable
+              ? displaySchedule.evento.responsable.trim() || "N/A"
+              : "N/A";
             const schedule = displaySchedule
               ? `${formatTimeLabel(displaySchedule.horaInicio)} - ${formatTimeLabel(displaySchedule.horaFin)}`
               : "Available now";
