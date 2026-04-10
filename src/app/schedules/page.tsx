@@ -631,6 +631,7 @@ const writeSchedulesCache = (events: ScheduleEvent[], cachedRooms: string[]) => 
 export default function SchedulesPage() {
   const weekPickerRef = useRef<HTMLDivElement>(null);
   const gridScrollRef = useRef<HTMLDivElement>(null);
+  const pendingCenterEventIdRef = useRef<string | null>(null);
   const fastInitialSnapshot = getFastInitialSnapshot();
 
   const colombiaToday = useMemo(() => getColombiaToday(), []);
@@ -662,6 +663,7 @@ export default function SchedulesPage() {
   const [isEditMode, setIsEditMode] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [isDeletingEvent, setIsDeletingEvent] = useState(false);
   const [isDeleteAllOpen, setIsDeleteAllOpen] = useState(false);
   const [deleteAllConfirmText, setDeleteAllConfirmText] = useState("");
   const [isDeletingAll, setIsDeletingAll] = useState(false);
@@ -820,6 +822,56 @@ export default function SchedulesPage() {
     setNewEvent(getInitialNewEvent());
   };
 
+  const centerEventInGrid = (eventId: string) => {
+    const grid = gridScrollRef.current;
+    if (!grid) return false;
+
+    const target = Array.from(grid.querySelectorAll<HTMLElement>("[data-schedule-event-id]"))
+      .find((node) => node.dataset.scheduleEventId === eventId);
+
+    if (!target) return false;
+
+    const gridRect = grid.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+
+    const desiredLeft =
+      grid.scrollLeft + (targetRect.left - gridRect.left) - grid.clientWidth / 2 + targetRect.width / 2;
+    const desiredTop =
+      grid.scrollTop + (targetRect.top - gridRect.top) - grid.clientHeight / 2 + targetRect.height / 2;
+
+    const maxLeft = Math.max(0, grid.scrollWidth - grid.clientWidth);
+    const maxTop = Math.max(0, grid.scrollHeight - grid.clientHeight);
+
+    grid.scrollTo({
+      left: Math.max(0, Math.min(desiredLeft, maxLeft)),
+      top: Math.max(0, Math.min(desiredTop, maxTop)),
+      behavior: "smooth",
+    });
+
+    return true;
+  };
+
+  useEffect(() => {
+    const pendingId = pendingCenterEventIdRef.current;
+    if (!pendingId || selectedEventId !== pendingId) return;
+
+    const timer = window.setTimeout(() => {
+      const centered = centerEventInGrid(pendingId);
+      if (centered) {
+        pendingCenterEventIdRef.current = null;
+        return;
+      }
+
+      requestAnimationFrame(() => {
+        if (centerEventInGrid(pendingId)) {
+          pendingCenterEventIdRef.current = null;
+        }
+      });
+    }, 60);
+
+    return () => window.clearTimeout(timer);
+  }, [selectedEventId, selectedDay, currentWeekStart, events]);
+
   const filteredRooms = useMemo(() => {
     const query = roomQuery.trim().toLowerCase();
     if (!query) return roomCatalog;
@@ -931,14 +983,57 @@ export default function SchedulesPage() {
       return;
     }
 
-    setPendingScopedUpdate({
+    const nextUpdate: PendingScopedUpdate = {
       id,
       eventId,
       slotId,
       targetDate: selectedDayDateIso,
       source,
       updatedEvent,
-    });
+    };
+
+    const isSingleDayReservation = updatedEvent.startDate === updatedEvent.endDate;
+    if (isSingleDayReservation) {
+      void (async () => {
+        // Optimistic UI to avoid visual snap-back while the request is in flight.
+        applyLocalScopedUpdate(nextUpdate.id, nextUpdate.updatedEvent, nextUpdate.targetDate, "always");
+        setIsApplyingScopedUpdate(true);
+        try {
+          await fetchApiJson<{ message: string }>(`/api/schedules/events/${nextUpdate.eventId}/${nextUpdate.slotId}`, {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              faculty: nextUpdate.updatedEvent.faculty,
+              code: nextUpdate.updatedEvent.code,
+              subject: nextUpdate.updatedEvent.subject,
+              teacher: nextUpdate.updatedEvent.teacher,
+              startDate: nextUpdate.updatedEvent.startDate,
+              endDate: nextUpdate.updatedEvent.endDate,
+              day: nextUpdate.updatedEvent.day,
+              room: nextUpdate.updatedEvent.room,
+              start: nextUpdate.updatedEvent.start,
+              end: nextUpdate.updatedEvent.end,
+              updateScope: "always",
+            }),
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "No se pudo aplicar la actualización";
+          window.alert(message);
+          try {
+            await syncSchedulesFromApi();
+          } catch {
+            // noop
+          }
+        } finally {
+          setIsApplyingScopedUpdate(false);
+        }
+      })();
+      return;
+    }
+
+    setPendingScopedUpdate(nextUpdate);
   };
 
   const confirmScopedUpdate = async (updateScope: UpdateScope) => {
@@ -1071,6 +1166,14 @@ export default function SchedulesPage() {
       end: slotEnds[endSlotIndex],
     };
 
+    const sameDay = normalizeDayKey(updatedEvent.day) === normalizeDayKey(originalEvent.day);
+    const sameRoom = updatedEvent.room === originalEvent.room;
+    const sameStart = updatedEvent.start === originalEvent.start;
+    const sameEnd = updatedEvent.end === originalEvent.end;
+    if (sameDay && sameRoom && sameStart && sameEnd) {
+      return;
+    }
+
     console.log("🔄 [Drag] Actualizando evento:", {
       id,
       newRoom: updatedEvent.room,
@@ -1084,7 +1187,10 @@ export default function SchedulesPage() {
   };
 
   const handleDragStop = (id: string, span: number): RndDragCallback => {
-    return (_event, data) => {
+    return (event, data) => {
+      if ("detail" in event && typeof event.detail === "number" && event.detail > 1) {
+        return;
+      }
       updateEventPosition(id, data.x, data.y, span);
     };
   };
@@ -1134,6 +1240,10 @@ export default function SchedulesPage() {
       newEvent.reservationType === "momentanea" ? newEvent.oneDayDate : newEvent.startDate;
     const candidateEndDate =
       newEvent.reservationType === "momentanea" ? newEvent.oneDayDate : newEvent.endDate;
+    const forcedMomentaneaDay =
+      newEvent.reservationType === "momentanea" && candidateStartDate
+        ? getWeekdayName(parseIsoDateToLocal(candidateStartDate))
+        : null;
 
     if (candidateStartDate && candidateEndDate && candidateStartDate > candidateEndDate) {
       const message = "Rango de fechas invalido: la fecha de inicio no puede ser mayor que la fecha de fin.";
@@ -1149,8 +1259,9 @@ export default function SchedulesPage() {
 
     for (let i = 0; i < newEvent.slots.length; i++) {
       const slot = newEvent.slots[i];
+      const effectiveDay = forcedMomentaneaDay ?? slot.day;
 
-      if (!slot.day) {
+      if (!effectiveDay) {
         const message = "Debes seleccionar un dia.";
         setCreateError(message);
         return;
@@ -1184,7 +1295,7 @@ export default function SchedulesPage() {
       }
 
       const overlappingClass = events.find((existing) => {
-        if (existing.day !== slot.day || existing.room !== slot.room) {
+        if (existing.day !== effectiveDay || existing.room !== slot.room) {
           return false;
         }
 
@@ -1205,14 +1316,15 @@ export default function SchedulesPage() {
       });
 
       if (overlappingClass) {
-        const message = `Conflicto detectado: ya existe "${overlappingClass.code} | ${overlappingClass.subject}" en ${slot.room} (${slot.day}) para ese horario.`;
+        const message = `Conflicto detectado: ya existe "${overlappingClass.code} | ${overlappingClass.subject}" en ${slot.room} (${effectiveDay}) para ese horario.`;
         setCreateError(message);
         return;
       }
 
       const overlapInForm = newEvent.slots.some((other, index) => {
         if (index === i) return false;
-        if (other.day !== slot.day || other.room !== slot.room) return false;
+        const otherEffectiveDay = forcedMomentaneaDay ?? other.day;
+        if (otherEffectiveDay !== effectiveDay || other.room !== slot.room) return false;
 
         const otherStart = startToIndex[other.start] ?? -1;
         const otherEnd = endToExclusiveIndex[other.end] ?? -1;
@@ -1222,7 +1334,7 @@ export default function SchedulesPage() {
       });
 
       if (overlapInForm) {
-        const message = `Hay solape entre los horarios del formulario en ${slot.room} (${slot.day}).`;
+        const message = `Hay solape entre los horarios del formulario en ${slot.room} (${effectiveDay}).`;
         setCreateError(message);
         return;
       }
@@ -1289,10 +1401,18 @@ export default function SchedulesPage() {
           ? newEvent.teacher || "Reserva temporal"
           : newEvent.churchContact;
 
+    const payloadSlots = newEvent.slots.map((slot) => ({
+      day: forcedMomentaneaDay ?? slot.day,
+      room: slot.room,
+      start: slot.start,
+      end: slot.end,
+    }));
+    const anchorSlot = payloadSlots[0] ?? null;
+
     setIsCreatingEvent(true);
 
     try {
-      await fetchApiJson<{ message: string; eventId: string }>("/api/schedules/events", {
+      const createResponse = await fetchApiJson<{ message: string; eventId: string }>("/api/schedules/events", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1305,12 +1425,7 @@ export default function SchedulesPage() {
           teacher: normalizedTeacher || "DOCENTE PENDIENTE",
           startDate: baseStartDate,
           endDate: baseEndDate,
-          slots: newEvent.slots.map((slot) => ({
-            day: slot.day,
-            room: slot.room,
-            start: slot.start,
-            end: slot.end,
-          })),
+          slots: payloadSlots,
         }),
       });
 
@@ -1339,10 +1454,38 @@ export default function SchedulesPage() {
         setRoomCatalog(loadedRooms);
       }
 
+      const createdEventByAnchor =
+        loadedEvents.find((eventItem) => {
+          if (eventItem.classId !== createResponse.eventId) return false;
+          if (!anchorSlot) return false;
+          return (
+            normalizeDayKey(eventItem.day) === normalizeDayKey(anchorSlot.day) &&
+            eventItem.room === anchorSlot.room &&
+            eventItem.start === anchorSlot.start &&
+            eventItem.end === anchorSlot.end
+          );
+        }) ?? null;
+
+      const createdEvent =
+        createdEventByAnchor ??
+        loadedEvents.find((eventItem) => eventItem.classId === createResponse.eventId) ??
+        loadedEvents.find((eventItem) => {
+          if (eventItem.startDate !== baseStartDate) return false;
+          if (eventItem.endDate !== baseEndDate) return false;
+          if (eventItem.subject !== (normalizedSubject || "CLASE NUEVA")) return false;
+          return true;
+        });
+
+      const anchorDayLabel =
+        weekDays.find((dayLabel) => normalizeDayKey(dayLabel) === normalizeDayKey(anchorSlot?.day ?? "")) ??
+        createdEvent?.day ??
+        getWeekdayName(parseIsoDateToLocal(baseStartDate));
+
       setRoomQuery("");
       setCurrentWeekStart(startOfWeekMonday(parseIsoDateToLocal(baseStartDate)));
-      setSelectedDay(newEvent.slots[0]?.day ?? "Lunes");
-      setSelectedEventId(null);
+      setSelectedDay(anchorDayLabel);
+      setSelectedEventId(createdEvent?.id ?? null);
+      pendingCenterEventIdRef.current = createdEvent?.id ?? null;
       resetCreateForm();
       setIsCreateOpen(false);
     } catch (error) {
@@ -1496,7 +1639,7 @@ export default function SchedulesPage() {
   };
 
   const deleteSelectedEvent = () => {
-    if (!selectedEvent) return;
+    if (!selectedEvent || isDeletingEvent) return;
     const accepted = window.confirm(`Eliminar la clase \"${selectedEvent.code} | ${selectedEvent.subject}\"?`);
     if (!accepted) return;
 
@@ -1511,6 +1654,7 @@ export default function SchedulesPage() {
     }
 
     void (async () => {
+      setIsDeletingEvent(true);
       try {
         await fetchApiJson<{ message: string }>(`/api/schedules/events/${eventId}/${slotId}`, {
           method: "DELETE",
@@ -1546,6 +1690,8 @@ export default function SchedulesPage() {
         const message = error instanceof Error ? error.message : "No se pudo eliminar la clase en base de datos";
         setEditError(message);
         window.alert(message);
+      } finally {
+        setIsDeletingEvent(false);
       }
     })();
   };
@@ -1888,23 +2034,25 @@ export default function SchedulesPage() {
                     minHeight={slotHeight - 8}
                     minWidth={roomColWidth - 8}
                   >
-                    {reservationBadge ? (
-                      <p className="mb-1 inline-flex rounded-full border border-slate-400 bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-slate-700">
-                        {reservationBadge}
+                    <div data-schedule-event-id={event.id} className="h-full">
+                      {reservationBadge ? (
+                        <p className="mb-1 inline-flex rounded-full border border-slate-400 bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-slate-700">
+                          {reservationBadge}
+                        </p>
+                      ) : null}
+                      <p className={`text-[11px] font-semibold opacity-80 ${hasEnoughSpace ? "whitespace-normal break-words" : "truncate"}`}>
+                        {event.faculty}
                       </p>
-                    ) : null}
-                    <p className={`text-[11px] font-semibold opacity-80 ${hasEnoughSpace ? "whitespace-normal break-words" : "truncate"}`}>
-                      {event.faculty}
-                    </p>
-                    <p className={`text-sm font-bold ${hasEnoughSpace ? "whitespace-normal break-words" : "truncate"}`}>
-                      {event.code} | {event.subject}
-                    </p>
-                    <p className={`mt-1 text-[11px] font-medium ${hasEnoughSpace ? "whitespace-normal break-words" : "truncate"}`}>
-                      {event.teacher}
-                    </p>
-                    <p className={`text-[11px] ${hasEnoughSpace ? "whitespace-normal" : "truncate"}`}>
-                      {event.start} - {event.end}
-                    </p>
+                      <p className={`text-sm font-bold ${hasEnoughSpace ? "whitespace-normal break-words" : "truncate"}`}>
+                        {event.code} | {event.subject}
+                      </p>
+                      <p className={`mt-1 text-[11px] font-medium ${hasEnoughSpace ? "whitespace-normal break-words" : "truncate"}`}>
+                        {event.teacher}
+                      </p>
+                      <p className={`text-[11px] ${hasEnoughSpace ? "whitespace-normal" : "truncate"}`}>
+                        {event.start} - {event.end}
+                      </p>
+                    </div>
                   </Rnd>
                 );
               })}
@@ -1934,6 +2082,11 @@ export default function SchedulesPage() {
               <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
                 {!isEditMode ? (
                   <>
+                    {isDeletingEvent ? (
+                      <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                        Eliminando clase, por favor espera...
+                      </div>
+                    ) : null}
                     <p className="text-xs font-semibold text-[#295786]">{selectedEvent.day}</p>
                     <p className="mt-1 inline-flex rounded-full bg-slate-200 px-2 py-0.5 text-xs font-semibold text-slate-700">
                       {reservationTypeLabels[selectedReservationType ?? "normal"]}
@@ -1949,16 +2102,18 @@ export default function SchedulesPage() {
                       <button
                         type="button"
                         onClick={startEditEvent}
-                        className="rounded-lg bg-[#295786] px-3 py-2 text-sm font-semibold text-white"
+                        disabled={isDeletingEvent}
+                        className="rounded-lg bg-[#295786] px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70"
                       >
                         Modificar datos
                       </button>
                       <button
                         type="button"
                         onClick={deleteSelectedEvent}
-                        className="rounded-lg bg-red-600 px-3 py-2 text-sm font-semibold text-white"
+                        disabled={isDeletingEvent}
+                        className="rounded-lg bg-red-600 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70"
                       >
-                        Eliminar clase
+                        {isDeletingEvent ? "Eliminando..." : "Eliminar clase"}
                       </button>
                     </div>
                   </>
@@ -2092,7 +2247,7 @@ export default function SchedulesPage() {
                   <div className="grid grid-cols-3 gap-2 pt-1">
                     <button
                       type="submit"
-                      disabled={isSavingEdit}
+                      disabled={isSavingEdit || isDeletingEvent}
                       className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#295786] px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70"
                     >
                       {isSavingEdit ? (
@@ -2102,7 +2257,7 @@ export default function SchedulesPage() {
                     </button>
                     <button
                       type="button"
-                      disabled={isSavingEdit}
+                      disabled={isSavingEdit || isDeletingEvent}
                       onClick={() => {
                         setIsEditMode(false);
                         setEditError(null);
@@ -2113,11 +2268,11 @@ export default function SchedulesPage() {
                     </button>
                     <button
                       type="button"
-                      disabled={isSavingEdit}
+                      disabled={isSavingEdit || isDeletingEvent}
                       onClick={deleteSelectedEvent}
                       className="rounded-lg bg-red-600 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70"
                     >
-                      Eliminar
+                      {isDeletingEvent ? "Eliminando..." : "Eliminar"}
                     </button>
                   </div>
                   </form>
