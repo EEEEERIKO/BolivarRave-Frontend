@@ -55,8 +55,8 @@ let roomsMemoryCache: RoomsCachePayload | null = null;
 const FLOOR_ONE_ALLOWED = new Set([
   "aula foro union 101",
   "aula foro unac 102",
-  "sala informática 1 bolivar",
-  "sala informática 2 bolivar",
+  "sala informatica 1 bolivar",
+  "sala informatica 2 bolivar",
 ]);
 
 const EXCLUDED_EXACT_ROOM_NAMES = new Set<string>();
