@@ -19,6 +19,12 @@ export const useWebSocketSchedules = ({
   useEffect(() => {
     if (!enabled) return;
 
+    const isLocalDev =
+      typeof window !== "undefined" &&
+      (window.location.hostname === "localhost" ||
+        window.location.hostname === "127.0.0.1" ||
+        window.location.hostname.startsWith("192.168"));
+
     // Detectar la URL del servidor basándose en el ambiente
     const getServerUrl = () => {
       if (typeof window === "undefined") return "http://localhost:4000";
@@ -61,11 +67,10 @@ export const useWebSocketSchedules = ({
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
       reconnectionAttempts: 10,
-      // Iniciar con polling reduce errores de "WebSocket closed before established"
-      // cuando el backend aún no terminó de iniciar o no acepta upgrade inmediato.
-      transports: ["polling", "websocket"],
+      // En local usamos polling para evitar ruido de "WebSocket closed before established".
+      transports: isLocalDev ? ["polling"] : ["polling", "websocket"],
       forceNew: false,
-      upgrade: true,
+      upgrade: !isLocalDev,
     });
 
     socketRef.current = socket;

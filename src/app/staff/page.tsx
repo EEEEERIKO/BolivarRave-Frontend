@@ -1233,8 +1233,17 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
             </div>
 
             <form className="space-y-3" onSubmit={saveJornada}>
-              {editorRows.map((row, index) => (
-                <div className="grid grid-cols-1 gap-2 rounded-xl border border-slate-200 p-3 md:grid-cols-[1fr_1fr_1fr_1fr_auto]" key={row.id}>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <p className="text-sm font-semibold text-[#2a3439]">Bloques de jornada semanal</p>
+                  <button className="rounded-lg border border-slate-300 px-3 py-1 text-xs font-bold text-[#566166]" onClick={addEditorRow} type="button">
+                    + Agregar bloque
+                  </button>
+                </div>
+
+                <div className="space-y-2">
+                  {editorRows.map((row, index) => (
+                    <div className="grid grid-cols-1 gap-2 rounded-xl border border-slate-200 bg-white p-3 md:grid-cols-[1fr_1fr_1fr_1fr_auto]" key={row.id}>
                   <select
                     className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
                     onChange={(event) => updateEditorRow(row.id, "diaSemana", event.target.value)}
@@ -1275,8 +1284,10 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
                   </button>
 
                   <p className="text-[10px] text-[#566166] md:col-span-5">Bloque {index + 1} de jornada semanal</p>
+                    </div>
+                  ))}
                 </div>
-              ))}
+              </div>
 
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                 <div className="mb-2 flex items-center justify-between">
@@ -1372,11 +1383,7 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
                   </div>
                 </div>
 
-                <div className="flex flex-wrap justify-between gap-2">
-                  <button className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-bold text-[#566166]" onClick={addEditorRow} type="button">
-                    + Agregar bloque
-                  </button>
-
+                <div className="flex flex-wrap justify-end gap-2">
                   <div className="flex gap-2">
                   <button className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-bold text-[#566166]" onClick={closeEditor} type="button">
                     Cancelar

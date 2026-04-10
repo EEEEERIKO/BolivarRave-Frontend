@@ -87,6 +87,12 @@ export async function fetchApiJson<T>(path: string, init?: RequestInit): Promise
         attemptDetails.push(`${url} -> ${lastError.message}`);
       }
 
+      // If the same-origin proxy returns 404 in dev, allow fallback hosts.
+      // This helps when /api rewrites are unavailable or misconfigured.
+      if (error instanceof HttpResponseError && error.status === 404 && base === "") {
+        continue;
+      }
+
       // If the upstream responded with an HTTP error, stop trying other hosts.
       // Retrying alternate origins after a real 4xx/5xx usually adds CORS noise.
       if (error instanceof HttpResponseError) {

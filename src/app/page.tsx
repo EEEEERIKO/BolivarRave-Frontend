@@ -649,7 +649,7 @@ export default function Home() {
       chipClasses: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300",
     },
     {
-      title: "Ultima importacion",
+      title: "Última importación",
       value: latestImport ? new Intl.DateTimeFormat("es-ES", { month: "short", day: "2-digit" }).format(new Date(latestImport.imported_at)) : "N/D",
       chip: latestImport ? latestImport.status : "Sin historial",
       chipClasses: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300",
@@ -1037,7 +1037,7 @@ export default function Home() {
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {kpis.map((kpi) => (
           <div key={kpi.title} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6 dark:border-slate-800 dark:bg-slate-900">
-            <p className="mb-2 text-xs font-medium tracking-wider text-slate-500 uppercase">{kpi.title}</p>
+            <p className="mb-2 text-xs font-medium tracking-wider text-slate-500 uppercase transition-none transform-none motion-reduce:transition-none motion-reduce:transform-none">{kpi.title}</p>
             <div className="flex items-end justify-between">
               <h3 className="text-3xl font-bold text-slate-900 dark:text-white">{isLoadingData ? "..." : kpi.value}</h3>
               <span className={`rounded px-2 py-1 text-xs font-bold ${isLoadingData ? "bg-slate-100 text-slate-500" : kpi.chipClasses}`}>
@@ -1060,9 +1060,9 @@ export default function Home() {
                     setQuickMode("class");
                     setSubmittedRoomCheck(null);
                   }}
-                  className={`inline-flex h-9 items-center justify-center gap-1.5 rounded-lg px-3 text-xs font-semibold leading-none transition ${quickMode === "class" ? "bg-[#295786] text-white" : "border border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"}`}
+                  className={`inline-flex h-8 items-center justify-center gap-1 rounded-lg px-2.5 text-[11px] font-semibold leading-none transition ${quickMode === "class" ? "bg-[#295786] text-white" : "border border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"}`}
                 >
-                  <span className="material-symbols-outlined text-base leading-none">menu_book</span>
+                  <span className="material-symbols-outlined text-[15px] leading-none">menu_book</span>
                   <span className="leading-none">Clase</span>
                 </button>
                 <button
@@ -1071,9 +1071,9 @@ export default function Home() {
                     setQuickMode("professor");
                     setSubmittedRoomCheck(null);
                   }}
-                  className={`inline-flex h-9 items-center justify-center gap-1.5 rounded-lg px-3 text-xs font-semibold leading-none transition ${quickMode === "professor" ? "bg-[#295786] text-white" : "border border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"}`}
+                  className={`inline-flex h-8 items-center justify-center gap-1 rounded-lg px-2.5 text-[11px] font-semibold leading-none transition ${quickMode === "professor" ? "bg-[#295786] text-white" : "border border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"}`}
                 >
-                  <span className="material-symbols-outlined text-base leading-none">person_search</span>
+                  <span className="material-symbols-outlined text-[15px] leading-none">person_search</span>
                   <span className="leading-none">Profesor</span>
                 </button>
                 <button
@@ -1082,9 +1082,9 @@ export default function Home() {
                     setQuickMode("availableRooms");
                     setQuery("");
                   }}
-                  className={`inline-flex h-9 items-center justify-center gap-1.5 rounded-lg px-3 text-xs font-semibold leading-none transition ${quickMode === "availableRooms" ? "bg-[#295786] text-white" : "border border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"}`}
+                  className={`inline-flex h-8 items-center justify-center gap-1 rounded-lg px-2.5 text-[11px] font-semibold leading-none transition ${quickMode === "availableRooms" ? "bg-[#295786] text-white" : "border border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"}`}
                 >
-                  <span className="material-symbols-outlined text-base leading-none">meeting_room</span>
+                  <span className="material-symbols-outlined text-[15px] leading-none">meeting_room</span>
                   <span className="leading-none">Salones Disponibles</span>
                 </button>
               </div>
