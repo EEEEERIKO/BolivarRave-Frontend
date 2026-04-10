@@ -107,10 +107,10 @@ type NoticeState = {
 
 type CatalogFormState = {
   nombre: string;
-  tipo: TaskType;
+  tipo: TaskType | "";
   sector: string;
-  modoAsignacion: AssignmentMode;
-  programacionRecurrente: RecurrentScheduleMode;
+  modoAsignacion: AssignmentMode | "";
+  programacionRecurrente: RecurrentScheduleMode | "";
   cantidadPersonal: string;
   habilidadesRequeridasIds: string[];
   diasSemana: number[];
@@ -238,12 +238,14 @@ export default function TasksPage() {
   const [editingSkillId, setEditingSkillId] = useState<string | null>(null);
   const [editingSkillName, setEditingSkillName] = useState("");
   const [deletingSkillId, setDeletingSkillId] = useState<string | null>(null);
+  const [editingCatalogId, setEditingCatalogId] = useState<string | null>(null);
+  const [deletingCatalogId, setDeletingCatalogId] = useState<string | null>(null);
   const [catalogForm, setCatalogForm] = useState<CatalogFormState>({
     nombre: "",
-    tipo: "Recurrente",
-    sector: "General",
-    modoAsignacion: "manual",
-    programacionRecurrente: "diaria_libre",
+    tipo: "",
+    sector: "",
+    modoAsignacion: "",
+    programacionRecurrente: "",
     cantidadPersonal: "1",
     habilidadesRequeridasIds: [],
     diasSemana: [1, 2, 3, 4, 5],
@@ -254,7 +256,7 @@ export default function TasksPage() {
     tareaFinalizacion: "",
     fechaFinalizacion: new Date().toISOString().slice(0, 10),
     horaFinalizacion: "09:00",
-    tiempoEstimadoMin: "45",
+    tiempoEstimadoMin: "25",
   });
   const [instanceForm, setInstanceForm] = useState<InstanceFormState>({
     tareaCatalogoId: "",
@@ -342,7 +344,7 @@ export default function TasksPage() {
 
       setCatalogForm((current) => ({
         ...current,
-        sector: current.sector === "General" || current.sector ? current.sector : (uniqueRooms[0] ? roomLabel(uniqueRooms[0]) : "General"),
+        sector: current.sector,
         habilidadesRequeridasIds: current.habilidadesRequeridasIds.filter((id) => (skillsBody.skills ?? []).some((skill) => skill.id === id)),
       }));
       setInstanceForm((current) => ({
@@ -485,6 +487,21 @@ export default function TasksPage() {
       return;
     }
 
+    if (!catalogForm.tipo) {
+      setNotice({ kind: "error", text: "Selecciona el tipo de tarea (Recurrente o Esporádica)." });
+      return;
+    }
+
+    if (!catalogForm.sector.trim()) {
+      setNotice({ kind: "error", text: "Selecciona un sector." });
+      return;
+    }
+
+    if (!catalogForm.modoAsignacion) {
+      setNotice({ kind: "error", text: "Selecciona el modo de asignación." });
+      return;
+    }
+
     const tiempoEstimadoMin = Number(catalogForm.tiempoEstimadoMin);
     const cantidadPersonal = Number(catalogForm.cantidadPersonal);
 
@@ -495,6 +512,11 @@ export default function TasksPage() {
 
     if (!Number.isFinite(cantidadPersonal) || cantidadPersonal < 1) {
       setNotice({ kind: "error", text: "La cantidad de personal debe ser mayor a 0." });
+      return;
+    }
+
+    if (catalogForm.tipo === "Recurrente" && !catalogForm.programacionRecurrente) {
+      setNotice({ kind: "error", text: "Selecciona el tipo de recurrencia (programada o diaria)." });
       return;
     }
 
@@ -529,42 +551,74 @@ export default function TasksPage() {
     }
 
     try {
-      setBusyAction("catalog-create");
-      await fetchApiJson<{ message: string; id: string }>("/api/tasks/catalog", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          nombre,
-          tipo: catalogForm.tipo,
-          sector: catalogForm.sector.trim() || "General",
-          modoAsignacion: catalogForm.modoAsignacion,
-          programacionRecurrente: catalogForm.programacionRecurrente,
-          cantidadPersonal,
-          habilidadesRequeridasIds: catalogForm.habilidadesRequeridasIds,
-          diasSemana:
-            catalogForm.tipo === "Recurrente" && catalogForm.programacionRecurrente === "programada"
-              ? catalogForm.diasSemana
-              : [],
-          horaProgramada:
-            catalogForm.tipo === "Recurrente" && catalogForm.programacionRecurrente === "programada"
-              ? catalogForm.horaProgramada
-              : null,
-          fechaEsporadica: catalogForm.tipo === "Esporadica" ? catalogForm.fechaEsporadica : null,
-          horaEsporadica: catalogForm.tipo === "Esporadica" ? catalogForm.horaEsporadica : null,
-          requiereFinalizacion: catalogForm.requiereFinalizacion,
-          tareaFinalizacion: catalogForm.requiereFinalizacion ? catalogForm.tareaFinalizacion.trim() : null,
-          fechaFinalizacion: catalogForm.requiereFinalizacion ? catalogForm.fechaFinalizacion : null,
-          horaFinalizacion: catalogForm.requiereFinalizacion ? catalogForm.horaFinalizacion : null,
-          tiempoEstimadoMin,
-        }),
-      });
+      const isEditing = Boolean(editingCatalogId);
+      setBusyAction(isEditing ? "catalog-update" : "catalog-create");
+
+      if (!isEditing) {
+        const selectedSkills = catalogForm.habilidadesRequeridasIds
+          .map((id) => skills.find((skill) => skill.id === id)?.nombre)
+          .filter((value): value is string => Boolean(value));
+
+        const resumen = [
+          `Nombre: ${nombre}`,
+          `Tipo: ${catalogForm.tipo}`,
+          `Sector: ${catalogForm.sector}`,
+          `Modo de asignación: ${assignmentModeLabels[catalogForm.modoAsignacion as AssignmentMode]}`,
+          `Cantidad de personal: ${cantidadPersonal}`,
+          `Tiempo estimado: ${tiempoEstimadoMin} min`,
+          `Habilidades: ${selectedSkills.length ? selectedSkills.join(", ") : "Sin requerimientos"}`,
+          catalogForm.tipo === "Recurrente"
+            ? `Recurrencia: ${catalogForm.programacionRecurrente === "programada" ? "Programada" : "Diaria en cualquier momento"}`
+            : `Fecha/Hora esporádica: ${catalogForm.fechaEsporadica} ${catalogForm.horaEsporadica}`,
+        ].join("\n");
+
+        const confirmed = confirm(`¿Seguro que deseas crear este catálogo?\n\n${resumen}`);
+        if (!confirmed) {
+          setBusyAction(null);
+          return;
+        }
+      }
+
+      const payload = {
+        nombre,
+        tipo: catalogForm.tipo as TaskType,
+        sector: catalogForm.sector.trim(),
+        modoAsignacion: catalogForm.modoAsignacion as AssignmentMode,
+        programacionRecurrente: catalogForm.programacionRecurrente,
+        cantidadPersonal,
+        habilidadesRequeridasIds: catalogForm.habilidadesRequeridasIds,
+        diasSemana:
+          catalogForm.tipo === "Recurrente" && catalogForm.programacionRecurrente === "programada"
+            ? catalogForm.diasSemana
+            : [],
+        horaProgramada:
+          catalogForm.tipo === "Recurrente" && catalogForm.programacionRecurrente === "programada"
+            ? catalogForm.horaProgramada
+            : null,
+        fechaEsporadica: catalogForm.tipo === "Esporadica" ? catalogForm.fechaEsporadica : null,
+        horaEsporadica: catalogForm.tipo === "Esporadica" ? catalogForm.horaEsporadica : null,
+        requiereFinalizacion: catalogForm.requiereFinalizacion,
+        tareaFinalizacion: catalogForm.requiereFinalizacion ? catalogForm.tareaFinalizacion.trim() : null,
+        fechaFinalizacion: catalogForm.requiereFinalizacion ? catalogForm.fechaFinalizacion : null,
+        horaFinalizacion: catalogForm.requiereFinalizacion ? catalogForm.horaFinalizacion : null,
+        tiempoEstimadoMin,
+      };
+
+      await fetchApiJson<{ message: string; id: string }>(
+        isEditing && editingCatalogId ? `/api/tasks/catalog/${editingCatalogId}` : "/api/tasks/catalog",
+        {
+          method: isEditing ? "PUT" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        },
+      );
       setCatalogForm((current) => ({
         ...current,
         nombre: "",
-        tipo: "Recurrente",
-        sector: "General",
-        modoAsignacion: "manual",
-        programacionRecurrente: "diaria_libre",
+        tipo: "",
+        sector: "",
+        modoAsignacion: "",
+        programacionRecurrente: "",
         cantidadPersonal: "1",
         habilidadesRequeridasIds: [],
         diasSemana: [1, 2, 3, 4, 5],
@@ -575,13 +629,84 @@ export default function TasksPage() {
         tareaFinalizacion: "",
         fechaFinalizacion: new Date().toISOString().slice(0, 10),
         horaFinalizacion: "09:00",
-        tiempoEstimadoMin: "45",
+        tiempoEstimadoMin: "25",
       }));
-      setNotice({ kind: "success", text: "Tarea de catalogo creada correctamente." });
+      setEditingCatalogId(null);
+      setNotice({ kind: "success", text: isEditing ? "Tarea de catalogo actualizada correctamente." : "Tarea de catalogo creada correctamente." });
       await refresh();
     } catch (error) {
-      setNotice({ kind: "error", text: error instanceof Error ? error.message : "No se pudo crear la tarea de catalogo." });
+      setNotice({ kind: "error", text: error instanceof Error ? error.message : "No se pudo guardar la tarea de catalogo." });
     } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const beginEditCatalog = (task: TaskCatalogItem) => {
+    setEditingCatalogId(task.id);
+    setCatalogForm({
+      nombre: task.nombre,
+      tipo: task.tipo,
+      sector: task.sector,
+      modoAsignacion: task.modoAsignacion,
+      programacionRecurrente: task.tipo === "Recurrente" && task.horaProgramada && task.diasSemana.length > 0 ? "programada" : "diaria_libre",
+      cantidadPersonal: String(task.cantidadPersonal),
+      habilidadesRequeridasIds: task.habilidadesRequeridasIds,
+      diasSemana: task.diasSemana,
+      horaProgramada: task.horaProgramada ?? "08:00",
+      fechaEsporadica: task.fechaEsporadica ?? new Date().toISOString().slice(0, 10),
+      horaEsporadica: task.horaEsporadica ?? "08:00",
+      requiereFinalizacion: task.requiereFinalizacion,
+      tareaFinalizacion: task.tareaFinalizacion ?? "",
+      fechaFinalizacion: task.fechaFinalizacion ?? new Date().toISOString().slice(0, 10),
+      horaFinalizacion: task.horaFinalizacion ?? "09:00",
+      tiempoEstimadoMin: String(task.tiempoEstimadoMin),
+    });
+    setNotice(null);
+  };
+
+  const cancelEditCatalog = () => {
+    setEditingCatalogId(null);
+    setCatalogForm((current) => ({
+      ...current,
+      nombre: "",
+      tipo: "",
+      sector: "",
+      modoAsignacion: "",
+      programacionRecurrente: "",
+      cantidadPersonal: "1",
+      habilidadesRequeridasIds: [],
+      diasSemana: [1, 2, 3, 4, 5],
+      horaProgramada: "08:00",
+      fechaEsporadica: new Date().toISOString().slice(0, 10),
+      horaEsporadica: "08:00",
+      requiereFinalizacion: false,
+      tareaFinalizacion: "",
+      fechaFinalizacion: new Date().toISOString().slice(0, 10),
+      horaFinalizacion: "09:00",
+      tiempoEstimadoMin: "25",
+    }));
+  };
+
+  const deleteCatalog = async (catalogId: string) => {
+    if (!confirm("¿Estás seguro de que deseas eliminar esta tarea del catálogo?")) {
+      return;
+    }
+
+    try {
+      setBusyAction(`catalog-delete-${catalogId}`);
+      setDeletingCatalogId(catalogId);
+      await fetchApiJson<{ message: string; id: string }>(`/api/tasks/catalog/${catalogId}`, {
+        method: "DELETE",
+      });
+      if (editingCatalogId === catalogId) {
+        cancelEditCatalog();
+      }
+      setNotice({ kind: "success", text: "Tarea de catálogo eliminada correctamente." });
+      await refresh();
+    } catch (error) {
+      setNotice({ kind: "error", text: error instanceof Error ? error.message : "No se pudo eliminar la tarea de catálogo." });
+    } finally {
+      setDeletingCatalogId(null);
       setBusyAction(null);
     }
   };
@@ -920,57 +1045,6 @@ export default function TasksPage() {
               </form>
             </section>
 
-            <form onSubmit={submitLinkSkill} className="rounded-xl border border-[#d9e4ea] bg-white p-4 shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
-              <div className="flex items-start gap-2">
-                <span className="material-symbols-outlined rounded-2xl bg-[#d5e3ff]/50 p-1.5 text-[#3a5f94] text-xl">link</span>
-                <div>
-                  <p className="text-[9px] font-bold tracking-[0.26em] text-slate-500 uppercase">Vínculos</p>
-                  <h2 className="text-base font-black text-slate-900">Vincular</h2>
-                </div>
-              </div>
-              <div className="mt-2 space-y-1">
-                <label className="block space-y-0.5">
-                  <span className="text-xs font-bold text-slate-500">Staff</span>
-                  <select
-                  style={selectChevronStyle}
-                    value={linkSkillForm.staffId}
-                    onChange={(event) => setLinkSkillForm((current) => ({ ...current, staffId: event.target.value }))}
-                    className="w-full rounded-md border-none bg-[#e8eff3] px-2 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
-                  >
-                    <option value="">Selecciona una persona</option>
-                    {staff.map((person) => (
-                      <option key={person.id} value={person.id}>
-                        {staffLabel(person)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="block space-y-0.5">
-                  <span className="text-xs font-bold text-slate-500">Habilidad</span>
-                  <select
-                  style={selectChevronStyle}
-                    value={linkSkillForm.habilidadId}
-                    onChange={(event) => setLinkSkillForm((current) => ({ ...current, habilidadId: event.target.value }))}
-                    className="w-full rounded-md border-none bg-[#e8eff3] px-2 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
-                  >
-                    <option value="">Selecciona una habilidad</option>
-                    {skills.map((skill) => (
-                      <option key={skill.id} value={skill.id}>
-                        {skill.nombre}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <button
-                  type="submit"
-                  disabled={busyAction === "skill-link"}
-                  className={`${primaryButtonClass} w-full justify-center`}
-                >
-                  <span className="material-symbols-outlined text-[18px]">group_add</span>
-                  {busyAction === "skill-link" ? "Vinculando..." : "Vincular habilidad"}
-                </button>
-              </div>
-            </form>
           </div>
 
             <form onSubmit={submitCatalog} className="rounded-xl border border-[#d5e3ff] bg-white p-4 shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
@@ -978,7 +1052,7 @@ export default function TasksPage() {
               <span className="material-symbols-outlined rounded-2xl bg-[#d5e3ff]/50 p-1.5 text-[#3a5f94] text-xl">category</span>
               <div>
                 <p className="text-[9px] font-bold tracking-[0.26em] text-slate-500 uppercase">Catálogo</p>
-                <h2 className="text-base font-black text-slate-900">Nuevo</h2>
+                <h2 className="text-base font-black text-slate-900">{editingCatalogId ? "Editar" : "Nuevo"}</h2>
               </div>
             </div>
 
@@ -994,20 +1068,21 @@ export default function TasksPage() {
               </label>
 
               <label className="block space-y-0.5">
-                <span className="text-xs font-bold text-slate-500">Tipo</span>
+                <span className="text-xs font-bold text-slate-500">Tipo de tarea</span>
                 <select
                   style={selectChevronStyle}
                   value={catalogForm.tipo}
                   onChange={(event) => {
-                    const nextType = event.target.value as TaskType;
+                    const nextType = event.target.value as TaskType | "";
                     setCatalogForm((current) => ({
                       ...current,
                       tipo: nextType,
-                      programacionRecurrente: nextType === "Recurrente" ? "diaria_libre" : current.programacionRecurrente,
+                      programacionRecurrente: nextType === "Recurrente" ? "" : current.programacionRecurrente,
                     }));
                   }}
                   className="w-full rounded-md border-none bg-[#e8eff3] px-2 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                 >
+                  <option value="">Aún no seleccionado</option>
                   {(["Recurrente", "Esporadica"] as TaskType[]).map((type) => (
                     <option key={type} value={type}>
                       {taskTypeLabels[type]}
@@ -1017,14 +1092,14 @@ export default function TasksPage() {
               </label>
 
               <label className="block space-y-1">
-                <span className="text-xs font-bold text-slate-500">Sector</span>
+                <span className="text-xs font-bold text-slate-500">Lugar de la tarea</span>
                 <select
                   style={selectChevronStyle}
                   value={catalogForm.sector}
                   onChange={(event) => setCatalogForm((current) => ({ ...current, sector: event.target.value }))}
                   className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                 >
-                  <option value="General">General</option>
+                  <option value="">Aún no seleccionado</option>
                   {rooms.map((room) => {
                     const label = roomLabel(room);
                     return (
@@ -1048,13 +1123,22 @@ export default function TasksPage() {
               </label>
 
               <label className="block space-y-1">
-                <span className="text-xs font-bold text-slate-500">Modo de asignación</span>
+                <span className="inline-flex items-center gap-1 text-xs font-bold text-slate-500">
+                  Modo de asignación de la tarea
+                  <span
+                    title="Define cómo se asigna la tarea: Manual para elegir a la persona, Automatica para que el sistema proponga según reglas y disponibilidad."
+                    className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-slate-300 bg-slate-100 text-[10px] font-bold text-slate-600"
+                  >
+                    ?
+                  </span>
+                </span>
                 <select
                   style={selectChevronStyle}
                   value={catalogForm.modoAsignacion}
-                  onChange={(event) => setCatalogForm((current) => ({ ...current, modoAsignacion: event.target.value as AssignmentMode }))}
+                  onChange={(event) => setCatalogForm((current) => ({ ...current, modoAsignacion: event.target.value as AssignmentMode | "" }))}
                   className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                 >
+                  <option value="">Aún no seleccionado</option>
                   <option value="manual">Manual</option>
                   <option value="automatica">Automatica</option>
                 </select>
@@ -1073,7 +1157,7 @@ export default function TasksPage() {
               </label>
 
               <div className="space-y-2 rounded-md border border-[#d9e4ea] bg-[#f3f7fa] px-3 py-2 sm:col-span-2">
-                <span className="text-xs font-bold text-slate-500">Habilidades requeridas (múltiple)</span>
+                <span className="text-xs font-bold text-slate-500">Habilidades requeridas</span>
                 <div className="grid gap-2 sm:grid-cols-2">
                   {skills.map((skill) => {
                     const checked = catalogForm.habilidadesRequeridasIds.includes(skill.id);
@@ -1113,7 +1197,15 @@ export default function TasksPage() {
                           onChange={() => setCatalogForm((current) => ({ ...current, programacionRecurrente: "programada" }))}
                           className="h-4 w-4 border-slate-300 text-slate-900"
                         />
-                        Programada por dias y hora
+                        <span className="inline-flex items-center gap-1">
+                          Programada por dias y hora
+                          <span
+                            title="Usa esta opción si la tarea debe ejecutarse en días específicos y a una hora definida, por ejemplo lunes y miércoles a las 07:00."
+                            className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-slate-300 bg-slate-100 text-[10px] font-bold text-slate-600"
+                          >
+                            ?
+                          </span>
+                        </span>
                       </label>
                       <label className="flex items-center gap-2 rounded-md bg-white px-2 py-1 text-xs font-semibold text-slate-700">
                         <input
@@ -1123,9 +1215,20 @@ export default function TasksPage() {
                           onChange={() => setCatalogForm((current) => ({ ...current, programacionRecurrente: "diaria_libre" }))}
                           className="h-4 w-4 border-slate-300 text-slate-900"
                         />
-                        Diaria en cualquier momento
+                        <span className="inline-flex items-center gap-1">
+                          Diaria en cualquier momento
+                          <span
+                            title="Usa esta opción si la tarea debe hacerse todos los días, pero no necesita una hora exacta."
+                            className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-slate-300 bg-slate-100 text-[10px] font-bold text-slate-600"
+                          >
+                            ?
+                          </span>
+                        </span>
                       </label>
                     </div>
+                    {!catalogForm.programacionRecurrente ? (
+                      <p className="text-[11px] text-amber-700">Aún no seleccionado.</p>
+                    ) : null}
                   </div>
 
                   {catalogForm.programacionRecurrente === "programada" ? (
@@ -1166,13 +1269,9 @@ export default function TasksPage() {
                     />
                   </label>
                     </>
-                  ) : (
-                    <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 sm:col-span-2">
-                      Esta tarea se tratara como recurrente diaria, sin horario fijo.
-                    </div>
-                  )}
+                  ) : null}
                 </>
-              ) : (
+              ) : catalogForm.tipo === "Esporadica" ? (
                 <>
                   <label className="block space-y-1">
                     <span className="text-xs font-bold text-slate-500">Fecha esporádica</span>
@@ -1237,16 +1336,33 @@ export default function TasksPage() {
                     ) : null}
                   </div>
                 </>
-              )}
+              ) : null}
 
-              <button
-                type="submit"
-                disabled={busyAction === "catalog-create"}
-                className={`${primaryButtonClass} justify-center sm:col-span-2`}
-              >
-                <span className="material-symbols-outlined text-[18px]">add_circle</span>
-                {busyAction === "catalog-create" ? "Creando..." : "Crear catalogo de tarea"}
-              </button>
+              <div className="flex gap-2 sm:col-span-2">
+                <button
+                  type="submit"
+                  disabled={busyAction === "catalog-create" || busyAction === "catalog-update"}
+                  className={`${primaryButtonClass} flex-1 justify-center`}
+                >
+                  <span className="material-symbols-outlined text-[18px]">{editingCatalogId ? "save" : "add_circle"}</span>
+                  {busyAction === "catalog-update"
+                    ? "Guardando..."
+                    : busyAction === "catalog-create"
+                      ? "Creando..."
+                      : editingCatalogId
+                        ? "Guardar cambios"
+                        : "Crear catalogo de tarea"}
+                </button>
+                {editingCatalogId ? (
+                  <button
+                    type="button"
+                    onClick={cancelEditCatalog}
+                    className="rounded-md border border-slate-200 px-4 py-2 text-[11px] font-bold tracking-[0.18em] text-slate-600 uppercase transition hover:bg-slate-50"
+                  >
+                    Cancelar
+                  </button>
+                ) : null}
+              </div>
             </div>
           </form>
         </section>
@@ -1518,7 +1634,7 @@ export default function TasksPage() {
           </div>
         </section>
 
-        <section className="grid gap-4 xl:grid-cols-[1.18fr_0.82fr]">
+        <section>
           <div className="rounded-xl border border-slate-200 bg-white shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
             <div className="flex flex-col gap-3 border-b border-slate-200 bg-[#f0f4f7] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
@@ -1540,12 +1656,13 @@ export default function TasksPage() {
                     <th className="px-5 py-3 text-[10px] font-black tracking-[0.2em] text-slate-500 uppercase">Tiempo</th>
                     <th className="px-5 py-3 text-[10px] font-black tracking-[0.2em] text-slate-500 uppercase">Asignación</th>
                     <th className="px-5 py-3 text-[10px] font-black tracking-[0.2em] text-slate-500 uppercase">Programación</th>
+                    <th className="px-5 py-3 text-[10px] font-black tracking-[0.2em] text-slate-500 uppercase">Acciones</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {catalog.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="px-5 py-10 text-center text-sm text-slate-500">
+                      <td colSpan={8} className="px-5 py-10 text-center text-sm text-slate-500">
                         No hay tareas de catalogo todavia.
                       </td>
                     </tr>
@@ -1579,6 +1696,25 @@ export default function TasksPage() {
                             </p>
                           ) : null}
                         </td>
+                        <td className="px-5 py-4 text-sm text-slate-600">
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => beginEditCatalog(task)}
+                              className="rounded-md bg-[#3a5f94] px-3 py-2 text-[10px] font-bold tracking-[0.18em] text-white uppercase transition hover:brightness-110"
+                            >
+                              Editar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void deleteCatalog(task.id)}
+                              disabled={deletingCatalogId === task.id || busyAction === `catalog-delete-${task.id}`}
+                              className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-[10px] font-bold tracking-[0.18em] text-red-600 uppercase transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {deletingCatalogId === task.id ? "Eliminando..." : "Eliminar"}
+                            </button>
+                          </div>
+                        </td>
                       </tr>
                     ))
                   )}
@@ -1587,73 +1723,6 @@ export default function TasksPage() {
             </div>
           </div>
 
-          <div className="rounded-xl border border-slate-200 bg-white shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
-            <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
-              <div>
-                <p className="text-[10px] font-bold tracking-[0.26em] text-slate-500 uppercase">Habilidades</p>
-                <h2 className="mt-1 text-lg font-black text-slate-900">Catalogo y vínculos</h2>
-              </div>
-              <span className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-600">
-                {skills.length} habilidades
-              </span>
-            </div>
-            <div className="space-y-4 p-5">
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-                La lista editable de habilidades está arriba. Aquí solo ves el resumen de compatibilidad y los vínculos activos.
-              </div>
-
-              <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                <p className="text-[10px] font-bold tracking-[0.24em] text-slate-500 uppercase">Compatible con</p>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {staff.filter((person) => eligibleStaffIds.has(person.id)).slice(0, 8).map((person) => (
-                    <span key={person.id} className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-600">
-                      {staffLabel(person)}
-                    </span>
-                  ))}
-                  {eligibleStaffIds.size === 0 ? <span className="text-sm text-slate-500">No hay staff compatible con el requisito seleccionado.</span> : null}
-                </div>
-              </div>
-
-              <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                <p className="text-[10px] font-bold tracking-[0.24em] text-slate-500 uppercase">Vinculos activos</p>
-                <div className="mt-3 max-h-60 space-y-2 overflow-y-auto pr-1">
-                  {staffSkills.length === 0 ? (
-                    <p className="text-sm text-slate-500">No hay vinculos registrados.</p>
-                  ) : (
-                    staffSkills.map((link) => (
-                      <div key={link.id} className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-sm">
-                        <div>
-                          <p className="font-semibold text-slate-900">{link.staffNombre ?? link.staffId}</p>
-                          <p className="text-[11px] text-slate-500">{link.habilidadNombre ?? link.habilidadId}</p>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            try {
-                              setBusyAction(`unlink-${link.id}`);
-                              await fetchApiJson<{ message: string; id: string }>(`/api/tasks/staff-habilidades/${link.id}`, {
-                                method: "DELETE",
-                              });
-                              setNotice({ kind: "success", text: "Vinculo eliminado correctamente." });
-                              await refresh();
-                            } catch (error) {
-                              setNotice({ kind: "error", text: error instanceof Error ? error.message : "No se pudo eliminar el vinculo." });
-                            } finally {
-                              setBusyAction(null);
-                            }
-                          }}
-                          className={primaryButtonClass}
-                          disabled={busyAction === `unlink-${link.id}`}
-                        >
-                          Quitar
-                        </button>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
         </section>
 
         <section className="grid gap-5 xl:grid-cols-[1.18fr_0.82fr]">

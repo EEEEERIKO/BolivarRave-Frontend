@@ -367,6 +367,7 @@ export default function AuditorioPage() {
   const [fieldErrors, setFieldErrors] = useState<FormFieldErrors>({});
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isDownloadingExcel, setIsDownloadingExcel] = useState(false);
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
   const [formState, setFormState] = useState<NewEventFormState>(createEmptyFormState(defaultDateKey));
   const [isMonthPickerOpen, setIsMonthPickerOpen] = useState(false);
@@ -878,6 +879,44 @@ export default function AuditorioPage() {
     }
   }
 
+  const downloadExcelHistory = async () => {
+    if (isDownloadingExcel) return;
+
+    try {
+      setIsDownloadingExcel(true);
+      const response = await fetch("/api/auditorio/reservas/export", {
+        cache: "no-store",
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || `No se pudo descargar el excel (HTTP ${response.status})`);
+      }
+
+      const blob = await response.blob();
+      const objectUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+
+      const disposition = response.headers.get("content-disposition") ?? "";
+      const fileNameMatch = disposition.match(/filename=\"?([^\";]+)\"?/i);
+      const fileName = fileNameMatch?.[1] ?? `historial_auditorio_${Date.now()}.xlsx`;
+
+      link.href = objectUrl;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(objectUrl);
+      setLoadError(null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "No se pudo descargar el historial en excel";
+      setLoadError(message);
+      window.alert(message);
+    } finally {
+      setIsDownloadingExcel(false);
+    }
+  };
+
   return (
     <div className="p-6">
       <div className="mb-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -886,6 +925,15 @@ export default function AuditorioPage() {
             <h1 className="text-xl font-bold text-slate-900">Calendario Auditorio Chapman</h1>
             <p className="text-sm text-slate-500">Panel de calendario del Auditorio GW Chapman</p>
           </div>
+          <button
+            type="button"
+            onClick={() => void downloadExcelHistory()}
+            disabled={isDownloadingExcel}
+            className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            <span className="material-symbols-outlined text-[18px]">download</span>
+            {isDownloadingExcel ? "Descargando..." : "Descargar excel"}
+          </button>
         </div>
       </div>
 
