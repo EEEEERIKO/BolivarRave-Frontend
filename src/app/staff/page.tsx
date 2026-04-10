@@ -25,6 +25,7 @@ type UnavailableClassSlot = {
 };
 
 type StaffEstado = "Active" | "Inactive";
+type StaffLiveStatus = "Activo" | "Descanso" | "Inactivo";
 
 type StaffApi = {
   id: string;
@@ -92,6 +93,8 @@ type EditablePausaItem = {
   horaInicio: string;
   horaFin: string;
 };
+
+type BackendWorkWeekDay = "Lunes" | "Martes" | "Miercoles" | "Jueves" | "Viernes" | "Sabado" | "Domingo";
 
 const HOURS = [
   "05:00",
@@ -203,6 +206,13 @@ function timeToMinutes(value: string): number {
   return hour * 60 + minute;
 }
 
+function minutesToTime(value: number): string {
+  const safe = Math.max(0, value);
+  const hours = String(Math.floor(safe / 60)).padStart(2, "0");
+  const minutes = String(safe % 60).padStart(2, "0");
+  return `${hours}:${minutes}`;
+}
+
 function parseBirthDate(value: string): BirthDateParts {
   const [year = "", month = "", day = ""] = (value ?? "").split("-");
   return { year, month, day };
@@ -267,6 +277,34 @@ const WORK_DAY_ORDER: Record<WorkWeekDay, number> = {
   Domingo: 7,
 };
 
+const toUiWorkWeekDay = (value: string): WorkWeekDay => {
+  const normalized = normalizeDayName(value);
+
+  if (normalized === "miercoles") return "Miércoles";
+  if (normalized === "sabado") return "Sábado";
+  if (normalized === "lunes") return "Lunes";
+  if (normalized === "martes") return "Martes";
+  if (normalized === "jueves") return "Jueves";
+  if (normalized === "viernes") return "Viernes";
+  if (normalized === "domingo") return "Domingo";
+
+  return "Lunes";
+};
+
+const toBackendWorkWeekDay = (value: string): BackendWorkWeekDay | null => {
+  const normalized = normalizeDayName(value);
+
+  if (normalized === "miercoles") return "Miercoles";
+  if (normalized === "sabado") return "Sabado";
+  if (normalized === "lunes") return "Lunes";
+  if (normalized === "martes") return "Martes";
+  if (normalized === "jueves") return "Jueves";
+  if (normalized === "viernes") return "Viernes";
+  if (normalized === "domingo") return "Domingo";
+
+  return null;
+};
+
 const getCurrentWorkWeekDay = (): WorkWeekDay => {
   const currentDay = new Date().getDay();
   const dayMap: WorkWeekDay[] = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
@@ -275,11 +313,14 @@ const getCurrentWorkWeekDay = (): WorkWeekDay => {
 
 function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi[]; isLoadingStaff: boolean }) {
   const [jornadaByStaffId, setJornadaByStaffId] = useState<Record<string, StaffJornadaItem[]>>({});
+  const [pausaByStaffId, setPausaByStaffId] = useState<Record<string, StaffPausaItem[]>>({});
   const [isLoadingJornadas, setIsLoadingJornadas] = useState(false);
   const [scheduleError, setScheduleError] = useState<string | null>(null);
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [editingStaff, setEditingStaff] = useState<StaffApi | null>(null);
   const [editorRows, setEditorRows] = useState<EditableJornadaItem[]>([]);
+  const [editorPausaRows, setEditorPausaRows] = useState<EditablePausaItem[]>([]);
+  const [isLoadingPausas, setIsLoadingPausas] = useState(false);
   const [isSavingJornada, setIsSavingJornada] = useState(false);
   const [selectedScheduleDay, setSelectedScheduleDay] = useState<WorkWeekDay>(() => getCurrentWorkWeekDay());
   const leftColumnRef = useRef<HTMLDivElement>(null);
@@ -332,21 +373,28 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
   const loadJornadas = async () => {
     if (staffList.length === 0) {
       setJornadaByStaffId({});
+      setPausaByStaffId({});
       return;
     }
 
     const staffIds = new Set(staffList.map((staff) => staff.id));
     const cachedJornadas = getCachedData<Record<string, StaffJornadaItem[]>>("jornadas_map");
-    const hasCached = Boolean(cachedJornadas && Object.keys(cachedJornadas).length > 0);
+    const cachedPausas = getCachedData<Record<string, StaffPausaItem[]>>("pausas_map");
+    const hasCachedJornadas = Boolean(cachedJornadas && Object.keys(cachedJornadas).length > 0);
+    const hasCachedPausas = Boolean(cachedPausas && Object.keys(cachedPausas).length > 0);
+    const hasCached = hasCachedJornadas || hasCachedPausas;
 
     try {
       // Show cached data immediately; revalidate in background.
-      if (hasCached && cachedJornadas) {
+      if (hasCached) {
         const cachedMap: Record<string, StaffJornadaItem[]> = {};
+        const cachedPausaMap: Record<string, StaffPausaItem[]> = {};
         for (const staffId of staffIds) {
-          cachedMap[staffId] = cachedJornadas[staffId] ?? [];
+          cachedMap[staffId] = cachedJornadas?.[staffId] ?? [];
+          cachedPausaMap[staffId] = cachedPausas?.[staffId] ?? [];
         }
         setJornadaByStaffId(cachedMap);
+        setPausaByStaffId(cachedPausaMap);
       }
 
       setIsLoadingJornadas(!hasCached);
@@ -354,23 +402,47 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
 
       const results = await Promise.all(
         staffList.map(async (staff) => {
-          const response = await fetchApiJson<StaffJornadaResponse>(`/api/staff/${staff.id}/jornada-semanal`, {
+          const jornadaResponse = await fetchApiJson<StaffJornadaResponse>(`/api/staff/${staff.id}/jornada-semanal`, {
             cache: "no-store",
           }).catch(() => ({ jornadas: [] }));
+
+          const pausaResponse = await fetchApiJson<StaffPausaResponse>(`/api/staff/${staff.id}/pausas-programadas`, {
+            cache: "no-store",
+          }).catch(() => ({ pausas: [] }));
+
+          const jornadas = Array.isArray(jornadaResponse.jornadas)
+            ? jornadaResponse.jornadas.map((item) => ({
+                ...item,
+                diaSemana: toUiWorkWeekDay(item.diaSemana),
+              }))
+            : [];
+
+          const pausas = Array.isArray(pausaResponse.pausas)
+            ? pausaResponse.pausas.map((item) => ({
+                ...item,
+                diaSemana: toUiWorkWeekDay(item.diaSemana),
+              }))
+            : [];
+
           return {
             staffId: staff.id,
-            jornadas: Array.isArray(response.jornadas) ? response.jornadas : [],
+            jornadas,
+            pausas,
           };
         }),
       );
 
       const nextMap: Record<string, StaffJornadaItem[]> = {};
+      const nextPausaMap: Record<string, StaffPausaItem[]> = {};
       for (const result of results) {
         nextMap[result.staffId] = result.jornadas;
+        nextPausaMap[result.staffId] = result.pausas;
       }
 
       setJornadaByStaffId(nextMap);
+      setPausaByStaffId(nextPausaMap);
       setCachedData("jornadas_map", nextMap, { ttl: 10 * 60 * 1000 });
+      setCachedData("pausas_map", nextPausaMap, { ttl: 10 * 60 * 1000 });
     } catch (error) {
       if (!hasCached) {
         setScheduleError(error instanceof Error ? error.message : "No se pudo cargar la jornada semanal.");
@@ -394,7 +466,23 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
     },
   ] as EditableJornadaItem[];
 
-  const openEditor = (staff: StaffApi) => {
+  const loadPausasForStaff = async (staffId: string) => {
+    const response = await fetchApiJson<StaffPausaResponse>(`/api/staff/${staffId}/pausas-programadas`, {
+      cache: "no-store",
+    }).catch(() => ({ pausas: [] }));
+
+    const mapped = (Array.isArray(response.pausas) ? response.pausas : []).map((item, index) => ({
+      id: item.id || `pausa-${index + 1}`,
+      diaSemana: toUiWorkWeekDay(item.diaSemana),
+      tipoPausa: item.tipoPausa,
+      horaInicio: item.horaInicio,
+      horaFin: item.horaFin,
+    }));
+
+    setEditorPausaRows(mapped);
+  };
+
+  const openEditor = async (staff: StaffApi) => {
     const current = jornadaByStaffId[staff.id] ?? [];
     const mappedRows: EditableJornadaItem[] = current.length > 0
       ? [...current]
@@ -418,14 +506,25 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
 
     setEditingStaff(staff);
     setEditorRows(mappedRows);
+    setEditorPausaRows([]);
     setIsEditorOpen(true);
     setScheduleError(null);
+
+    try {
+      setIsLoadingPausas(true);
+      await loadPausasForStaff(staff.id);
+    } catch (error) {
+      setScheduleError(error instanceof Error ? error.message : "No se pudieron cargar las pausas programadas.");
+    } finally {
+      setIsLoadingPausas(false);
+    }
   };
 
   const closeEditor = () => {
     setIsEditorOpen(false);
     setEditingStaff(null);
     setEditorRows([]);
+    setEditorPausaRows([]);
   };
 
   const addEditorRow = () => {
@@ -456,6 +555,29 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
         }
         return updated;
       })
+    );
+  };
+
+  const addPausaRow = () => {
+    setEditorPausaRows((prev) => [
+      ...prev,
+      {
+        id: `pausa-${Date.now()}-${prev.length + 1}`,
+        diaSemana: "",
+        tipoPausa: "Comida",
+        horaInicio: "12:00",
+        horaFin: "13:00",
+      },
+    ]);
+  };
+
+  const removePausaRow = (rowId: string) => {
+    setEditorPausaRows((prev) => prev.filter((row) => row.id !== rowId));
+  };
+
+  const updatePausaRow = (rowId: string, field: keyof Omit<EditablePausaItem, "id">, value: string) => {
+    setEditorPausaRows((prev) =>
+      prev.map((row) => (row.id === rowId ? { ...row, [field]: value } : row)),
     );
   };
 
@@ -524,6 +646,71 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
     return null;
   };
 
+  const validatePausaRows = () => {
+    if (editorPausaRows.length === 0) {
+      return null;
+    }
+
+    const jornadaRangesByDay = new Map<string, Array<{ start: number; end: number }>>();
+
+    for (const row of editorRows) {
+      if (!row.diaSemana || !row.horaEntrada || !row.horaSalida) continue;
+      const start = timeToMinutes(row.horaEntrada);
+      const end = timeToMinutes(row.horaSalida);
+      if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue;
+
+      const key = normalizeDayName(row.diaSemana);
+      const bucket = jornadaRangesByDay.get(key) ?? [];
+      bucket.push({ start, end });
+      jornadaRangesByDay.set(key, bucket);
+    }
+
+    for (const [index, row] of editorPausaRows.entries()) {
+      const label = `Pausa ${index + 1}`;
+
+      if (!row.diaSemana) {
+        return `${label}: selecciona un día.`;
+      }
+
+      if (!row.horaInicio || !row.horaFin) {
+        return `${label} (${row.diaSemana}): completa hora inicio y hora fin.`;
+      }
+
+      const start = timeToMinutes(row.horaInicio);
+      const end = timeToMinutes(row.horaFin);
+      if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+        return `${label} (${row.diaSemana}): la hora fin debe ser mayor a la hora inicio.`;
+      }
+
+      const key = normalizeDayName(row.diaSemana);
+      const jornadaRanges = jornadaRangesByDay.get(key) ?? [];
+      if (jornadaRanges.length === 0) {
+        return `${label} (${row.diaSemana}): primero debes crear una jornada para ese día.`;
+      }
+
+      const fitsInsideJornada = jornadaRanges.some((range) => start >= range.start && end <= range.end);
+      if (!fitsInsideJornada) {
+        return `${label} (${row.diaSemana}): debe estar dentro de una jornada laboral del mismo día.`;
+      }
+
+      for (let j = index + 1; j < editorPausaRows.length; j += 1) {
+        const other = editorPausaRows[j];
+        if (!other || normalizeDayName(other.diaSemana) !== key) continue;
+
+        const otherStart = timeToMinutes(other.horaInicio);
+        const otherEnd = timeToMinutes(other.horaFin);
+        if (!Number.isFinite(otherStart) || !Number.isFinite(otherEnd)) continue;
+
+        const overlaps = start < otherEnd && otherStart < end;
+        if (overlaps) {
+          return `${label} y Pausa ${j + 1} (${row.diaSemana}): los rangos se solapan.`;
+        }
+      }
+    }
+
+    return null;
+  };
+
   const saveJornada = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
@@ -537,6 +724,43 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
       return;
     }
 
+    const pausaValidationError = validatePausaRows();
+    if (pausaValidationError) {
+      alert(pausaValidationError);
+      return;
+    }
+
+    const isUuid = (value: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+
+    const jornadasPayload = editorRows.map((row) => {
+      const backendDay = row.diaSemana ? toBackendWorkWeekDay(row.diaSemana) : null;
+      if (!backendDay) {
+        throw new Error(`Día de jornada inválido: ${row.diaSemana || "(vacio)"}`);
+      }
+
+      return {
+        diaSemana: backendDay,
+        horaEntrada: row.horaEntrada,
+        horaSalida: row.horaSalida,
+        totalHorasDia: Number(row.totalHorasDia),
+      };
+    });
+
+    const pausasPayload = editorPausaRows.map((row) => {
+      const backendDay = row.diaSemana ? toBackendWorkWeekDay(row.diaSemana) : null;
+      if (!backendDay) {
+        throw new Error(`Día de pausa inválido: ${row.diaSemana || "(vacio)"}`);
+      }
+
+      return {
+        id: isUuid(row.id) ? row.id : undefined,
+        diaSemana: backendDay,
+        tipoPausa: row.tipoPausa,
+        horaInicio: row.horaInicio,
+        horaFin: row.horaFin,
+      };
+    });
+
     try {
       setIsSavingJornada(true);
 
@@ -544,20 +768,98 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          jornadas: editorRows.map((row) => ({
+          jornadas: jornadasPayload,
+        }),
+      });
+
+      const existingPausasResponse = await fetchApiJson<StaffPausaResponse>(
+        `/api/staff/${editingStaff.id}/pausas-programadas`,
+        { cache: "no-store" },
+      ).catch(() => ({ pausas: [] }));
+      const existingPausas = Array.isArray(existingPausasResponse.pausas) ? existingPausasResponse.pausas : [];
+      const existingIds = new Set(existingPausas.map((item) => item.id));
+      const payloadIds = new Set(pausasPayload.map((item) => item.id).filter((value): value is string => Boolean(value)));
+
+      const toDelete = existingPausas.filter((item) => !payloadIds.has(item.id));
+      const toUpdate = pausasPayload.filter((item) => item.id && existingIds.has(item.id));
+      const toCreate = pausasPayload.filter((item) => !item.id);
+
+      await Promise.all(
+        toDelete.map((pausa) =>
+          fetchApiJson<{ message: string; id: string }>(`/api/staff/${editingStaff.id}/pausas-programadas/${pausa.id}`, {
+            method: "DELETE",
+          }),
+        ),
+      );
+
+      await Promise.all(
+        toUpdate.map((pausa) =>
+          fetchApiJson<{ message: string; id: string }>(`/api/staff/${editingStaff.id}/pausas-programadas/${pausa.id}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              diaSemana: pausa.diaSemana,
+              tipoPausa: pausa.tipoPausa,
+              horaInicio: pausa.horaInicio,
+              horaFin: pausa.horaFin,
+            }),
+          }),
+        ),
+      );
+
+      await Promise.all(
+        toCreate.map((pausa) =>
+          fetchApiJson<{ message: string; id: string }>(`/api/staff/${editingStaff.id}/pausas-programadas`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              diaSemana: pausa.diaSemana,
+              tipoPausa: pausa.tipoPausa,
+              horaInicio: pausa.horaInicio,
+              horaFin: pausa.horaFin,
+            }),
+          }),
+        ),
+      );
+
+      const refreshedPausasResponse = await fetchApiJson<StaffPausaResponse>(`/api/staff/${editingStaff.id}/pausas-programadas`, {
+        cache: "no-store",
+      }).catch(() => ({ pausas: [] }));
+      const refreshedPausas = (Array.isArray(refreshedPausasResponse.pausas) ? refreshedPausasResponse.pausas : []).map((item) => ({
+        ...item,
+        diaSemana: toUiWorkWeekDay(item.diaSemana),
+      }));
+
+      const refreshedJornadas: StaffJornadaItem[] = editorRows
+        .map((row, index) => {
+          if (!row.diaSemana) return null;
+          return {
+            id: row.id || `tmp-jornada-${index + 1}`,
+            staffId: editingStaff.id,
             diaSemana: row.diaSemana,
             horaEntrada: row.horaEntrada,
             horaSalida: row.horaSalida,
             totalHorasDia: Number(row.totalHorasDia),
-          })),
-        }),
+          };
+        })
+        .filter((item): item is StaffJornadaItem => Boolean(item));
+
+      setJornadaByStaffId((prev) => {
+        const next = { ...prev, [editingStaff.id]: refreshedJornadas };
+        setCachedData("jornadas_map", next, { ttl: 10 * 60 * 1000 });
+        return next;
       });
 
-      await loadJornadas();
+      setPausaByStaffId((prev) => {
+        const next = { ...prev, [editingStaff.id]: refreshedPausas };
+        setCachedData("pausas_map", next, { ttl: 10 * 60 * 1000 });
+        return next;
+      });
+
       closeEditor();
-      alert("Horario laboral actualizado correctamente.");
+      alert("Jornada y pausas actualizadas correctamente.");
     } catch (error) {
-      alert(error instanceof Error ? error.message : "No se pudo guardar la jornada semanal.");
+      alert(error instanceof Error ? error.message : "No se pudo guardar la configuración de jornada/pausas.");
     } finally {
       setIsSavingJornada(false);
     }
@@ -597,6 +899,13 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
       right: `${Math.max(0, Math.min(100, rightPct))}%`,
     };
   };
+
+  const totalWeeklyWorkHours = editorRows.reduce((sum, row) => sum + parseFloat(row.totalHorasDia || "0"), 0);
+  const totalWeeklyPauseHours = editorPausaRows.reduce(
+    (sum, row) => sum + calculateHoursDifference(row.horaInicio, row.horaFin),
+    0,
+  );
+  const totalWeeklyNetHours = Math.max(totalWeeklyWorkHours - totalWeeklyPauseHours, 0);
 
   return (
     <div className="space-y-4 sm:space-y-5">
@@ -702,7 +1011,7 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
                       <button
                         aria-label={hasJornada ? "Editar horario" : "Asignar horario"}
                         className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-white text-[#3a5f94] transition hover:bg-[#3a5f94] hover:text-white"
-                        onClick={() => openEditor(staff)}
+                        onClick={() => void openEditor(staff)}
                         type="button"
                         title={hasJornada ? "Editar horario" : "Asignar horario"}
                       >
@@ -745,8 +1054,12 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
                   return aStart - bStart;
                 }).map((staff) => {
                   const jornada = jornadaByStaffId[staff.id] ?? [];
+                  const pausas = pausaByStaffId[staff.id] ?? [];
                   const selectedDayKey = normalizeDayName(selectedScheduleDay);
                   const jornadaForSelectedDay = jornada.filter((row) => normalizeDayName(row.diaSemana) === selectedDayKey);
+                  const pausasForSelectedDay = pausas
+                    .filter((row) => normalizeDayName(row.diaSemana) === selectedDayKey)
+                    .sort((a, b) => timeToMinutes(a.horaInicio) - timeToMinutes(b.horaInicio));
                   const hasJornada = jornadaForSelectedDay.length > 0;
                   const firstStart = hasJornada ? jornadaForSelectedDay.map((row) => row.horaEntrada).sort()[0] : null;
                   const lastEnd = hasJornada ? jornadaForSelectedDay.map((row) => row.horaSalida).sort().slice(-1)[0] : null;
@@ -776,12 +1089,42 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
                         return null;
                       })()}
 
-                      <div className="absolute inset-y-2 rounded-r-md border-l-4 border-[#3a5f94] bg-[#3a5f94]/10 px-4" style={bandStyle}>
+                      {hasJornada && pausasForSelectedDay.length > 0 ? (
+                        <div className="pointer-events-none absolute inset-y-2 z-10 left-0 right-0">
+                          {pausasForSelectedDay.map((pausa) => {
+                            const pausaStart = timeToMinutes(pausa.horaInicio);
+                            const pausaEnd = timeToMinutes(pausa.horaFin);
+                            if (!Number.isFinite(pausaStart) || !Number.isFinite(pausaEnd) || pausaEnd <= pausaStart) {
+                              return null;
+                            }
+
+                            const clampedStart = Math.max(pausaStart, TIMELINE_START_MINUTES);
+                            const clampedEnd = Math.min(pausaEnd, TIMELINE_END_MINUTES);
+                            if (clampedEnd <= clampedStart) {
+                              return null;
+                            }
+
+                            const left = ((clampedStart - TIMELINE_START_MINUTES) / TIMELINE_TOTAL_MINUTES) * 100;
+                            const width = Math.max(((clampedEnd - clampedStart) / TIMELINE_TOTAL_MINUTES) * 100, 1.2);
+
+                            return (
+                              <div
+                                key={pausa.id}
+                                className="absolute inset-y-1.5 rounded bg-rose-200/85 ring-1 ring-rose-300/90"
+                                style={{ left: `${left}%`, width: `${width}%` }}
+                                title={`${pausa.tipoPausa}: ${pausa.horaInicio} - ${pausa.horaFin}`}
+                              />
+                            );
+                          })}
+                        </div>
+                      ) : null}
+
+                      <div className="absolute inset-y-2 z-20 rounded-r-md border-l-4 border-[#3a5f94] bg-[#3a5f94]/10 px-4" style={bandStyle}>
                         <div className="flex h-full items-center gap-2 overflow-hidden">
                           <div className="h-2 w-2 shrink-0 rounded-full bg-[#3a5f94]" />
                           <span className="truncate text-[10px] font-bold text-[#3a5f94]">
                             {hasJornada
-                              ? `Jornada ${firstStart} - ${lastEnd} • ${formatDayHoursLabel(jornadaForSelectedDay)}`
+                              ? `Jornada ${firstStart} - ${lastEnd} • ${formatDayHoursLabel(jornadaForSelectedDay)}${pausasForSelectedDay.length > 0 ? ` • Pausas: ${pausasForSelectedDay.length}` : ""}`
                               : "Sin horario asignado"}
                           </span>
                         </div>
@@ -858,12 +1201,98 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
                 </div>
               ))}
 
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <p className="text-sm font-semibold text-[#2a3439]">Pausas programadas (comida/descanso)</p>
+                  <button
+                    className="rounded-lg border border-slate-300 px-3 py-1 text-xs font-bold text-[#566166]"
+                    onClick={addPausaRow}
+                    type="button"
+                  >
+                    + Agregar pausa
+                  </button>
+                </div>
+
+                {isLoadingPausas ? (
+                  <p className="rounded-lg border border-dashed border-slate-300 bg-white px-3 py-2 text-xs text-[#566166]">
+                    Cargando pausas...
+                  </p>
+                ) : editorPausaRows.length === 0 ? (
+                  <p className="rounded-lg border border-dashed border-slate-300 bg-white px-3 py-2 text-xs text-[#566166]">
+                    No hay pausas configuradas para este colaborador.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {editorPausaRows.map((row, index) => (
+                      <div className="grid grid-cols-1 gap-2 rounded-lg border border-slate-200 bg-white p-2 md:grid-cols-[1fr_1fr_1fr_1fr_auto]" key={row.id}>
+                        <select
+                          className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                          onChange={(event) => updatePausaRow(row.id, "diaSemana", event.target.value)}
+                          value={row.diaSemana}
+                        >
+                          <option value="">Día</option>
+                          {MASTER_WEEK_DAYS.map((day) => (
+                            <option key={`pausa-day-${day}`} value={day}>
+                              {day}
+                            </option>
+                          ))}
+                        </select>
+
+                        <select
+                          className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                          onChange={(event) => updatePausaRow(row.id, "tipoPausa", event.target.value)}
+                          value={row.tipoPausa}
+                        >
+                          {PAUSA_TIPOS.map((tipo) => (
+                            <option key={`pausa-tipo-${tipo}`} value={tipo}>
+                              {tipo}
+                            </option>
+                          ))}
+                        </select>
+
+                        <input
+                          className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                          onChange={(event) => updatePausaRow(row.id, "horaInicio", event.target.value)}
+                          type="time"
+                          value={row.horaInicio}
+                        />
+
+                        <input
+                          className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                          onChange={(event) => updatePausaRow(row.id, "horaFin", event.target.value)}
+                          type="time"
+                          value={row.horaFin}
+                        />
+
+                        <button
+                          className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold text-[#9f403d]"
+                          onClick={() => removePausaRow(row.id)}
+                          type="button"
+                        >
+                          Quitar
+                        </button>
+
+                        <p className="text-[10px] text-[#566166] md:col-span-5">Pausa {index + 1}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               <div className="border-t border-slate-200 pt-4">
-                <div className="mb-4 flex items-center justify-between rounded-lg bg-blue-50 p-3">
-                  <span className="text-xs font-bold text-[#2a3439]">Horas totales por semana:</span>
-                  <span className="text-lg font-black text-[#3a5f94]">
-                    {editorRows.reduce((sum, row) => sum + parseFloat(row.totalHorasDia || "0"), 0).toFixed(1)} h
-                  </span>
+                <div className="mb-4 space-y-2 rounded-lg bg-blue-50 p-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-[#2a3439]">Horas totales por semana:</span>
+                    <span className="text-lg font-black text-[#3a5f94]">{totalWeeklyWorkHours.toFixed(1)} h</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-[#2a3439]">Horas de descanso por semana:</span>
+                    <span className="text-base font-black text-[#9f403d]">{totalWeeklyPauseHours.toFixed(1)} h</span>
+                  </div>
+                  <div className="flex items-center justify-between border-t border-blue-100 pt-2">
+                    <span className="text-xs font-bold text-[#2a3439]">Horas netas disponibles:</span>
+                    <span className="text-base font-black text-[#2f7d4d]">{totalWeeklyNetHours.toFixed(1)} h</span>
+                  </div>
                 </div>
 
                 <div className="flex flex-wrap justify-between gap-2">
@@ -875,8 +1304,8 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
                   <button className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-bold text-[#566166]" onClick={closeEditor} type="button">
                     Cancelar
                   </button>
-                    <button className="rounded-lg bg-[#3a5f94] px-4 py-2 text-xs font-bold text-white disabled:opacity-60" disabled={isSavingJornada} type="submit">
-                      {isSavingJornada ? "Guardando..." : "Guardar horario"}
+                    <button className="rounded-lg bg-[#3a5f94] px-4 py-2 text-xs font-bold text-white disabled:opacity-60" disabled={isSavingJornada || isLoadingPausas} type="submit">
+                      {isSavingJornada ? "Guardando..." : "Guardar configuración"}
                     </button>
                   </div>
                 </div>
@@ -894,16 +1323,21 @@ export default function StaffPage() {
   const [showAddStaffForm, setShowAddStaffForm] = useState(false);
   const [showEditStaffForm, setShowEditStaffForm] = useState(false);
   const [formFeedback, setFormFeedback] = useState<string | null>(null);
-  const [staffList, setStaffList] = useState<StaffApi[]>(() => getCachedData<StaffApi[]>("staff_list") ?? []);
+  const [staffList, setStaffList] = useState<StaffApi[]>([]);
   const [selectedStaffId, setSelectedStaffId] = useState<string | null>(null);
   const [isStaffDetailModalOpen, setIsStaffDetailModalOpen] = useState(false);
   const [mobileDetailTab, setMobileDetailTab] = useState<StaffMobileDetailTab>("profile");
-  const [isLoadingStaff, setIsLoadingStaff] = useState(
-    () => ((getCachedData<StaffApi[]>("staff_list") ?? []).length === 0),
-  );
+  const [isLoadingStaff, setIsLoadingStaff] = useState(true);
   const [staffError, setStaffError] = useState<string | null>(null);
   const [isSavingNewStaff, setIsSavingNewStaff] = useState(false);
   const [isSavingEditStaff, setIsSavingEditStaff] = useState(false);
+  const [isLoadingLiveSchedules, setIsLoadingLiveSchedules] = useState(false);
+  const [liveJornadaByStaffId, setLiveJornadaByStaffId] = useState<Record<string, StaffJornadaItem[]>>({});
+  const [livePausaByStaffId, setLivePausaByStaffId] = useState<Record<string, StaffPausaItem[]>>({});
+  const [selectedStaffJornada, setSelectedStaffJornada] = useState<StaffJornadaItem[]>([]);
+  const [selectedStaffPausas, setSelectedStaffPausas] = useState<StaffPausaItem[]>([]);
+  const [isLoadingDailySchedule, setIsLoadingDailySchedule] = useState(false);
+  const [dailyScheduleDay, setDailyScheduleDay] = useState<WorkWeekDay>("Lunes");
   const [unavailableClassSlots, setUnavailableClassSlots] = useState<UnavailableClassSlot[]>([]);
   const [editUnavailableClassSlots, setEditUnavailableClassSlots] = useState<UnavailableClassSlot[]>([]);
   const [newStaff, setNewStaff] = useState({
@@ -946,8 +1380,325 @@ export default function StaffPage() {
     return staffList.find((staff) => staff.id === selectedStaffId) ?? null;
   }, [selectedStaffId, staffList]);
 
+  useEffect(() => {
+    let isCancelled = false;
+
+    const loadLiveSchedules = async () => {
+      if (staffList.length === 0) {
+        setLiveJornadaByStaffId({});
+        setLivePausaByStaffId({});
+        setIsLoadingLiveSchedules(false);
+        return;
+      }
+
+      const staffIds = new Set(staffList.map((staff) => staff.id));
+      const cachedJornadas = getCachedData<Record<string, StaffJornadaItem[]>>("jornadas_map");
+      const cachedPausas = getCachedData<Record<string, StaffPausaItem[]>>("pausas_map");
+
+      if (!isCancelled && (cachedJornadas || cachedPausas)) {
+        const cachedJornadaMap: Record<string, StaffJornadaItem[]> = {};
+        const cachedPausaMap: Record<string, StaffPausaItem[]> = {};
+        for (const staffId of staffIds) {
+          cachedJornadaMap[staffId] = cachedJornadas?.[staffId] ?? [];
+          cachedPausaMap[staffId] = cachedPausas?.[staffId] ?? [];
+        }
+        setLiveJornadaByStaffId(cachedJornadaMap);
+        setLivePausaByStaffId(cachedPausaMap);
+      }
+
+      try {
+        setIsLoadingLiveSchedules(true);
+
+        const results = await Promise.all(
+          staffList.map(async (staff) => {
+            const jornadaResponse = await fetchApiJson<StaffJornadaResponse>(`/api/staff/${staff.id}/jornada-semanal`, {
+              cache: "no-store",
+            }).catch(() => ({ jornadas: [] }));
+
+            const pausaResponse = await fetchApiJson<StaffPausaResponse>(`/api/staff/${staff.id}/pausas-programadas`, {
+              cache: "no-store",
+            }).catch(() => ({ pausas: [] }));
+
+            const jornadas = Array.isArray(jornadaResponse.jornadas)
+              ? jornadaResponse.jornadas.map((item) => ({
+                  ...item,
+                  diaSemana: toUiWorkWeekDay(item.diaSemana),
+                }))
+              : [];
+
+            const pausas = Array.isArray(pausaResponse.pausas)
+              ? pausaResponse.pausas.map((item) => ({
+                  ...item,
+                  diaSemana: toUiWorkWeekDay(item.diaSemana),
+                }))
+              : [];
+
+            return { staffId: staff.id, jornadas, pausas };
+          }),
+        );
+
+        if (isCancelled) return;
+
+        const nextJornadas: Record<string, StaffJornadaItem[]> = {};
+        const nextPausas: Record<string, StaffPausaItem[]> = {};
+        for (const result of results) {
+          nextJornadas[result.staffId] = result.jornadas;
+          nextPausas[result.staffId] = result.pausas;
+        }
+
+        setLiveJornadaByStaffId(nextJornadas);
+        setLivePausaByStaffId(nextPausas);
+        setCachedData("jornadas_map", nextJornadas, { ttl: 10 * 60 * 1000 });
+        setCachedData("pausas_map", nextPausas, { ttl: 10 * 60 * 1000 });
+      } finally {
+        if (!isCancelled) {
+          setIsLoadingLiveSchedules(false);
+        }
+      }
+    };
+
+    void loadLiveSchedules();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [staffList]);
+
   const selectedStaffBalanceHours = selectedStaff?.balanceHoras ?? 0;
   const selectedStaffFormattedBalanceHours = `${selectedStaffBalanceHours > 0 ? "+" : ""}${selectedStaffBalanceHours} horas`;
+
+  useEffect(() => {
+    setDailyScheduleDay(getCurrentWorkWeekDay());
+  }, []);
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    const loadSelectedStaffDailySchedule = async () => {
+      if (!selectedStaff?.id) {
+        setSelectedStaffJornada([]);
+        setSelectedStaffPausas([]);
+        setIsLoadingDailySchedule(false);
+        return;
+      }
+
+      const staffId = selectedStaff.id;
+      const hasLiveJornada = Object.prototype.hasOwnProperty.call(liveJornadaByStaffId, staffId);
+      const hasLivePausa = Object.prototype.hasOwnProperty.call(livePausaByStaffId, staffId);
+
+      if (hasLiveJornada && hasLivePausa) {
+        setSelectedStaffJornada(liveJornadaByStaffId[staffId] ?? []);
+        setSelectedStaffPausas(livePausaByStaffId[staffId] ?? []);
+        setIsLoadingDailySchedule(false);
+        return;
+      }
+
+      const cachedJornadasMap = getCachedData<Record<string, StaffJornadaItem[]>>("jornadas_map");
+      const cachedPausasMap = getCachedData<Record<string, StaffPausaItem[]>>("pausas_map");
+      const hasCachedJornada = Boolean(cachedJornadasMap && Object.prototype.hasOwnProperty.call(cachedJornadasMap, staffId));
+      const hasCachedPausa = Boolean(cachedPausasMap && Object.prototype.hasOwnProperty.call(cachedPausasMap, staffId));
+
+      if (hasCachedJornada && hasCachedPausa) {
+        setSelectedStaffJornada(cachedJornadasMap?.[staffId] ?? []);
+        setSelectedStaffPausas(cachedPausasMap?.[staffId] ?? []);
+        setIsLoadingDailySchedule(false);
+        return;
+      }
+
+      if (isLoadingLiveSchedules) {
+        setIsLoadingDailySchedule(true);
+        return;
+      }
+
+      try {
+        setIsLoadingDailySchedule(true);
+
+        const [jornadaResponse, pausaResponse] = await Promise.all([
+          fetchApiJson<StaffJornadaResponse>(`/api/staff/${staffId}/jornada-semanal`, { cache: "no-store" }).catch(() => ({ jornadas: [] })),
+          fetchApiJson<StaffPausaResponse>(`/api/staff/${staffId}/pausas-programadas`, { cache: "no-store" }).catch(() => ({ pausas: [] })),
+        ]);
+
+        if (isCancelled) return;
+
+        const jornadas = (Array.isArray(jornadaResponse.jornadas) ? jornadaResponse.jornadas : []).map((item) => ({
+          ...item,
+          diaSemana: toUiWorkWeekDay(item.diaSemana),
+        }));
+
+        const pausas = (Array.isArray(pausaResponse.pausas) ? pausaResponse.pausas : []).map((item) => ({
+          ...item,
+          diaSemana: toUiWorkWeekDay(item.diaSemana),
+        }));
+
+        setSelectedStaffJornada(jornadas);
+        setSelectedStaffPausas(pausas);
+      } finally {
+        if (!isCancelled) {
+          setIsLoadingDailySchedule(false);
+        }
+      }
+    };
+
+    void loadSelectedStaffDailySchedule();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [selectedStaff?.id, liveJornadaByStaffId, livePausaByStaffId, isLoadingLiveSchedules]);
+
+  const dailyScheduleItems = useMemo(() => {
+    const selectedDayKey = normalizeDayName(dailyScheduleDay);
+    const todayKey = normalizeDayName(getCurrentWorkWeekDay());
+    const now = new Date();
+    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+    const isTodaySelected = selectedDayKey === todayKey;
+
+    const jornadas = selectedStaffJornada
+      .filter((row) => normalizeDayName(row.diaSemana) === selectedDayKey)
+      .sort((a, b) => timeToMinutes(a.horaEntrada) - timeToMinutes(b.horaEntrada));
+
+    const pausas = selectedStaffPausas
+      .filter((row) => normalizeDayName(row.diaSemana) === selectedDayKey)
+      .sort((a, b) => timeToMinutes(a.horaInicio) - timeToMinutes(b.horaInicio));
+
+    const getMealLabel = (start: number) => {
+      if (start < 11 * 60 + 30) return "Desayuno";
+      if (start < 17 * 60 + 30) return "Almuerzo";
+      return "Cena";
+    };
+
+    const segments: Array<{
+      id: string;
+      label: string;
+      range: string;
+      isPause: boolean;
+      start: number;
+      end: number;
+      isCurrent: boolean;
+    }> = [];
+
+    jornadas.forEach((jornada, jornadaIndex) => {
+      const jornadaStart = timeToMinutes(jornada.horaEntrada);
+      const jornadaEnd = timeToMinutes(jornada.horaSalida);
+      if (jornadaStart < 0 || jornadaEnd <= jornadaStart) return;
+
+      const pausesInsideJornada = pausas
+        .map((pausa, pausaIndex) => ({
+          ...pausa,
+          pausaIndex,
+          start: timeToMinutes(pausa.horaInicio),
+          end: timeToMinutes(pausa.horaFin),
+        }))
+        .filter((pausa) => pausa.start < jornadaEnd && jornadaStart < pausa.end)
+        .sort((a, b) => a.start - b.start);
+
+      let cursor = jornadaStart;
+
+      pausesInsideJornada.forEach((pausa) => {
+        const pausaStart = Math.max(pausa.start, jornadaStart);
+        const pausaEnd = Math.min(pausa.end, jornadaEnd);
+        if (pausaEnd <= pausaStart) return;
+
+        if (pausaStart > cursor) {
+          segments.push({
+            id: `work-${jornada.id || jornadaIndex}-${cursor}`,
+            label: "Trabajo",
+            range: `${minutesToTime(cursor)} - ${minutesToTime(pausaStart)}`,
+            isPause: false,
+            start: cursor,
+            end: pausaStart,
+            isCurrent: isTodaySelected && currentMinutes >= cursor && currentMinutes < pausaStart,
+          });
+        }
+
+        const pausaLabel = pausa.tipoPausa === "Comida" ? getMealLabel(pausaStart) : "Descanso";
+        segments.push({
+          id: `pause-${pausa.id || pausa.pausaIndex}-${pausaStart}`,
+          label: pausaLabel,
+          range: `${minutesToTime(pausaStart)} - ${minutesToTime(pausaEnd)}`,
+          isPause: true,
+          start: pausaStart,
+          end: pausaEnd,
+          isCurrent: isTodaySelected && currentMinutes >= pausaStart && currentMinutes < pausaEnd,
+        });
+
+        cursor = Math.max(cursor, pausaEnd);
+      });
+
+      if (cursor < jornadaEnd) {
+        segments.push({
+          id: `work-end-${jornada.id || jornadaIndex}-${cursor}`,
+          label: "Trabajo",
+          range: `${minutesToTime(cursor)} - ${minutesToTime(jornadaEnd)}`,
+          isPause: false,
+          start: cursor,
+          end: jornadaEnd,
+          isCurrent: isTodaySelected && currentMinutes >= cursor && currentMinutes < jornadaEnd,
+        });
+      }
+    });
+
+    return segments.sort((a, b) => a.start - b.start);
+  }, [dailyScheduleDay, selectedStaffJornada, selectedStaffPausas]);
+
+  const getLiveStatusFromSchedules = (jornadas: StaffJornadaItem[], pausas: StaffPausaItem[]): StaffLiveStatus => {
+    const todayKey = normalizeDayName(getCurrentWorkWeekDay());
+    const now = new Date();
+    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+
+    const jornadasToday = jornadas
+      .filter((row) => normalizeDayName(row.diaSemana) === todayKey)
+      .map((row) => ({
+        start: timeToMinutes(row.horaEntrada),
+        end: timeToMinutes(row.horaSalida),
+      }))
+      .filter((row) => row.start >= 0 && row.end > row.start);
+
+    if (jornadasToday.length === 0) return "Inactivo";
+
+    const isWithinJornada = jornadasToday.some(
+      (row) => currentMinutes >= row.start && currentMinutes < row.end,
+    );
+
+    if (!isWithinJornada) return "Inactivo";
+
+    const pausesToday = pausas
+      .filter((row) => normalizeDayName(row.diaSemana) === todayKey)
+      .map((row) => ({
+        start: timeToMinutes(row.horaInicio),
+        end: timeToMinutes(row.horaFin),
+      }))
+      .filter((row) => row.start >= 0 && row.end > row.start);
+
+    const isInPause = pausesToday.some(
+      (row) => currentMinutes >= row.start && currentMinutes < row.end,
+    );
+
+    if (isInPause) return "Descanso";
+    return "Activo";
+  };
+
+  const liveStatusByStaffId = useMemo(() => {
+    const statusMap: Record<string, StaffLiveStatus> = {};
+
+    for (const staff of staffList) {
+      const jornadas = liveJornadaByStaffId[staff.id] ?? [];
+      const pausas = livePausaByStaffId[staff.id] ?? [];
+      statusMap[staff.id] = getLiveStatusFromSchedules(jornadas, pausas);
+    }
+
+    return statusMap;
+  }, [staffList, liveJornadaByStaffId, livePausaByStaffId]);
+
+  const selectedStaffStatusLabel: StaffLiveStatus = selectedStaff
+    ? (liveStatusByStaffId[selectedStaff.id] ?? getLiveStatusFromSchedules(selectedStaffJornada, selectedStaffPausas))
+    : "Inactivo";
+  const selectedStaffStatusClass =
+    selectedStaffStatusLabel === "Activo"
+      ? "text-green-600"
+      : selectedStaffStatusLabel === "Descanso"
+        ? "text-amber-700"
+        : "text-slate-500";
 
   const academicUnavailabilityMatrix = useMemo(() => {
     const slots = (selectedStaff?.bloqueosClase ?? [])
@@ -2036,6 +2787,13 @@ export default function StaffPage() {
             {staffList.length > 0 ? (
               staffList.map((staff) => {
                 const isActiveCard = selectedStaff?.id === staff.id;
+                const liveStatus = liveStatusByStaffId[staff.id] ?? "Inactivo";
+                const liveStatusClasses =
+                  liveStatus === "Activo"
+                    ? "bg-green-50 text-green-600"
+                    : liveStatus === "Descanso"
+                      ? "bg-amber-50 text-amber-700"
+                      : "bg-slate-50 text-slate-400";
                 return (
                   <button
                     className={`flex items-center gap-3 rounded-xl bg-white p-3 text-left transition-all sm:p-4 ${
@@ -2061,11 +2819,9 @@ export default function StaffPage() {
                     </div>
                     <div className="text-right">
                       <span
-                        className={`rounded px-2 py-1 text-[10px] font-bold tracking-wider uppercase ${
-                          staff.estado === "Active" ? "bg-green-50 text-green-600" : "bg-slate-50 text-slate-400"
-                        }`}
+                        className={`rounded px-2 py-1 text-[10px] font-bold tracking-wider uppercase ${liveStatusClasses}`}
                       >
-                        {staff.estado === "Active" ? "Activo" : "Inactivo"}
+                        {liveStatus}
                       </span>
                     </div>
                   </button>
@@ -2115,20 +2871,28 @@ export default function StaffPage() {
                 <span className="h-1.5 w-1.5 rounded-full bg-[#3a5f94]" />
                 Horario diario del personal
               </h4>
-              <div className="space-y-2">
-                <div className="flex items-center justify-between border-b border-slate-50 py-2">
-                  <span className="text-xs font-bold text-[#2a3439]">Turno de la mañana</span>
-                  <span className="text-xs text-[#566166]">07:00 - 12:00</span>
+              <div className="mb-2 text-[10px] font-semibold text-slate-400">{dailyScheduleDay}</div>
+              {isLoadingDailySchedule ? (
+                <p className="text-xs text-[#566166]">Cargando horario...</p>
+              ) : dailyScheduleItems.length === 0 ? (
+                <p className="text-xs text-[#566166]">Sin bloques configurados para este día.</p>
+              ) : (
+                <div className="space-y-2">
+                  {dailyScheduleItems.map((item) => (
+                    <div
+                      className={item.isPause
+                        ? `flex items-center justify-between rounded px-2 py-2 border-b border-slate-50 ${item.isCurrent ? "bg-amber-100 ring-1 ring-amber-300" : "bg-amber-50"}`
+                        : `flex items-center justify-between border-b border-slate-50 py-2 ${item.isCurrent ? "rounded bg-blue-50 ring-1 ring-blue-200 px-2" : ""}`}
+                      key={item.id}
+                    >
+                      <span className={item.isPause ? "text-xs font-bold text-amber-700" : "text-xs font-bold text-[#2a3439]"}>
+                        {item.label}{item.isCurrent ? " (Ahora)" : ""}
+                      </span>
+                      <span className={item.isPause ? "text-xs text-amber-700" : "text-xs text-[#566166]"}>{item.range}</span>
+                    </div>
+                  ))}
                 </div>
-                <div className="flex items-center justify-between rounded bg-amber-50 px-2 py-2 border-b border-slate-50">
-                  <span className="text-xs font-bold text-amber-700">Almuerzo</span>
-                  <span className="text-xs text-amber-700">12:00 - 13:00</span>
-                </div>
-                <div className="flex items-center justify-between border-b border-slate-50 py-2">
-                  <span className="text-xs font-bold text-[#2a3439]">Turno de la tarde</span>
-                  <span className="text-xs text-[#566166]">13:00 - 16:00</span>
-                </div>
-              </div>
+              )}
             </section>
           </div>
 
@@ -2254,8 +3018,8 @@ export default function StaffPage() {
             <div className="mt-3 grid w-full grid-cols-2 gap-2.5 sm:mt-4 sm:gap-3">
               <div className="flex flex-col items-center justify-center rounded-xl border border-slate-100 bg-white p-3">
                 <p className="text-[10px] font-black text-slate-400 uppercase">Estado</p>
-                <p className={`text-lg font-black ${selectedStaff?.estado === "Active" ? "text-green-600" : "text-slate-500"}`}>
-                  {selectedStaff?.estado === "Active" ? "Activo" : "Fuera de turno"}
+                <p className={`text-lg font-black ${selectedStaffStatusClass}`}>
+                  {selectedStaffStatusLabel}
                 </p>
               </div>
               <div className="flex flex-col items-center justify-center rounded-xl border border-slate-100 bg-white p-3">
@@ -2394,8 +3158,8 @@ export default function StaffPage() {
                       <div className="grid grid-cols-2 gap-3">
                         <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
                           <p className="text-[10px] font-black text-slate-400 uppercase">Estado</p>
-                          <p className={`text-base font-black ${selectedStaff.estado === "Active" ? "text-green-600" : "text-slate-500"}`}>
-                            {selectedStaff.estado === "Active" ? "Activo" : "Inactivo"}
+                          <p className={`text-base font-black ${selectedStaffStatusClass}`}>
+                            {selectedStaffStatusLabel}
                           </p>
                         </div>
                         <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
@@ -2452,20 +3216,28 @@ export default function StaffPage() {
                         <span className="h-1.5 w-1.5 rounded-full bg-[#3a5f94]" />
                         Horario diario del personal
                       </h4>
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between border-b border-slate-50 py-2">
-                          <span className="text-xs font-bold text-[#2a3439]">Turno de la mañana</span>
-                          <span className="text-xs text-[#566166]">07:00 - 12:00</span>
+                      <div className="mb-2 text-[10px] font-semibold text-slate-400">{dailyScheduleDay}</div>
+                      {isLoadingDailySchedule ? (
+                        <p className="text-xs text-[#566166]">Cargando horario...</p>
+                      ) : dailyScheduleItems.length === 0 ? (
+                        <p className="text-xs text-[#566166]">Sin bloques configurados para este día.</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {dailyScheduleItems.map((item) => (
+                            <div
+                              className={item.isPause
+                                ? `flex items-center justify-between rounded px-2 py-2 border-b border-slate-50 ${item.isCurrent ? "bg-amber-100 ring-1 ring-amber-300" : "bg-amber-50"}`
+                                : `flex items-center justify-between border-b border-slate-50 py-2 ${item.isCurrent ? "rounded bg-blue-50 ring-1 ring-blue-200 px-2" : ""}`}
+                              key={`mobile-${item.id}`}
+                            >
+                              <span className={item.isPause ? "text-xs font-bold text-amber-700" : "text-xs font-bold text-[#2a3439]"}>
+                                {item.label}{item.isCurrent ? " (Ahora)" : ""}
+                              </span>
+                              <span className={item.isPause ? "text-xs text-amber-700" : "text-xs text-[#566166]"}>{item.range}</span>
+                            </div>
+                          ))}
                         </div>
-                        <div className="flex items-center justify-between rounded bg-amber-50 px-2 py-2 border-b border-slate-50">
-                          <span className="text-xs font-bold text-amber-700">Almuerzo</span>
-                          <span className="text-xs text-amber-700">12:00 - 13:00</span>
-                        </div>
-                        <div className="flex items-center justify-between border-b border-slate-50 py-2">
-                          <span className="text-xs font-bold text-[#2a3439]">Turno de la tarde</span>
-                          <span className="text-xs text-[#566166]">13:00 - 16:00</span>
-                        </div>
-                      </div>
+                      )}
                     </section>
                   ) : null}
 
