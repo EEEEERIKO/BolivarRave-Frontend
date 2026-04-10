@@ -27,6 +27,11 @@ type UnavailableClassSlot = {
 type StaffEstado = "Active" | "Inactive";
 type StaffLiveStatus = "Activo" | "Descanso" | "Inactivo";
 
+type Skill = {
+  id: string;
+  nombre: string;
+};
+
 type StaffApi = {
   id: string;
   numeroStaff: number;
@@ -40,6 +45,8 @@ type StaffApi = {
   carrera: string;
   tipoContrato: ContractPlan;
   conocimientoSonido: boolean;
+  tieneCredencial: boolean;
+  habilidades: Skill[];
   estado: StaffEstado;
   balanceHoras: number;
   bloqueosClase: Array<{
@@ -244,6 +251,38 @@ function buildBirthDate(parts: BirthDateParts): string {
   return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
+function isAdultBirthDate(isoDate: string): boolean {
+  if (!isoDate) return false;
+  const [yearStr, monthStr, dayStr] = isoDate.split("-");
+  const year = Number(yearStr);
+  const month = Number(monthStr);
+  const day = Number(dayStr);
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) {
+    return false;
+  }
+
+  const today = new Date();
+  const adultLimit = new Date(today.getFullYear() - 18, today.getMonth(), today.getDate());
+  const birthDate = new Date(year, month - 1, day);
+
+  return birthDate <= adultLimit;
+}
+
+function getFirstAvailableStaffNumber(staffList: StaffApi[]): number {
+  const usedNumbers = new Set(
+    staffList
+      .map((staff) => staff.numeroStaff)
+      .filter((value) => Number.isInteger(value) && value > 0),
+  );
+
+  let candidate = 1;
+  while (usedNumbers.has(candidate)) {
+    candidate += 1;
+  }
+
+  return candidate;
+}
+
 const ACCESS_ROLE_OPTIONS: Array<{ value: StaffAccessRoleId; label: string }> = [
   { value: 1, label: "Administrador" },
   { value: 2, label: "Monitor" },
@@ -255,6 +294,44 @@ const accessRoleLabelById: Record<StaffAccessRoleId, string> = {
   2: "Monitor",
   3: "Colaborador",
 };
+
+function roleRequiresCredential(roleId: number): boolean {
+  return roleId === 1 || roleId === 2;
+}
+
+function getFriendlyStaffApiError(rawMessage: string, action: "guardar" | "actualizar" | "eliminar"): string {
+  const message = rawMessage.toLowerCase();
+
+  if (message.includes("unable to start a transaction") || message.includes("transaction api error")) {
+    return "El servidor está ocupado en este momento. Intenta nuevamente en unos segundos.";
+  }
+
+  if (message.includes("payload invalido") || message.includes("too small") || message.includes("too short")) {
+    return "Hay campos incompletos o con formato inválido. Revisa cédula, teléfono, rol y demás datos obligatorios.";
+  }
+
+  if (message.includes("invalid uuid") || message.includes("parametros invalidos")) {
+    return "Ocurrió un problema interno al identificar el registro. Recarga la página e inténtalo de nuevo.";
+  }
+
+  if (message.includes("cedula ya existe") || message.includes("staff_cedula_uq")) {
+    return "Ya existe un colaborador registrado con esa cédula.";
+  }
+
+  if (message.includes("numero de staff ya existe") || message.includes("staff_numero_staff_uq")) {
+    return "El número de personal ya está en uso. Intenta nuevamente.";
+  }
+
+  if (message.includes("habilidad")) {
+    return "No se pudieron asignar habilidades porque alguna selección no es válida. Vuelve a seleccionar e intenta otra vez.";
+  }
+
+  if (message.includes("contrase") || message.includes("password") || message.includes("credencial")) {
+    return "Revisa la contraseña: debe cumplir los requisitos del rol seleccionado.";
+  }
+
+  return `No se pudo ${action} el personal. Verifica la información e intenta nuevamente.`;
+}
 
 const MASTER_WEEK_DAYS: WorkWeekDay[] = [
   "Lunes",
@@ -1331,6 +1408,8 @@ export default function StaffPage() {
   const [staffError, setStaffError] = useState<string | null>(null);
   const [isSavingNewStaff, setIsSavingNewStaff] = useState(false);
   const [isSavingEditStaff, setIsSavingEditStaff] = useState(false);
+  const [skillsCatalog, setSkillsCatalog] = useState<Skill[]>([]);
+  const [isLoadingSkills, setIsLoadingSkills] = useState(false);
   const [isLoadingLiveSchedules, setIsLoadingLiveSchedules] = useState(false);
   const [liveJornadaByStaffId, setLiveJornadaByStaffId] = useState<Record<string, StaffJornadaItem[]>>({});
   const [livePausaByStaffId, setLivePausaByStaffId] = useState<Record<string, StaffPausaItem[]>>({});
@@ -1338,6 +1417,10 @@ export default function StaffPage() {
   const [selectedStaffPausas, setSelectedStaffPausas] = useState<StaffPausaItem[]>([]);
   const [isLoadingDailySchedule, setIsLoadingDailySchedule] = useState(false);
   const [dailyScheduleDay, setDailyScheduleDay] = useState<WorkWeekDay>("Lunes");
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showNewPasswordConfirm, setShowNewPasswordConfirm] = useState(false);
+  const [showEditPassword, setShowEditPassword] = useState(false);
+  const [showEditPasswordConfirm, setShowEditPasswordConfirm] = useState(false);
   const [unavailableClassSlots, setUnavailableClassSlots] = useState<UnavailableClassSlot[]>([]);
   const [editUnavailableClassSlots, setEditUnavailableClassSlots] = useState<UnavailableClassSlot[]>([]);
   const [newStaff, setNewStaff] = useState({
@@ -1349,7 +1432,9 @@ export default function StaffPage() {
     phone: "",
     contractPlan: "Plan 1" as ContractPlan,
     birthDate: "",
-    hasSoundKnowledge: false,
+    password: "",
+    passwordConfirm: "",
+    habilidadIds: [] as string[],
     role: "",
     roleId: 3 as StaffAccessRoleId,
   });
@@ -1362,7 +1447,9 @@ export default function StaffPage() {
     phone: "",
     contractPlan: "Plan 1" as ContractPlan,
     birthDate: "",
-    hasSoundKnowledge: false,
+    password: "",
+    passwordConfirm: "",
+    habilidadIds: [] as string[],
     role: "",
     roleId: 3,
     estado: "Active" as StaffEstado,
@@ -1379,6 +1466,8 @@ export default function StaffPage() {
     if (!selectedStaffId) return null;
     return staffList.find((staff) => staff.id === selectedStaffId) ?? null;
   }, [selectedStaffId, staffList]);
+
+  const selectedStaffSkills = selectedStaff?.habilidades ?? [];
 
   useEffect(() => {
     let isCancelled = false;
@@ -1726,8 +1815,8 @@ export default function StaffPage() {
   );
 
   const birthYearOptions = useMemo(() => {
-    const currentYear = new Date().getFullYear();
-    return Array.from({ length: 90 }, (_, index) => String(currentYear - index));
+    const maxAllowedYear = new Date().getFullYear() - 18;
+    return Array.from({ length: 90 }, (_, index) => String(maxAllowedYear - index));
   }, []);
 
   const newBirthDayOptions = useMemo(() => {
@@ -1767,9 +1856,23 @@ export default function StaffPage() {
 
   const totalAcademicBlockedHoursLabel = `${(totalAcademicBlockedMinutes / 60).toFixed(1)}h`;
 
-  function resetNewStaffForm() {
+  async function refreshNextStaffNumber() {
+    try {
+      const response = await fetchApiJson<{ numeroStaff: number }>("/api/staff/next-number", {
+        cache: "no-store",
+      });
+
+      if (Number.isFinite(response.numeroStaff) && response.numeroStaff > 0) {
+        setNewStaff((prev) => ({ ...prev, staffNumber: String(response.numeroStaff) }));
+      }
+    } catch {
+      // Fallback already prefilled from local staff list.
+    }
+  }
+
+  function resetNewStaffForm(initialStaffNumber: number) {
     setNewStaff({
-      staffNumber: "",
+      staffNumber: String(initialStaffNumber),
       citizenshipId: "",
       firstName: "",
       lastName: "",
@@ -1777,7 +1880,9 @@ export default function StaffPage() {
       phone: "",
       contractPlan: "Plan 1",
       birthDate: "",
-      hasSoundKnowledge: false,
+      password: "",
+      passwordConfirm: "",
+      habilidadIds: [],
       role: "",
       roleId: 3,
     });
@@ -1786,13 +1891,33 @@ export default function StaffPage() {
   }
 
   function openAddStaffForm() {
-    resetNewStaffForm();
+    const initialNumber = getFirstAvailableStaffNumber(staffList);
+    resetNewStaffForm(initialNumber);
     setShowAddStaffForm(true);
+    setShowNewPassword(false);
+    setShowNewPasswordConfirm(false);
+    void refreshNextStaffNumber();
   }
 
   function closeAddStaffForm() {
     setShowAddStaffForm(false);
-    resetNewStaffForm();
+    resetNewStaffForm(getFirstAvailableStaffNumber(staffList));
+    setShowNewPassword(false);
+    setShowNewPasswordConfirm(false);
+  }
+
+  const loadSkills = async () => {
+    try {
+      setIsLoadingSkills(true);
+      const tasksResponse = await fetchApiJson<{ skills?: Skill[] }>("/api/tasks/skills", {
+        cache: "no-store",
+      });
+      setSkillsCatalog(Array.isArray(tasksResponse.skills) ? tasksResponse.skills : []);
+    } catch {
+      setSkillsCatalog([]);
+    } finally {
+      setIsLoadingSkills(false);
+    }
   }
 
   const loadStaff = async () => {
@@ -1829,6 +1954,7 @@ export default function StaffPage() {
 
   useEffect(() => {
     void loadStaff();
+    void loadSkills();
   }, []);
 
   async function handleAddStaffSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -1838,6 +1964,7 @@ export default function StaffPage() {
       const parsedNumber = Number(newStaff.staffNumber);
       const parsedBalance = Number.isFinite(balanceHours) ? balanceHours : 0;
       const resolvedBirthDate = buildBirthDate(newBirthDateParts);
+      const requiresCredential = roleRequiresCredential(newStaff.roleId);
 
       // Validar campos requeridos
       if (!newStaff.firstName || !newStaff.lastName) {
@@ -1847,6 +1974,21 @@ export default function StaffPage() {
 
       if (!resolvedBirthDate) {
         alert("Por favor selecciona una fecha de nacimiento valida (ano, mes y dia).");
+        return;
+      }
+
+      if (!isAdultBirthDate(resolvedBirthDate)) {
+        alert("Solo se pueden registrar personas mayores de edad (18+).");
+        return;
+      }
+
+      if (requiresCredential && newStaff.password.trim().length < 8) {
+        alert("Administrador y Monitor requieren una contraseña de al menos 8 caracteres.");
+        return;
+      }
+
+      if (requiresCredential && newStaff.password !== newStaff.passwordConfirm) {
+        alert("La contraseña y su confirmación no coinciden.");
         return;
       }
 
@@ -1880,7 +2022,7 @@ export default function StaffPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          numeroStaff: parsedNumber,
+          numeroStaff: Number.isFinite(parsedNumber) && parsedNumber > 0 ? parsedNumber : undefined,
           roleId: newStaff.roleId,
           rol: newStaff.role,
           nombres: newStaff.firstName,
@@ -1890,9 +2032,11 @@ export default function StaffPage() {
           fechaNacimiento: resolvedBirthDate,
           carrera: newStaff.major || "Sin carrera",
           tipoContrato: newStaff.contractPlan,
-          conocimientoSonido: newStaff.hasSoundKnowledge,
+          conocimientoSonido: false,
           estado: "Active",
           balanceHoras: parsedBalance,
+          password: requiresCredential ? newStaff.password.trim() : undefined,
+          habilidadIds: newStaff.habilidadIds,
           bloqueosClase,
         }),
       });
@@ -1903,7 +2047,7 @@ export default function StaffPage() {
       await loadStaff();
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "No se pudo guardar el staff.";
-      alert(`❌ Error: ${errorMessage}`);
+      alert(getFriendlyStaffApiError(errorMessage, "guardar"));
       setFormFeedback(null);
     } finally {
       setIsSavingNewStaff(false);
@@ -1925,13 +2069,17 @@ export default function StaffPage() {
       phone: selectedStaff.telefono,
       contractPlan: selectedStaff.tipoContrato,
       birthDate: selectedStaff.fechaNacimiento,
-      hasSoundKnowledge: selectedStaff.conocimientoSonido,
+      password: "",
+      passwordConfirm: "",
+      habilidadIds: selectedStaffSkills.map((skill) => skill.id),
       role: selectedStaff.rol,
       roleId: selectedStaff.roleId ?? 3,
       estado: selectedStaff.estado,
       balanceHoras: selectedStaff.balanceHoras,
     });
     setEditBirthDateParts(parseBirthDate(selectedStaff.fechaNacimiento));
+    setShowEditPassword(false);
+    setShowEditPasswordConfirm(false);
 
     const mappedSlots = (selectedStaff.bloqueosClase ?? []).map((slot, index) => ({
       id: slot.id || `edit-slot-${index + 1}`,
@@ -1957,9 +2105,30 @@ export default function StaffPage() {
 
       const parsedNumber = Number(editStaff.staffNumber);
       const resolvedBirthDate = buildBirthDate(editBirthDateParts);
+      const requiresCredential = roleRequiresCredential(editStaff.roleId);
 
       if (!resolvedBirthDate) {
         alert("Por favor selecciona una fecha de nacimiento valida (ano, mes y dia).");
+        return;
+      }
+
+      if (!isAdultBirthDate(resolvedBirthDate)) {
+        alert("Solo se pueden registrar personas mayores de edad (18+).");
+        return;
+      }
+
+      if (requiresCredential && !selectedStaff.tieneCredencial && editStaff.password.trim().length < 8) {
+        alert("Este rol requiere contraseña. Ingresa una contraseña de al menos 8 caracteres.");
+        return;
+      }
+
+      if (editStaff.password.trim().length > 0 && editStaff.password.trim().length < 8) {
+        alert("Si deseas cambiar la contraseña, debe tener al menos 8 caracteres.");
+        return;
+      }
+
+      if (editStaff.password.trim().length > 0 && editStaff.password !== editStaff.passwordConfirm) {
+        alert("La contraseña y su confirmación no coinciden.");
         return;
       }
 
@@ -2003,20 +2172,22 @@ export default function StaffPage() {
           fechaNacimiento: resolvedBirthDate,
           carrera: editStaff.major || "Sin carrera",
           tipoContrato: editStaff.contractPlan,
-          conocimientoSonido: editStaff.hasSoundKnowledge,
+          conocimientoSonido: false,
           estado: editStaff.estado,
           balanceHoras: editStaff.balanceHoras,
+          password: editStaff.password.trim() ? editStaff.password.trim() : undefined,
+          habilidadIds: editStaff.habilidadIds,
           bloqueosClase,
         }),
       });
 
-      alert("✓ Staff actualizado correctamente.");
+      alert(`Perfil de ${editStaff.firstName} ${editStaff.lastName} actualizado correctamente.`);
       setShowEditStaffForm(false);
       setFormFeedback(null);
       await loadStaff();
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "No se pudo actualizar el staff.";
-      alert(`❌ Error: ${errorMessage}`);
+      alert(getFriendlyStaffApiError(errorMessage, "actualizar"));
       setFormFeedback(null);
     } finally {
       setIsSavingEditStaff(false);
@@ -2156,12 +2327,12 @@ export default function StaffPage() {
         headers: { "Content-Type": "application/json" },
       });
 
-      alert("✓ Staff eliminado correctamente.");
+      alert(`Se eliminó correctamente a ${selectedStaff.nombres} ${selectedStaff.apellidos}.`);
       setSelectedStaffId(null);
       await loadStaff();
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "No se pudo eliminar el staff.";
-      alert(`❌ Error: ${errorMessage}`);
+      alert(getFriendlyStaffApiError(errorMessage, "eliminar"));
     }
   }
 
@@ -2179,7 +2350,7 @@ export default function StaffPage() {
             <div className="mb-4 flex items-center justify-between">
               <div>
                 <h3 className="text-xl font-extrabold text-[#2a3439]">Nuevo personal</h3>
-                <p className="text-xs text-[#566166]">Formulario simbólico (sin integración con el backend)</p>
+                <p className="text-xs text-[#566166]">Registro conectado al backend con número autogenerado</p>
               </div>
               <button
                 className="rounded-lg border border-slate-200 px-3 py-1 text-xs font-bold text-[#566166] hover:bg-slate-50"
@@ -2193,38 +2364,14 @@ export default function StaffPage() {
             <form autoComplete="off" className="flex min-h-0 flex-1 flex-col" onSubmit={handleAddStaffSubmit}>
               <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-y-auto pr-1 md:grid-cols-2">
               <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-500">Número de personal</label>
-                <input
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  onChange={(event) => setNewStaff((prev) => ({ ...prev, staffNumber: event.target.value }))}
-                  placeholder="Ej: 5"
-                  required
-                  type="text"
-                  value={newStaff.staffNumber}
-                />
-              </div>
-
-              <div className="space-y-1">
                 <label className="text-xs font-bold text-slate-500">Rol</label>
                 <input
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                   onChange={(event) => setNewStaff((prev) => ({ ...prev, role: event.target.value }))}
-                  placeholder="Ej: Auxiliar de Biblioteca"
+                  placeholder="Ej: Colaborador"
                   required
                   type="text"
                   value={newStaff.role}
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-500">Nombres</label>
-                <input
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  onChange={(event) => setNewStaff((prev) => ({ ...prev, firstName: event.target.value }))}
-                  placeholder="Ej: Juan Carlos"
-                  required
-                  type="text"
-                  value={newStaff.firstName}
                 />
               </div>
 
@@ -2241,11 +2388,23 @@ export default function StaffPage() {
               </div>
 
               <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-500">Nombres</label>
+                <input
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  onChange={(event) => setNewStaff((prev) => ({ ...prev, firstName: event.target.value }))}
+                  placeholder="Ej: Erik"
+                  required
+                  type="text"
+                  value={newStaff.firstName}
+                />
+              </div>
+
+              <div className="space-y-1">
                 <label className="text-xs font-bold text-slate-500">Apellidos</label>
                 <input
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                   onChange={(event) => setNewStaff((prev) => ({ ...prev, lastName: event.target.value }))}
-                  placeholder="Ej: Rodriguez Mendoza"
+                  placeholder="Ej: Valencia Cardona"
                   required
                   type="text"
                   value={newStaff.lastName}
@@ -2275,85 +2434,89 @@ export default function StaffPage() {
                 />
               </div>
 
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-500">Fecha de nacimiento</label>
-                <div className="grid grid-cols-3 gap-2">
-                  <select
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                    onChange={(event) => updateNewBirthDate("year", event.target.value)}
-                    required
-                    value={newBirthDateParts.year}
-                  >
-                    <option value="">Año</option>
-                    {birthYearOptions.map((year) => (
-                      <option key={year} value={year}>
-                        {year}
-                      </option>
-                    ))}
-                  </select>
+              <div className="space-y-1 md:col-span-2 lg:col-span-2">
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.45fr_1fr_1fr]">
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-500">Fecha de nacimiento</label>
+                    <div className="grid grid-cols-3 gap-2">
+                      <select
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                        onChange={(event) => updateNewBirthDate("year", event.target.value)}
+                        required
+                        value={newBirthDateParts.year}
+                      >
+                        <option value="">Año</option>
+                        {birthYearOptions.map((year) => (
+                          <option key={year} value={year}>
+                            {year}
+                          </option>
+                        ))}
+                      </select>
 
-                  <select
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                    disabled={!newBirthDateParts.year}
-                    onChange={(event) => updateNewBirthDate("month", event.target.value)}
-                    required
-                    value={newBirthDateParts.month}
-                  >
-                    <option value="">Mes</option>
-                    {BIRTH_MONTH_OPTIONS.map((month) => (
-                      <option key={month.value} value={month.value}>
-                        {month.label}
-                      </option>
-                    ))}
-                  </select>
+                      <select
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                        disabled={!newBirthDateParts.year}
+                        onChange={(event) => updateNewBirthDate("month", event.target.value)}
+                        required
+                        value={newBirthDateParts.month}
+                      >
+                        <option value="">Mes</option>
+                        {BIRTH_MONTH_OPTIONS.map((month) => (
+                          <option key={month.value} value={month.value}>
+                            {month.label}
+                          </option>
+                        ))}
+                      </select>
 
-                  <select
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                    disabled={!newBirthDateParts.year || !newBirthDateParts.month}
-                    onChange={(event) => updateNewBirthDate("day", event.target.value)}
-                    required
-                    value={newBirthDateParts.day}
-                  >
-                    <option value="">Día</option>
-                    {newBirthDayOptions.map((day) => (
-                      <option key={day} value={day}>
-                        {day}
-                      </option>
-                    ))}
-                  </select>
+                      <select
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                        disabled={!newBirthDateParts.year || !newBirthDateParts.month}
+                        onChange={(event) => updateNewBirthDate("day", event.target.value)}
+                        required
+                        value={newBirthDateParts.day}
+                      >
+                        <option value="">Día</option>
+                        {newBirthDayOptions.map((day) => (
+                          <option key={day} value={day}>
+                            {day}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-500">Rol de acceso</label>
+                    <select
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                      onChange={(event) =>
+                        setNewStaff((prev) => ({ ...prev, roleId: Number(event.target.value) as StaffAccessRoleId }))
+                      }
+                      value={newStaff.roleId}
+                    >
+                      {ACCESS_ROLE_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-500">Tipo de contrato</label>
+                    <select
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                      onChange={(event) => setNewStaff((prev) => ({ ...prev, contractPlan: event.target.value as ContractPlan }))}
+                      value={newStaff.contractPlan}
+                    >
+                      <option value="Plan 1">Plan 1</option>
+                      <option value="Plan 2">Plan 2</option>
+                      <option value="Plan 3">Plan 3</option>
+                      <option value="Plan Monitoria">Plan Monitoria</option>
+                      <option value="Plan Especial">Plan Especial</option>
+                    </select>
+                  </div>
                 </div>
-              </div>
-
-              <div className="space-y-1 md:col-span-2">
-                <label className="text-xs font-bold text-slate-500">Rol de acceso</label>
-                <select
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  onChange={(event) =>
-                    setNewStaff((prev) => ({ ...prev, roleId: Number(event.target.value) as StaffAccessRoleId }))
-                  }
-                  value={newStaff.roleId}
-                >
-                  {ACCESS_ROLE_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="space-y-1 md:col-span-2">
-                <label className="text-xs font-bold text-slate-500">Tipo de contrato</label>
-                <select
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  onChange={(event) => setNewStaff((prev) => ({ ...prev, contractPlan: event.target.value as ContractPlan }))}
-                  value={newStaff.contractPlan}
-                >
-                  <option value="Plan 1">Plan 1</option>
-                  <option value="Plan 2">Plan 2</option>
-                  <option value="Plan 3">Plan 3</option>
-                  <option value="Plan Monitoria">Plan Monitoria</option>
-                  <option value="Plan Especial">Plan Especial</option>
-                </select>
               </div>
 
               <div className="space-y-2 md:col-span-2">
@@ -2428,15 +2591,84 @@ export default function StaffPage() {
                 )}
               </div>
 
-              <label className="md:col-span-2 flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm text-[#2a3439]">
-                <input
-                  checked={newStaff.hasSoundKnowledge}
-                  className="rounded border-slate-300 text-[#3a5f94] focus:ring-[#3a5f94]"
-                  onChange={(event) => setNewStaff((prev) => ({ ...prev, hasSoundKnowledge: event.target.checked }))}
-                  type="checkbox"
-                />
-                Tiene conocimientos de manejo de sonido
-              </label>
+              {roleRequiresCredential(newStaff.roleId) ? (
+                <div className="space-y-1 md:col-span-2">
+                  <label className="text-xs font-bold text-slate-500">Contraseña de acceso</label>
+                  <div className="relative">
+                    <input
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 pr-20 text-sm"
+                      onChange={(event) => setNewStaff((prev) => ({ ...prev, password: event.target.value }))}
+                      placeholder="Mínimo 8 caracteres"
+                      required
+                      type={showNewPassword ? "text" : "password"}
+                      value={newStaff.password}
+                    />
+                    <button
+                      className="absolute top-1/2 right-2 -translate-y-1/2 rounded-md border border-slate-300 bg-white px-2 py-1 text-[10px] font-bold text-[#566166]"
+                      onClick={() => setShowNewPassword((prev) => !prev)}
+                      type="button"
+                    >
+                      {showNewPassword ? "Ocultar" : "Ver"}
+                    </button>
+                  </div>
+                  <label className="text-xs font-bold text-slate-500">Repetir contraseña</label>
+                  <div className="relative">
+                    <input
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 pr-20 text-sm"
+                      onChange={(event) => setNewStaff((prev) => ({ ...prev, passwordConfirm: event.target.value }))}
+                      placeholder="Repite la contraseña"
+                      required
+                      type={showNewPasswordConfirm ? "text" : "password"}
+                      value={newStaff.passwordConfirm}
+                    />
+                    <button
+                      className="absolute top-1/2 right-2 -translate-y-1/2 rounded-md border border-slate-300 bg-white px-2 py-1 text-[10px] font-bold text-[#566166]"
+                      onClick={() => setShowNewPasswordConfirm((prev) => !prev)}
+                      type="button"
+                    >
+                      {showNewPasswordConfirm ? "Ocultar" : "Ver"}
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-[#566166]">Obligatoria para Administrador y Monitor.</p>
+                </div>
+              ) : null}
+
+              <div className="space-y-2 md:col-span-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-500">Habilidades</label>
+                  {isLoadingSkills ? <span className="text-[10px] text-[#566166]">Cargando...</span> : null}
+                </div>
+
+                {skillsCatalog.length === 0 ? (
+                  <p className="rounded-lg border border-dashed border-slate-300 px-3 py-2 text-xs text-[#566166]">
+                    No hay habilidades cargadas en el sistema.
+                  </p>
+                ) : (
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    {skillsCatalog.map((skill) => {
+                      const isSelected = newStaff.habilidadIds.includes(skill.id);
+                      return (
+                        <label className="flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm text-[#2a3439]" key={skill.id}>
+                          <input
+                            checked={isSelected}
+                            className="rounded border-slate-300 text-[#3a5f94] focus:ring-[#3a5f94]"
+                            onChange={(event) =>
+                              setNewStaff((prev) => ({
+                                ...prev,
+                                habilidadIds: event.target.checked
+                                  ? [...prev.habilidadIds, skill.id]
+                                  : prev.habilidadIds.filter((id) => id !== skill.id),
+                              }))
+                            }
+                            type="checkbox"
+                          />
+                          {skill.nombre}
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
 
               </div>
 
@@ -2493,17 +2725,6 @@ export default function StaffPage() {
               </div>
 
               <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-500">Nombres</label>
-                <input
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  onChange={(event) => setEditStaff((prev) => ({ ...prev, firstName: event.target.value }))}
-                  required
-                  type="text"
-                  value={editStaff.firstName}
-                />
-              </div>
-
-              <div className="space-y-1">
                 <label className="text-xs font-bold text-slate-500">Cédula de ciudadanía</label>
                 <input
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
@@ -2511,6 +2732,17 @@ export default function StaffPage() {
                   required
                   type="text"
                   value={editStaff.citizenshipId}
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-500">Nombres</label>
+                <input
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  onChange={(event) => setEditStaff((prev) => ({ ...prev, firstName: event.target.value }))}
+                  required
+                  type="text"
+                  value={editStaff.firstName}
                 />
               </div>
 
@@ -2546,85 +2778,89 @@ export default function StaffPage() {
                 />
               </div>
 
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-500">Fecha de nacimiento</label>
-                <div className="grid grid-cols-3 gap-2">
-                  <select
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                    onChange={(event) => updateEditBirthDate("year", event.target.value)}
-                    required
-                    value={editBirthDateParts.year}
-                  >
-                    <option value="">Año</option>
-                    {birthYearOptions.map((year) => (
-                      <option key={year} value={year}>
-                        {year}
-                      </option>
-                    ))}
-                  </select>
+              <div className="space-y-1 md:col-span-2 lg:col-span-2">
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.45fr_1fr_1fr]">
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-500">Fecha de nacimiento</label>
+                    <div className="grid grid-cols-3 gap-2">
+                      <select
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                        onChange={(event) => updateEditBirthDate("year", event.target.value)}
+                        required
+                        value={editBirthDateParts.year}
+                      >
+                        <option value="">Año</option>
+                        {birthYearOptions.map((year) => (
+                          <option key={year} value={year}>
+                            {year}
+                          </option>
+                        ))}
+                      </select>
 
-                  <select
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                    disabled={!editBirthDateParts.year}
-                    onChange={(event) => updateEditBirthDate("month", event.target.value)}
-                    required
-                    value={editBirthDateParts.month}
-                  >
-                    <option value="">Mes</option>
-                    {BIRTH_MONTH_OPTIONS.map((month) => (
-                      <option key={month.value} value={month.value}>
-                        {month.label}
-                      </option>
-                    ))}
-                  </select>
+                      <select
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                        disabled={!editBirthDateParts.year}
+                        onChange={(event) => updateEditBirthDate("month", event.target.value)}
+                        required
+                        value={editBirthDateParts.month}
+                      >
+                        <option value="">Mes</option>
+                        {BIRTH_MONTH_OPTIONS.map((month) => (
+                          <option key={month.value} value={month.value}>
+                            {month.label}
+                          </option>
+                        ))}
+                      </select>
 
-                  <select
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                    disabled={!editBirthDateParts.year || !editBirthDateParts.month}
-                    onChange={(event) => updateEditBirthDate("day", event.target.value)}
-                    required
-                    value={editBirthDateParts.day}
-                  >
-                    <option value="">Día</option>
-                    {editBirthDayOptions.map((day) => (
-                      <option key={day} value={day}>
-                        {day}
-                      </option>
-                    ))}
-                  </select>
+                      <select
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                        disabled={!editBirthDateParts.year || !editBirthDateParts.month}
+                        onChange={(event) => updateEditBirthDate("day", event.target.value)}
+                        required
+                        value={editBirthDateParts.day}
+                      >
+                        <option value="">Día</option>
+                        {editBirthDayOptions.map((day) => (
+                          <option key={day} value={day}>
+                            {day}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-500">Rol de acceso</label>
+                    <select
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                      onChange={(event) =>
+                        setEditStaff((prev) => ({ ...prev, roleId: Number(event.target.value) as StaffAccessRoleId }))
+                      }
+                      value={editStaff.roleId}
+                    >
+                      {ACCESS_ROLE_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-500">Tipo de contrato</label>
+                    <select
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                      onChange={(event) => setEditStaff((prev) => ({ ...prev, contractPlan: event.target.value as ContractPlan }))}
+                      value={editStaff.contractPlan}
+                    >
+                      <option value="Plan 1">Plan 1</option>
+                      <option value="Plan 2">Plan 2</option>
+                      <option value="Plan 3">Plan 3</option>
+                      <option value="Plan Monitoria">Plan Monitoria</option>
+                      <option value="Plan Especial">Plan Especial</option>
+                    </select>
+                  </div>
                 </div>
-              </div>
-
-              <div className="space-y-1 md:col-span-2">
-                <label className="text-xs font-bold text-slate-500">Rol de acceso</label>
-                <select
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  onChange={(event) =>
-                    setEditStaff((prev) => ({ ...prev, roleId: Number(event.target.value) as StaffAccessRoleId }))
-                  }
-                  value={editStaff.roleId}
-                >
-                  {ACCESS_ROLE_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="space-y-1 md:col-span-2">
-                <label className="text-xs font-bold text-slate-500">Tipo de contrato</label>
-                <select
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  onChange={(event) => setEditStaff((prev) => ({ ...prev, contractPlan: event.target.value as ContractPlan }))}
-                  value={editStaff.contractPlan}
-                >
-                  <option value="Plan 1">Plan 1</option>
-                  <option value="Plan 2">Plan 2</option>
-                  <option value="Plan 3">Plan 3</option>
-                  <option value="Plan Monitoria">Plan Monitoria</option>
-                  <option value="Plan Especial">Plan Especial</option>
-                </select>
               </div>
 
               <div className="space-y-2 md:col-span-2">
@@ -2699,15 +2935,85 @@ export default function StaffPage() {
                 )}
               </div>
 
-              <label className="md:col-span-2 flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm text-[#2a3439]">
-                <input
-                  checked={editStaff.hasSoundKnowledge}
-                  className="rounded border-slate-300 text-[#3a5f94] focus:ring-[#3a5f94]"
-                  onChange={(event) => setEditStaff((prev) => ({ ...prev, hasSoundKnowledge: event.target.checked }))}
-                  type="checkbox"
-                />
-                Tiene conocimientos de manejo de sonido
-              </label>
+              {roleRequiresCredential(editStaff.roleId) ? (
+                <div className="space-y-1 md:col-span-2">
+                  <label className="text-xs font-bold text-slate-500">
+                    Contraseña {selectedStaff?.tieneCredencial ? "(opcional para actualizar)" : "(requerida)"}
+                  </label>
+                  <div className="relative">
+                    <input
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 pr-20 text-sm"
+                      onChange={(event) => setEditStaff((prev) => ({ ...prev, password: event.target.value }))}
+                      placeholder={selectedStaff?.tieneCredencial ? "Déjala vacía para mantener la actual" : "Mínimo 8 caracteres"}
+                      required={!selectedStaff?.tieneCredencial}
+                      type={showEditPassword ? "text" : "password"}
+                      value={editStaff.password}
+                    />
+                    <button
+                      className="absolute top-1/2 right-2 -translate-y-1/2 rounded-md border border-slate-300 bg-white px-2 py-1 text-[10px] font-bold text-[#566166]"
+                      onClick={() => setShowEditPassword((prev) => !prev)}
+                      type="button"
+                    >
+                      {showEditPassword ? "Ocultar" : "Ver"}
+                    </button>
+                  </div>
+                  <label className="text-xs font-bold text-slate-500">Repetir contraseña</label>
+                  <div className="relative">
+                    <input
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 pr-20 text-sm"
+                      onChange={(event) => setEditStaff((prev) => ({ ...prev, passwordConfirm: event.target.value }))}
+                      placeholder="Repite la contraseña"
+                      required={!selectedStaff?.tieneCredencial || editStaff.password.trim().length > 0}
+                      type={showEditPasswordConfirm ? "text" : "password"}
+                      value={editStaff.passwordConfirm}
+                    />
+                    <button
+                      className="absolute top-1/2 right-2 -translate-y-1/2 rounded-md border border-slate-300 bg-white px-2 py-1 text-[10px] font-bold text-[#566166]"
+                      onClick={() => setShowEditPasswordConfirm((prev) => !prev)}
+                      type="button"
+                    >
+                      {showEditPasswordConfirm ? "Ocultar" : "Ver"}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="space-y-2 md:col-span-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-500">Habilidades</label>
+                  {isLoadingSkills ? <span className="text-[10px] text-[#566166]">Cargando...</span> : null}
+                </div>
+
+                {skillsCatalog.length === 0 ? (
+                  <p className="rounded-lg border border-dashed border-slate-300 px-3 py-2 text-xs text-[#566166]">
+                    No hay habilidades cargadas en el sistema.
+                  </p>
+                ) : (
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    {skillsCatalog.map((skill) => {
+                      const isSelected = editStaff.habilidadIds.includes(skill.id);
+                      return (
+                        <label className="flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm text-[#2a3439]" key={skill.id}>
+                          <input
+                            checked={isSelected}
+                            className="rounded border-slate-300 text-[#3a5f94] focus:ring-[#3a5f94]"
+                            onChange={(event) =>
+                              setEditStaff((prev) => ({
+                                ...prev,
+                                habilidadIds: event.target.checked
+                                  ? [...prev.habilidadIds, skill.id]
+                                  : prev.habilidadIds.filter((id) => id !== skill.id),
+                              }))
+                            }
+                            type="checkbox"
+                          />
+                          {skill.nombre}
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
 
               </div>
 
@@ -3064,6 +3370,23 @@ export default function StaffPage() {
                   <label className="text-[10px] font-bold text-slate-400 uppercase">Carrera</label>
                   <p className="text-sm font-semibold text-[#2a3439]">{selectedStaff?.carrera ?? "-"}</p>
                 </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase">Habilidades</label>
+                  {selectedStaffSkills.length ? (
+                    <div className="flex flex-wrap gap-1.5">
+                      {selectedStaffSkills.map((skill) => (
+                        <span
+                          key={`profile-skill-${skill.id}`}
+                          className="rounded-full border border-[#3a5f94]/20 bg-[#3a5f94]/10 px-2 py-0.5 text-[10px] font-semibold text-[#2f4f7d]"
+                        >
+                          {skill.nombre}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-[#566166]">Sin habilidades asignadas.</p>
+                  )}
+                </div>
               </div>
             </section>
 
@@ -3178,6 +3501,23 @@ export default function StaffPage() {
                         <p className="text-sm text-[#2a3439]"><span className="font-semibold">Acceso:</span> {accessRoleLabelById[(selectedStaff.roleId as StaffAccessRoleId) ?? 3]}</p>
                         <p className="text-sm text-[#2a3439]"><span className="font-semibold">Contrato:</span> {selectedStaff.tipoContrato}</p>
                         <p className="text-sm text-[#2a3439]"><span className="font-semibold">Carrera:</span> {selectedStaff.carrera}</p>
+                        <div className="space-y-1 pt-1">
+                          <p className="text-sm text-[#2a3439]"><span className="font-semibold">Habilidades:</span></p>
+                          {selectedStaffSkills.length ? (
+                            <div className="flex flex-wrap gap-1.5">
+                              {selectedStaffSkills.map((skill) => (
+                                <span
+                                  key={`mobile-profile-skill-${skill.id}`}
+                                  className="rounded-full border border-[#3a5f94]/20 bg-[#3a5f94]/10 px-2 py-0.5 text-[10px] font-semibold text-[#2f4f7d]"
+                                >
+                                  {skill.nombre}
+                                </span>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-xs text-[#566166]">Sin habilidades asignadas.</p>
+                          )}
+                        </div>
                       </div>
                     </>
                   ) : null}
