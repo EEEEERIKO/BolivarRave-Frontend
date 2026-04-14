@@ -152,6 +152,10 @@ const normalizeLoadedEvents = (events: ScheduleEvent[], normalizeColor: (color: 
   events.map((event) => ({
     ...event,
     room: canonicalizeRoomName(event.room),
+    overrides: (event.overrides ?? []).map((override) => ({
+      ...override,
+      room: canonicalizeRoomName(override.room),
+    })),
     color: normalizeColor(event.color),
   }));
 
@@ -673,6 +677,17 @@ export default function SchedulesPage() {
   const [gridViewportWidth, setGridViewportWidth] = useState(0);
   const [pendingScopedUpdate, setPendingScopedUpdate] = useState<PendingScopedUpdate | null>(null);
   const [isApplyingScopedUpdate, setIsApplyingScopedUpdate] = useState(false);
+  const pendingScopedUpdateRef = useRef<PendingScopedUpdate | null>(null);
+  const isApplyingScopedUpdateRef = useRef(false);
+  const isSchedulesWsEnabled = (process.env.NEXT_PUBLIC_ENABLE_SCHEDULES_WS ?? "").trim().toLowerCase() === "true";
+
+  useEffect(() => {
+    pendingScopedUpdateRef.current = pendingScopedUpdate;
+  }, [pendingScopedUpdate]);
+
+  useEffect(() => {
+    isApplyingScopedUpdateRef.current = isApplyingScopedUpdate;
+  }, [isApplyingScopedUpdate]);
 
   const normalizeColor = (value: string): ScheduleEvent["color"] => {
     if (value === "blue" || value === "emerald" || value === "amber" || value === "violet" || value === "red") {
@@ -808,7 +823,12 @@ export default function SchedulesPage() {
 
   // WebSocket sync para actualización en tiempo real
   useWebSocketSchedules({
+    enabled: isSchedulesWsEnabled,
     onScheduleRefresh: () => {
+      if (pendingScopedUpdateRef.current || isApplyingScopedUpdateRef.current) {
+        return;
+      }
+
       console.log("📡 Refrescando horarios desde WebSocket");
       syncSchedulesFromApi().catch((error) => {
         console.error("Error refrescando horarios:", error);
@@ -909,7 +929,7 @@ export default function SchedulesPage() {
         .map((event) => {
           const override = event.overrides?.find((item) => matchesVisibleDate(item.date));
           const effectiveDay = override?.day ?? event.day;
-          const effectiveRoom = override?.room ?? event.room;
+          const effectiveRoom = resolveRoomFromCatalog(override?.room ?? event.room, roomCatalog);
           const effectiveStart = override?.start ?? event.start;
           const effectiveEnd = override?.end ?? event.end;
 
@@ -966,6 +986,19 @@ export default function SchedulesPage() {
         return {
           ...event,
           overrides: nextOverrides,
+        };
+      })
+    );
+  };
+
+  const clearLocalScopedOverride = (id: string, targetDate: string) => {
+    setEvents((current) =>
+      current.map((event) => {
+        if (event.id !== id) return event;
+
+        return {
+          ...event,
+          overrides: (event.overrides ?? []).filter((item) => item.date !== targetDate),
         };
       })
     );
@@ -1033,7 +1066,12 @@ export default function SchedulesPage() {
       return;
     }
 
-    setPendingScopedUpdate(nextUpdate);
+    // Only show the modal when explicitly dragging (moving) the event, not on resize
+    if (source === "drag") {
+      // Apply temporary week override so only the selected date changes while modal is open.
+      applyLocalScopedUpdate(nextUpdate.id, nextUpdate.updatedEvent, nextUpdate.targetDate, "week");
+      setPendingScopedUpdate(nextUpdate);
+    }
   };
 
   const confirmScopedUpdate = async (updateScope: UpdateScope) => {
@@ -1064,7 +1102,12 @@ export default function SchedulesPage() {
         }),
       });
 
-      applyLocalScopedUpdate(id, updatedEvent, targetDate, updateScope);
+      // For week-scoped updates, refresh from API to ensure UI mirrors persisted overrides.
+      if (updateScope === "week") {
+        await syncSchedulesFromApi();
+      } else {
+        applyLocalScopedUpdate(id, updatedEvent, targetDate, updateScope);
+      }
       setRemoteLoadError(null);
       setPendingScopedUpdate(null);
     } catch (error) {
@@ -1188,9 +1231,18 @@ export default function SchedulesPage() {
 
   const handleDragStop = (id: string, span: number): RndDragCallback => {
     return (event, data) => {
+      // Prevent double-click or accidental/minimal drags
       if ("detail" in event && typeof event.detail === "number" && event.detail > 1) {
         return;
       }
+      
+      // Require minimum movement (at least 8 pixels) to count as a drag
+      // This prevents accidental drags from clicks or double-clicks
+      const minMovement = 8;
+      if (Math.abs(data.x) < minMovement && Math.abs(data.y) < minMovement) {
+        return;
+      }
+      
       updateEventPosition(id, data.x, data.y, span);
     };
   };
@@ -2730,7 +2782,13 @@ export default function SchedulesPage() {
             <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:justify-end">
               <button
                 type="button"
-                onClick={() => setPendingScopedUpdate(null)}
+                onClick={() => {
+                  // Revert only the temporary week override when user cancels.
+                  if (pendingScopedUpdate) {
+                    clearLocalScopedOverride(pendingScopedUpdate.id, pendingScopedUpdate.targetDate);
+                  }
+                  setPendingScopedUpdate(null);
+                }}
                 disabled={isApplyingScopedUpdate}
                 className="rounded-lg border border-slate-200 px-4 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
               >
@@ -2738,7 +2796,9 @@ export default function SchedulesPage() {
               </button>
               <button
                 type="button"
-                onClick={() => void confirmScopedUpdate("week")}
+                onClick={() => {
+                  void confirmScopedUpdate("week");
+                }}
                 disabled={isApplyingScopedUpdate}
                 className="rounded-lg border border-[#295786]/30 bg-[#295786]/10 px-4 py-2 text-sm font-semibold text-[#295786] disabled:cursor-not-allowed disabled:opacity-60"
               >
@@ -2746,7 +2806,9 @@ export default function SchedulesPage() {
               </button>
               <button
                 type="button"
-                onClick={() => void confirmScopedUpdate("always")}
+                onClick={() => {
+                  void confirmScopedUpdate("always");
+                }}
                 disabled={isApplyingScopedUpdate}
                 className="rounded-lg bg-[#295786] px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
               >

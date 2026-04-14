@@ -290,6 +290,10 @@ function isAdultBirthDate(isoDate: string): boolean {
   return birthDate <= adultLimit;
 }
 
+function getStaffPhotoUrl(cedula: string): string {
+  return `https://svga.unac.edu.co/svga/files/pics/${encodeURIComponent(cedula)}.jpg`;
+}
+
 function getFirstAvailableStaffNumber(staffList: StaffApi[]): number {
   const usedNumbers = new Set(
     staffList
@@ -1093,8 +1097,33 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
 
                   return (
                     <div className="flex h-[62px] items-center gap-2.5 bg-white px-3 sm:h-[70px] sm:gap-3 sm:px-4 md:h-[74px]" key={staff.id}>
-                      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#e8eff3] text-[11px] font-black text-[#375c91] sm:h-10 sm:w-10 sm:text-xs">
-                        N.{staff.numeroStaff}
+                      <div className="relative flex h-8 w-8 items-center justify-center overflow-hidden rounded-lg bg-[#e8eff3] text-[11px] font-black text-[#375c91] sm:h-10 sm:w-10 sm:text-xs">
+                        <img
+                          src={getStaffPhotoUrl(staff.cedula)}
+                          alt={`${staff.nombres} ${staff.apellidos}`}
+                          className="absolute inset-0 h-full w-full object-cover"
+                          onError={(event) => {
+                            const image = event.currentTarget;
+                            image.style.display = "none";
+                            const fallback = image.parentElement?.querySelector<HTMLElement>("[data-staff-photo-fallback='true']");
+                            if (fallback) {
+                              fallback.style.display = "flex";
+                            }
+                          }}
+                          onLoad={(event) => {
+                            const image = event.currentTarget;
+                            const fallback = image.parentElement?.querySelector<HTMLElement>("[data-staff-photo-fallback='true']");
+                            if (fallback) {
+                              fallback.style.display = "none";
+                            }
+                          }}
+                        />
+                        <div
+                          data-staff-photo-fallback="true"
+                          className="absolute inset-0 hidden items-center justify-center bg-[#e8eff3] text-[11px] font-black text-[#375c91] sm:text-xs"
+                        >
+                          N.{staff.numeroStaff}
+                        </div>
                       </div>
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-xs font-bold text-[#2a3439] sm:text-sm">
@@ -1437,6 +1466,7 @@ export default function StaffPage() {
   const [isLoadingLiveSchedules, setIsLoadingLiveSchedules] = useState(false);
   const [liveJornadaByStaffId, setLiveJornadaByStaffId] = useState<Record<string, StaffJornadaItem[]>>({});
   const [livePausaByStaffId, setLivePausaByStaffId] = useState<Record<string, StaffPausaItem[]>>({});
+  const [cachedLiveStatusByStaffId, setCachedLiveStatusByStaffId] = useState<Record<string, StaffLiveStatus>>({});
   const [selectedStaffJornada, setSelectedStaffJornada] = useState<StaffJornadaItem[]>([]);
   const [selectedStaffPausas, setSelectedStaffPausas] = useState<StaffPausaItem[]>([]);
   const [isLoadingDailySchedule, setIsLoadingDailySchedule] = useState(false);
@@ -1494,6 +1524,13 @@ export default function StaffPage() {
   const selectedStaffSkills = selectedStaff?.habilidades ?? [];
 
   useEffect(() => {
+    const cachedLiveStatus = getCachedData<Record<string, StaffLiveStatus>>("live_status_by_staff_id");
+    if (cachedLiveStatus) {
+      setCachedLiveStatusByStaffId(cachedLiveStatus);
+    }
+  }, []);
+
+  useEffect(() => {
     let isCancelled = false;
 
     const loadLiveSchedules = async () => {
@@ -1522,41 +1559,39 @@ export default function StaffPage() {
       try {
         setIsLoadingLiveSchedules(true);
 
-        const results = await Promise.all(
-          staffList.map(async (staff) => {
-            const jornadaResponse = await fetchApiJson<StaffJornadaResponse>(`/api/staff/${staff.id}/jornada-semanal`, {
-              cache: "no-store",
-            }).catch(() => ({ jornadas: [] }));
-
-            const pausaResponse = await fetchApiJson<StaffPausaResponse>(`/api/staff/${staff.id}/pausas-programadas`, {
-              cache: "no-store",
-            }).catch(() => ({ pausas: [] }));
-
-            const jornadas = Array.isArray(jornadaResponse.jornadas)
-              ? jornadaResponse.jornadas.map((item) => ({
-                  ...item,
-                  diaSemana: toUiWorkWeekDay(item.diaSemana),
-                }))
-              : [];
-
-            const pausas = Array.isArray(pausaResponse.pausas)
-              ? pausaResponse.pausas.map((item) => ({
-                  ...item,
-                  diaSemana: toUiWorkWeekDay(item.diaSemana),
-                }))
-              : [];
-
-            return { staffId: staff.id, jornadas, pausas };
-          }),
-        );
+        // Fetch all staff schedules in 2 requests (bulk) instead of 2N requests.
+        const [jornadasResponse, pausasResponse] = await Promise.all([
+          fetchApiJson<StaffJornadasBulkResponse>("/api/staff/jornadas-bulk", {
+            cache: "no-store",
+          }).catch(() => ({
+            jornadas: {} as Record<string, Array<{ id: string; staffId: string; diaSemana: string; horaEntrada: string; horaSalida: string; totalHorasDia: number }>>,
+          })),
+          fetchApiJson<StaffPausasBulkResponse>("/api/staff/pausas-bulk", {
+            cache: "no-store",
+          }).catch(() => ({
+            pausas: {} as Record<string, Array<{ id: string; staffId: string; diaSemana: string; tipoPausa: "Comida" | "Descanso"; horaInicio: string; horaFin: string }>>,
+          })),
+        ]);
 
         if (isCancelled) return;
 
         const nextJornadas: Record<string, StaffJornadaItem[]> = {};
         const nextPausas: Record<string, StaffPausaItem[]> = {};
-        for (const result of results) {
-          nextJornadas[result.staffId] = result.jornadas;
-          nextPausas[result.staffId] = result.pausas;
+
+        for (const staff of staffList) {
+          const jornadaItems = jornadasResponse.jornadas[staff.id] ?? [];
+          const pausaItems = pausasResponse.pausas[staff.id] ?? [];
+
+          nextJornadas[staff.id] = jornadaItems.map((item) => ({
+            ...item,
+            diaSemana: toUiWorkWeekDay(item.diaSemana),
+          }));
+
+          nextPausas[staff.id] = pausaItems.map((item) => ({
+            ...item,
+            diaSemana: toUiWorkWeekDay(item.diaSemana),
+            tipoPausa: item.tipoPausa as StaffPausaItem["tipoPausa"],
+          }));
         }
 
         setLiveJornadaByStaffId(nextJornadas);
@@ -1795,13 +1830,33 @@ export default function StaffPage() {
     const statusMap: Record<string, StaffLiveStatus> = {};
 
     for (const staff of staffList) {
-      const jornadas = liveJornadaByStaffId[staff.id] ?? [];
-      const pausas = livePausaByStaffId[staff.id] ?? [];
-      statusMap[staff.id] = getLiveStatusFromSchedules(jornadas, pausas);
+      const hasLiveJornada = Object.prototype.hasOwnProperty.call(liveJornadaByStaffId, staff.id);
+      const hasLivePausa = Object.prototype.hasOwnProperty.call(livePausaByStaffId, staff.id);
+
+      if (hasLiveJornada && hasLivePausa) {
+        const jornadas = liveJornadaByStaffId[staff.id] ?? [];
+        const pausas = livePausaByStaffId[staff.id] ?? [];
+        statusMap[staff.id] = getLiveStatusFromSchedules(jornadas, pausas);
+        continue;
+      }
+
+      const cachedStatus = cachedLiveStatusByStaffId[staff.id];
+      if (cachedStatus) {
+        statusMap[staff.id] = cachedStatus;
+        continue;
+      }
+
+      // Fallback while live schedule data is loading.
+      statusMap[staff.id] = staff.estado === "Active" ? "Activo" : "Inactivo";
     }
 
     return statusMap;
-  }, [staffList, liveJornadaByStaffId, livePausaByStaffId]);
+  }, [staffList, liveJornadaByStaffId, livePausaByStaffId, cachedLiveStatusByStaffId]);
+
+  useEffect(() => {
+    if (Object.keys(liveStatusByStaffId).length === 0) return;
+    setCachedData("live_status_by_staff_id", liveStatusByStaffId, { ttl: 10 * 60 * 1000 });
+  }, [liveStatusByStaffId]);
 
   const staffByLiveStatus = useMemo(() => {
     const active: StaffApi[] = [];
@@ -3178,8 +3233,33 @@ export default function StaffPage() {
                             }}
                             type="button"
                           >
-                            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#e8eff3] text-xs font-black text-[#375c91] sm:h-14 sm:w-14 sm:text-sm">
-                              N.{staff.numeroStaff}
+                            <div className="relative flex h-11 w-11 items-center justify-center overflow-hidden rounded-xl bg-[#e8eff3] text-xs font-black text-[#375c91] sm:h-14 sm:w-14 sm:text-sm">
+                              <img
+                                src={getStaffPhotoUrl(staff.cedula)}
+                                alt={`${staff.nombres} ${staff.apellidos}`}
+                                className="absolute inset-0 h-full w-full object-cover"
+                                onError={(event) => {
+                                  const image = event.currentTarget;
+                                  image.style.display = "none";
+                                  const fallback = image.parentElement?.querySelector<HTMLElement>("[data-staff-photo-fallback='true']");
+                                  if (fallback) {
+                                    fallback.style.display = "flex";
+                                  }
+                                }}
+                                onLoad={(event) => {
+                                  const image = event.currentTarget;
+                                  const fallback = image.parentElement?.querySelector<HTMLElement>("[data-staff-photo-fallback='true']");
+                                  if (fallback) {
+                                    fallback.style.display = "none";
+                                  }
+                                }}
+                              />
+                              <div
+                                data-staff-photo-fallback="true"
+                                className="absolute inset-0 hidden items-center justify-center bg-[#e8eff3] text-xs font-black text-[#375c91] sm:text-sm"
+                              >
+                                N.{staff.numeroStaff}
+                              </div>
                             </div>
                             <div className="flex-1">
                               <h3 className="leading-tight font-bold text-[#2a3439]">{staff.nombres}</h3>
@@ -3385,8 +3465,33 @@ export default function StaffPage() {
         <div className="hidden h-auto w-full flex-col overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-2xl xl:flex xl:h-full xl:w-[320px]">
           <div className="flex flex-col items-center gap-2.5 border-b border-slate-200 bg-[#f0f4f7] p-4 sm:p-5 lg:p-6">
             <div className="relative">
-              <div className="flex h-20 w-20 items-center justify-center rounded-full border-4 border-white bg-[#d5e3ff] text-xl font-black text-[#153f73] shadow-lg sm:h-24 sm:w-24 sm:text-2xl">
-                N.{selectedStaff?.numeroStaff ?? 1}
+              <div className="relative flex h-20 w-20 items-center justify-center overflow-hidden rounded-full border-4 border-white bg-[#d5e3ff] text-xl font-black text-[#153f73] shadow-lg sm:h-24 sm:w-24 sm:text-2xl">
+                <img
+                  src={getStaffPhotoUrl(selectedStaff.cedula)}
+                  alt={`${selectedStaff.nombres} ${selectedStaff.apellidos}`}
+                  className="absolute inset-0 h-full w-full object-cover"
+                  onError={(event) => {
+                    const image = event.currentTarget;
+                    image.style.display = "none";
+                    const fallback = image.parentElement?.querySelector<HTMLElement>("[data-staff-photo-fallback='true']");
+                    if (fallback) {
+                      fallback.style.display = "flex";
+                    }
+                  }}
+                  onLoad={(event) => {
+                    const image = event.currentTarget;
+                    const fallback = image.parentElement?.querySelector<HTMLElement>("[data-staff-photo-fallback='true']");
+                    if (fallback) {
+                      fallback.style.display = "none";
+                    }
+                  }}
+                />
+                <div
+                  data-staff-photo-fallback="true"
+                  className="absolute inset-0 hidden items-center justify-center bg-[#d5e3ff] text-xl font-black text-[#153f73] sm:text-2xl"
+                >
+                  N.{selectedStaff?.numeroStaff ?? 1}
+                </div>
               </div>
               <span className="absolute right-0 bottom-0 h-6 w-6 rounded-full border-4 border-white bg-green-500" />
             </div>
@@ -3541,8 +3646,33 @@ export default function StaffPage() {
               <div className="min-h-0 flex-1 overflow-y-auto pr-1">
               <div className="rounded-2xl border border-slate-100 bg-white shadow-sm">
                 <div className="flex flex-col items-center gap-2.5 border-b border-slate-200 bg-[#f0f4f7] p-4">
-                  <div className="flex h-20 w-20 items-center justify-center rounded-full border-4 border-white bg-[#d5e3ff] text-xl font-black text-[#153f73] shadow-lg">
-                    N.{selectedStaff.numeroStaff}
+                  <div className="relative flex h-20 w-20 items-center justify-center overflow-hidden rounded-full border-4 border-white bg-[#d5e3ff] text-xl font-black text-[#153f73] shadow-lg">
+                    <img
+                      src={getStaffPhotoUrl(selectedStaff.cedula)}
+                      alt={`${selectedStaff.nombres} ${selectedStaff.apellidos}`}
+                      className="absolute inset-0 h-full w-full object-cover"
+                      onError={(event) => {
+                        const image = event.currentTarget;
+                        image.style.display = "none";
+                        const fallback = image.parentElement?.querySelector<HTMLElement>("[data-staff-photo-fallback='true']");
+                        if (fallback) {
+                          fallback.style.display = "flex";
+                        }
+                      }}
+                      onLoad={(event) => {
+                        const image = event.currentTarget;
+                        const fallback = image.parentElement?.querySelector<HTMLElement>("[data-staff-photo-fallback='true']");
+                        if (fallback) {
+                          fallback.style.display = "none";
+                        }
+                      }}
+                    />
+                    <div
+                      data-staff-photo-fallback="true"
+                      className="absolute inset-0 hidden items-center justify-center bg-[#d5e3ff] text-xl font-black text-[#153f73]"
+                    >
+                      N.{selectedStaff.numeroStaff}
+                    </div>
                   </div>
                   <div className="text-center">
                     <h2 className="text-xl font-black text-[#2a3439]">{selectedStaff.nombres}</h2>
