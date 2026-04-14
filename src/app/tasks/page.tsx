@@ -17,6 +17,7 @@ type TaskCatalogItem = {
   modoAsignacion: AssignmentMode;
   cantidadPersonal: number;
   habilidadesRequeridasIds: string[];
+  staffAsignadosIds: string[];
   diasSemana: number[];
   horaProgramada: string | null;
   fechaEsporadica: string | null;
@@ -76,8 +77,20 @@ type RoomItem = {
   piso: number | null;
 };
 
+type TaskSpaceItem = {
+  id: string;
+  nombre: string;
+  piso: number | null;
+  tipo: "predefinido" | "personalizado";
+  editable: boolean;
+};
+
 type RoomsInfoResponse = {
   roomsByFloor?: RoomItem[][];
+};
+
+type TaskSpacesResponse = {
+  spaces?: TaskSpaceItem[];
 };
 
 type StaffResponse = {
@@ -113,6 +126,7 @@ type CatalogFormState = {
   programacionRecurrente: RecurrentScheduleMode | "";
   cantidadPersonal: string;
   habilidadesRequeridasIds: string[];
+  staffAsignadosIds: string[];
   diasSemana: number[];
   horaProgramada: string;
   fechaEsporadica: string;
@@ -230,9 +244,11 @@ export default function TasksPage() {
   const [staffSkills, setStaffSkills] = useState<StaffSkillLink[]>([]);
   const [staff, setStaff] = useState<StaffItem[]>([]);
   const [rooms, setRooms] = useState<RoomItem[]>([]);
+  const [taskSpaces, setTaskSpaces] = useState<TaskSpaceItem[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [notice, setNotice] = useState<NoticeState>(null);
+  const [spaceName, setSpaceName] = useState("");
 
   const [skillName, setSkillName] = useState("");
   const [editingSkillId, setEditingSkillId] = useState<string | null>(null);
@@ -248,6 +264,7 @@ export default function TasksPage() {
     programacionRecurrente: "",
     cantidadPersonal: "1",
     habilidadesRequeridasIds: [],
+    staffAsignadosIds: [],
     diasSemana: [1, 2, 3, 4, 5],
     horaProgramada: "08:00",
     fechaEsporadica: new Date().toISOString().slice(0, 10),
@@ -318,13 +335,14 @@ export default function TasksPage() {
     }
 
     try {
-      const [catalogBody, instancesBody, skillsBody, staffSkillsBody, staffBody, roomsBody] = await Promise.all([
+      const [catalogBody, instancesBody, skillsBody, staffSkillsBody, staffBody, roomsBody, spacesBody] = await Promise.all([
         fetchApiJson<TasksResponse>("/api/tasks/catalog", { cache: "no-store" }),
         fetchApiJson<InstancesResponse>("/api/tasks/instances", { cache: "no-store" }),
         fetchApiJson<SkillsResponse>("/api/tasks/skills", { cache: "no-store" }),
         fetchApiJson<StaffSkillsResponse>("/api/tasks/staff-habilidades", { cache: "no-store" }),
         fetchApiJson<StaffResponse>("/api/staff", { cache: "no-store" }),
         fetchApiJson<RoomsInfoResponse>("/api/schedules/rooms-info", { cache: "no-store" }).catch(() => ({} as RoomsInfoResponse)),
+        fetchApiJson<TaskSpacesResponse>("/api/tasks/spaces", { cache: "no-store" }).catch(() => ({} as TaskSpacesResponse)),
       ]);
 
       setCatalog(catalogBody.tasks ?? []);
@@ -341,11 +359,13 @@ export default function TasksPage() {
         ).values(),
       );
       setRooms(uniqueRooms);
+      setTaskSpaces(spacesBody.spaces ?? []);
 
       setCatalogForm((current) => ({
         ...current,
         sector: current.sector,
         habilidadesRequeridasIds: current.habilidadesRequeridasIds.filter((id) => (skillsBody.skills ?? []).some((skill) => skill.id === id)),
+        staffAsignadosIds: current.staffAsignadosIds.filter((id) => (staffBody.staff ?? []).some((person) => person.id === id)),
       }));
       setInstanceForm((current) => ({
         ...current,
@@ -550,6 +570,12 @@ export default function TasksPage() {
       return;
     }
 
+    if (catalogForm.modoAsignacion === "manual" && catalogForm.staffAsignadosIds.length === 0) {
+      alert("Debes seleccionar al menos un trabajador para asignación manual.");
+      setNotice({ kind: "error", text: "Selecciona al menos un trabajador para asignación manual." });
+      return;
+    }
+
     try {
       const isEditing = Boolean(editingCatalogId);
       setBusyAction(isEditing ? "catalog-update" : "catalog-create");
@@ -558,6 +584,10 @@ export default function TasksPage() {
         const selectedSkills = catalogForm.habilidadesRequeridasIds
           .map((id) => skills.find((skill) => skill.id === id)?.nombre)
           .filter((value): value is string => Boolean(value));
+        const selectedStaff = catalogForm.staffAsignadosIds
+          .map((id) => staff.find((person) => person.id === id))
+          .filter((value): value is StaffItem => Boolean(value))
+          .map((person) => staffLabel(person));
 
         const resumen = [
           `Nombre: ${nombre}`,
@@ -565,6 +595,7 @@ export default function TasksPage() {
           `Sector: ${catalogForm.sector}`,
           `Modo de asignación: ${assignmentModeLabels[catalogForm.modoAsignacion as AssignmentMode]}`,
           `Cantidad de personal: ${cantidadPersonal}`,
+          `Personal sugerido: ${selectedStaff.length ? selectedStaff.join(", ") : "Sin personal predefinido"}`,
           `Tiempo estimado: ${tiempoEstimadoMin} min`,
           `Habilidades: ${selectedSkills.length ? selectedSkills.join(", ") : "Sin requerimientos"}`,
           catalogForm.tipo === "Recurrente"
@@ -587,6 +618,7 @@ export default function TasksPage() {
         programacionRecurrente: catalogForm.programacionRecurrente,
         cantidadPersonal,
         habilidadesRequeridasIds: catalogForm.habilidadesRequeridasIds,
+        staffAsignadosIds: catalogForm.staffAsignadosIds,
         diasSemana:
           catalogForm.tipo === "Recurrente" && catalogForm.programacionRecurrente === "programada"
             ? catalogForm.diasSemana
@@ -621,6 +653,7 @@ export default function TasksPage() {
         programacionRecurrente: "",
         cantidadPersonal: "1",
         habilidadesRequeridasIds: [],
+        staffAsignadosIds: [],
         diasSemana: [1, 2, 3, 4, 5],
         horaProgramada: "08:00",
         fechaEsporadica: new Date().toISOString().slice(0, 10),
@@ -651,6 +684,7 @@ export default function TasksPage() {
       programacionRecurrente: task.tipo === "Recurrente" && task.horaProgramada && task.diasSemana.length > 0 ? "programada" : "diaria_libre",
       cantidadPersonal: String(task.cantidadPersonal),
       habilidadesRequeridasIds: task.habilidadesRequeridasIds,
+      staffAsignadosIds: task.staffAsignadosIds,
       diasSemana: task.diasSemana,
       horaProgramada: task.horaProgramada ?? "08:00",
       fechaEsporadica: task.fechaEsporadica ?? new Date().toISOString().slice(0, 10),
@@ -675,6 +709,7 @@ export default function TasksPage() {
       programacionRecurrente: "",
       cantidadPersonal: "1",
       habilidadesRequeridasIds: [],
+      staffAsignadosIds: [],
       diasSemana: [1, 2, 3, 4, 5],
       horaProgramada: "08:00",
       fechaEsporadica: new Date().toISOString().slice(0, 10),
@@ -801,6 +836,33 @@ export default function TasksPage() {
       await refresh();
     } catch (error) {
       setNotice({ kind: "error", text: error instanceof Error ? error.message : "No se pudo asignar la tarea." });
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const submitTaskSpace = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    const nombre = spaceName.trim();
+    if (!nombre) {
+      setNotice({ kind: "error", text: "Escribe un nombre para el nuevo espacio." });
+      return;
+    }
+
+    try {
+      setBusyAction("space-create");
+      await fetchApiJson<{ message: string; id: string }>("/api/tasks/spaces", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nombre }),
+      });
+
+      setSpaceName("");
+      setNotice({ kind: "success", text: "Espacio creado correctamente." });
+      await refresh();
+    } catch (error) {
+      setNotice({ kind: "error", text: error instanceof Error ? error.message : "No se pudo crear el espacio." });
     } finally {
       setBusyAction(null);
     }
@@ -1045,6 +1107,56 @@ export default function TasksPage() {
               </form>
             </section>
 
+            <section className="rounded-xl border border-[#d3e4fe] bg-white p-4 shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
+              <div className="flex items-start gap-2">
+                <span className="material-symbols-outlined rounded-2xl bg-[#d5e3ff]/50 p-1.5 text-[#3a5f94] text-xl">meeting_room</span>
+                <div>
+                  <p className="text-[10px] font-bold tracking-[0.26em] text-slate-500 uppercase">Espacios</p>
+                  <h2 className="mt-1 text-lg font-black text-slate-900">Lugares de tareas</h2>
+                </div>
+              </div>
+
+              <form onSubmit={submitTaskSpace} className="mt-4 space-y-2">
+                <label className="block space-y-1">
+                  <span className="text-xs font-bold text-slate-500">Nuevo espacio personalizado</span>
+                  <input
+                    value={spaceName}
+                    onChange={(event) => setSpaceName(event.target.value)}
+                    className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
+                    placeholder="Ej: Zona de audio temporal"
+                  />
+                </label>
+                <button
+                  type="submit"
+                  disabled={busyAction === "space-create"}
+                  className="w-full rounded-md bg-[#3a5f94] px-3 py-1.5 text-[10px] font-bold text-white uppercase transition-transform hover:brightness-110 disabled:opacity-60"
+                >
+                  {busyAction === "space-create" ? "Creando..." : "Crear espacio"}
+                </button>
+              </form>
+
+              <div className="mt-4 max-h-48 space-y-2 overflow-y-auto pr-1">
+                {taskSpaces.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+                    Aun no hay espacios registrados.
+                  </div>
+                ) : (
+                  taskSpaces.map((space) => (
+                    <div key={space.id} className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                      <p className="text-sm font-bold text-slate-900">{space.nombre}</p>
+                      <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${space.tipo === "predefinido" ? "bg-slate-200 text-slate-700" : "bg-emerald-100 text-emerald-700"}`}>
+                        {space.tipo === "predefinido" ? "Predefinido" : "Personalizado"}
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <p className="mt-3 text-[11px] text-slate-500">
+                Los espacios predefinidos son de solo lectura y no se pueden editar ni eliminar desde Tasks.
+              </p>
+            </section>
+
           </div>
 
             <form onSubmit={submitCatalog} className="rounded-xl border border-[#d5e3ff] bg-white p-4 shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
@@ -1100,14 +1212,11 @@ export default function TasksPage() {
                   className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                 >
                   <option value="">Aún no seleccionado</option>
-                  {rooms.map((room) => {
-                    const label = roomLabel(room);
-                    return (
-                      <option key={room.id} value={label}>
-                        {label}
-                      </option>
-                    );
-                  })}
+                  {taskSpaces.map((space) => (
+                    <option key={space.id} value={space.nombre}>
+                      {space.nombre}
+                    </option>
+                  ))}
                 </select>
               </label>
 
@@ -1183,6 +1292,41 @@ export default function TasksPage() {
                   })}
                 </div>
               </div>
+
+              {catalogForm.modoAsignacion === "manual" ? (
+                <div className="space-y-2 rounded-md border border-[#d9e4ea] bg-[#f3f7fa] px-3 py-2 sm:col-span-2">
+                  <span className="text-xs font-bold text-slate-500">Personal sugerido para asignación</span>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {staff
+                      .filter((person) => staffMatchesAllSkills(person.id, catalogForm.habilidadesRequeridasIds, staffSkills))
+                      .map((person) => {
+                        const checked = catalogForm.staffAsignadosIds.includes(person.id);
+                        return (
+                          <label key={person.id} className="flex items-center gap-2 rounded-md bg-white px-2 py-1 text-xs font-semibold text-slate-700">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(event) => {
+                                const enabled = event.target.checked;
+                                setCatalogForm((current) => ({
+                                  ...current,
+                                  staffAsignadosIds: enabled
+                                    ? [...current.staffAsignadosIds, person.id]
+                                    : current.staffAsignadosIds.filter((id) => id !== person.id),
+                                }));
+                              }}
+                              className="h-4 w-4 rounded border-slate-300 text-slate-900"
+                            />
+                            {staffLabel(person)}
+                          </label>
+                        );
+                      })}
+                  </div>
+                  {staff.filter((person) => staffMatchesAllSkills(person.id, catalogForm.habilidadesRequeridasIds, staffSkills)).length === 0 ? (
+                    <p className="text-[11px] text-amber-700">Sin personal compatible con las habilidades requeridas.</p>
+                  ) : null}
+                </div>
+              ) : null}
 
               {catalogForm.tipo === "Recurrente" ? (
                 <>
@@ -1683,6 +1827,11 @@ export default function TasksPage() {
                         <td className="px-5 py-4 text-sm text-slate-600">{task.tiempoEstimadoMin} min</td>
                         <td className="px-5 py-4 text-sm text-slate-600">
                           {assignmentModeLabels[task.modoAsignacion]} · {task.cantidadPersonal} persona(s)
+                          <p className="mt-1 text-xs text-slate-500">
+                            Personal: {(task.staffAsignadosIds ?? []).length > 0
+                              ? (task.staffAsignadosIds ?? []).map((staffId) => staff.find((person) => person.id === staffId)).filter((value): value is StaffItem => Boolean(value)).map((person) => staffLabel(person)).join(", ")
+                              : "Sin lista predefinida"}
+                          </p>
                         </td>
                         <td className="px-5 py-4 text-sm text-slate-600">
                           {task.tipo === "Recurrente"

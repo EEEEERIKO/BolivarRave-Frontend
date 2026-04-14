@@ -1,5 +1,53 @@
 const trimSlash = (value: string) => value.replace(/\/+$/, "");
 
+const toFriendlyApiError = (path: string, message: string, status?: number) => {
+  const normalizedMessage = message.toLowerCase();
+
+  if (normalizedMessage.includes("no se encontraron hojas validas con nombre de dia para importar")) {
+    return "No pudimos leer el Excel porque las hojas no tienen nombre de día válido. Renómbralas como Lunes, Martes, Miércoles/Miercoles, Jueves y Viernes.";
+  }
+
+  if (normalizedMessage.includes("faltan columnas requeridas")) {
+    return "El archivo no trae todas las columnas necesarias. Revisa el formato del Excel o completa los datos manualmente en la vista previa.";
+  }
+
+  if (normalizedMessage.includes("la reserva se solapa")) {
+    return "Este horario se cruza con otra clase en el mismo salón. Elige otro rango de hora o cambia de salón.";
+  }
+
+  if (normalizedMessage.includes("payload de") || normalizedMessage.includes("payload invalido")) {
+    return "Hay datos incompletos o con formato inválido. Revisa los campos obligatorios e inténtalo de nuevo.";
+  }
+
+  if (status === 401 || normalizedMessage.includes("no autorizado")) {
+    return "No tienes permisos para realizar esta acción. Verifica tu sesión o credenciales.";
+  }
+
+  if (status === 403) {
+    return "Esta acción fue bloqueada por seguridad. Intenta de nuevo o contacta al administrador.";
+  }
+
+  if (status === 404) {
+    return "No encontramos el recurso solicitado. Es posible que ya haya sido eliminado o movido.";
+  }
+
+  if (status === 409) {
+    return path.includes("/api/schedules")
+      ? "Se detectó un conflicto con el horario actual. Ajusta día, hora o salón para continuar."
+      : "No se pudo completar la acción porque hay un conflicto con el estado actual de los datos.";
+  }
+
+  if (status === 500) {
+    return "El servidor tuvo un problema al procesar la solicitud. Inténtalo de nuevo en unos segundos.";
+  }
+
+  if (normalizedMessage.includes("failed to fetch") || normalizedMessage.includes("load failed")) {
+    return "No se pudo conectar con el servidor. Revisa la conexión y confirma que el backend esté encendido.";
+  }
+
+  return message;
+};
+
 class HttpResponseError extends Error {
   readonly status: number;
 
@@ -111,6 +159,6 @@ export async function fetchApiJson<T>(path: string, init?: RequestInit): Promise
   const summary =
     lastError?.message ??
     (attemptDetails.length > 0 ? attemptDetails.join(" | ") : "Load failed");
-
-  throw new Error(summary);
+  const httpStatus = lastError instanceof HttpResponseError ? lastError.status : undefined;
+  throw new Error(toFriendlyApiError(normalizedPath, summary, httpStatus));
 }

@@ -85,6 +85,28 @@ type StaffPausaResponse = {
   pausas?: StaffPausaItem[];
 };
 
+type StaffJornadasBulkResponse = {
+  jornadas: Record<string, Array<{
+    id: string;
+    staffId: string;
+    diaSemana: string;
+    horaEntrada: string;
+    horaSalida: string;
+    totalHorasDia: number;
+  }>>;
+};
+
+type StaffPausasBulkResponse = {
+  pausas: Record<string, Array<{
+    id: string;
+    staffId: string;
+    diaSemana: string;
+    tipoPausa: "Comida" | "Descanso";
+    horaInicio: string;
+    horaFin: string;
+  }>>;
+};
+
 type EditableJornadaItem = {
   id: string;
   diaSemana: WorkWeekDay | "";
@@ -477,43 +499,38 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
       setIsLoadingJornadas(!hasCached);
       setScheduleError(null);
 
-      const results = await Promise.all(
-        staffList.map(async (staff) => {
-          const jornadaResponse = await fetchApiJson<StaffJornadaResponse>(`/api/staff/${staff.id}/jornada-semanal`, {
-            cache: "no-store",
-          }).catch(() => ({ jornadas: [] }));
-
-          const pausaResponse = await fetchApiJson<StaffPausaResponse>(`/api/staff/${staff.id}/pausas-programadas`, {
-            cache: "no-store",
-          }).catch(() => ({ pausas: [] }));
-
-          const jornadas = Array.isArray(jornadaResponse.jornadas)
-            ? jornadaResponse.jornadas.map((item) => ({
-                ...item,
-                diaSemana: toUiWorkWeekDay(item.diaSemana),
-              }))
-            : [];
-
-          const pausas = Array.isArray(pausaResponse.pausas)
-            ? pausaResponse.pausas.map((item) => ({
-                ...item,
-                diaSemana: toUiWorkWeekDay(item.diaSemana),
-              }))
-            : [];
-
-          return {
-            staffId: staff.id,
-            jornadas,
-            pausas,
-          };
-        }),
-      );
+      // Fetch all jornadas and pausas in parallel using bulk endpoints (2 requests instead of 2N)
+      const [jornadasResponse, pausasResponse] = await Promise.all([
+        fetchApiJson<StaffJornadasBulkResponse>("/api/staff/jornadas-bulk", {
+          cache: "no-store",
+        }).catch(() => ({ jornadas: {} as Record<string, Array<{ id: string; staffId: string; diaSemana: string; horaEntrada: string; horaSalida: string; totalHorasDia: number }>> })),
+        fetchApiJson<StaffPausasBulkResponse>("/api/staff/pausas-bulk", {
+          cache: "no-store",
+        }).catch(() => ({ pausas: {} as Record<string, Array<{ id: string; staffId: string; diaSemana: string; tipoPausa: "Comida" | "Descanso"; horaInicio: string; horaFin: string }>> })),
+      ]);
 
       const nextMap: Record<string, StaffJornadaItem[]> = {};
       const nextPausaMap: Record<string, StaffPausaItem[]> = {};
-      for (const result of results) {
-        nextMap[result.staffId] = result.jornadas;
-        nextPausaMap[result.staffId] = result.pausas;
+
+      // Build jornadas map
+      for (const staffId of staffIds) {
+        const jornadaItems = jornadasResponse.jornadas[staffId] ?? [];
+        const jornadas = jornadaItems.map((item) => ({
+          ...item,
+          diaSemana: toUiWorkWeekDay(item.diaSemana) as WorkWeekDay,
+        }));
+        nextMap[staffId] = jornadas;
+      }
+
+      // Build pausas map
+      for (const staffId of staffIds) {
+        const pausaItems = pausasResponse.pausas[staffId] ?? [];
+        const pausas = pausaItems.map((item) => ({
+          ...item,
+          diaSemana: toUiWorkWeekDay(item.diaSemana) as WorkWeekDay,
+          tipoPausa: item.tipoPausa as StaffPausaItem["tipoPausa"],
+        }));
+        nextPausaMap[staffId] = pausas;
       }
 
       setJornadaByStaffId(nextMap);
@@ -1785,6 +1802,29 @@ export default function StaffPage() {
 
     return statusMap;
   }, [staffList, liveJornadaByStaffId, livePausaByStaffId]);
+
+  const staffByLiveStatus = useMemo(() => {
+    const active: StaffApi[] = [];
+    const breakTime: StaffApi[] = [];
+    const inactive: StaffApi[] = [];
+
+    staffList.forEach((staff) => {
+      const status = liveStatusByStaffId[staff.id] ?? "Inactivo";
+      if (status === "Activo") {
+        active.push(staff);
+        return;
+      }
+
+      if (status === "Descanso") {
+        breakTime.push(staff);
+        return;
+      }
+
+      inactive.push(staff);
+    });
+
+    return { active, breakTime, inactive };
+  }, [staffList, liveStatusByStaffId]);
 
   const selectedStaffStatusLabel: StaffLiveStatus = selectedStaff
     ? (liveStatusByStaffId[selectedStaff.id] ?? getLiveStatusFromSchedules(selectedStaffJornada, selectedStaffPausas))
@@ -3076,7 +3116,9 @@ export default function StaffPage() {
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <h2 className="tracking-tight text-2xl font-extrabold text-[#2a3439]">Directorio del personal</h2>
-              <p className="text-sm text-[#566166]">Gestionando {staffList.length} integrantes académicos activos</p>
+              <p className="text-sm text-[#566166]">
+                Gestionando {staffList.length} integrantes académicos: {staffByLiveStatus.active.length} activos, {staffByLiveStatus.breakTime.length} en descanso y {staffByLiveStatus.inactive.length} inactivos
+              </p>
             </div>
             <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
               <button className="flex items-center justify-center gap-2 rounded-lg bg-[#d9e4ea] px-4 py-2 text-xs font-bold text-[#2a3439]">
@@ -3096,50 +3138,76 @@ export default function StaffPage() {
 
           {staffError ? <p className="text-sm font-medium text-[#9f403d]">{staffError}</p> : null}
 
-          <div className="grid grid-cols-1 gap-3 overflow-y-auto pr-0.5 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden xl:grid-cols-2">
+          <div className="space-y-4 overflow-y-auto pr-0.5 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
             {staffList.length > 0 ? (
-              staffList.map((staff) => {
-                const isActiveCard = selectedStaff?.id === staff.id;
-                const liveStatus = liveStatusByStaffId[staff.id] ?? "Inactivo";
-                const liveStatusClasses =
-                  liveStatus === "Activo"
-                    ? "bg-green-50 text-green-600"
-                    : liveStatus === "Descanso"
-                      ? "bg-amber-50 text-amber-700"
-                      : "bg-slate-50 text-slate-400";
-                return (
-                  <button
-                    className={`flex items-center gap-3 rounded-xl bg-white p-3 text-left transition-all sm:p-4 ${
-                      isActiveCard
-                        ? "border-2 border-[#3a5f94] shadow-xl ring-4 ring-[#3a5f94]/5"
-                        : "border border-slate-200 shadow-sm hover:shadow-md"
-                    }`}
-                    key={staff.id}
-                    onClick={() => {
-                      setSelectedStaffId(staff.id);
-                      setMobileDetailTab("profile");
-                      setIsStaffDetailModalOpen(true);
-                    }}
-                    type="button"
-                  >
-                    <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#e8eff3] text-xs font-black text-[#375c91] sm:h-14 sm:w-14 sm:text-sm">
-                      N.{staff.numeroStaff}
+              [
+                { title: "Activos", status: "Activo" as StaffLiveStatus, items: staffByLiveStatus.active },
+                { title: "Descanso", status: "Descanso" as StaffLiveStatus, items: staffByLiveStatus.breakTime },
+                { title: "Inactivos", status: "Inactivo" as StaffLiveStatus, items: staffByLiveStatus.inactive },
+              ].map((section) => (
+                <section key={section.title} className="rounded-xl border border-slate-200 bg-white p-3 sm:p-4">
+                  <div className="mb-3 flex items-center justify-between">
+                    <h3 className="text-xs font-black tracking-wider text-[#2a3439] uppercase">{section.title}</h3>
+                    <span className="rounded bg-slate-100 px-2 py-1 text-[10px] font-bold text-slate-600">{section.items.length}</span>
+                  </div>
+
+                  {section.items.length > 0 ? (
+                    <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+                      {section.items.map((staff) => {
+                        const isActiveCard = selectedStaff?.id === staff.id;
+                        const liveStatus = liveStatusByStaffId[staff.id] ?? "Inactivo";
+                        const liveStatusClasses =
+                          liveStatus === "Activo"
+                            ? "bg-green-50 text-green-600"
+                            : liveStatus === "Descanso"
+                              ? "bg-amber-50 text-amber-700"
+                              : "bg-slate-50 text-slate-400";
+
+                        return (
+                          <button
+                            className={`flex items-center gap-3 rounded-xl bg-white p-3 text-left transition-all sm:p-4 ${
+                              isActiveCard
+                                ? "border-2 border-[#3a5f94] shadow-xl ring-4 ring-[#3a5f94]/5"
+                                : "border border-slate-200 shadow-sm hover:shadow-md"
+                            }`}
+                            key={staff.id}
+                            onClick={() => {
+                              setSelectedStaffId(staff.id);
+                              setMobileDetailTab("profile");
+                              setIsStaffDetailModalOpen(true);
+                            }}
+                            type="button"
+                          >
+                            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#e8eff3] text-xs font-black text-[#375c91] sm:h-14 sm:w-14 sm:text-sm">
+                              N.{staff.numeroStaff}
+                            </div>
+                            <div className="flex-1">
+                              <h3 className="leading-tight font-bold text-[#2a3439]">{staff.nombres}</h3>
+                              <p className="text-xs text-[#566166]">ID: {staff.cedula}</p>
+                              <p className="mt-1 text-xs font-semibold text-[#566166]">{staff.rol}</p>
+                            </div>
+                            <div className="text-right">
+                              <span
+                                className={`rounded px-2 py-1 text-[10px] font-bold tracking-wider uppercase ${liveStatusClasses}`}
+                              >
+                                {liveStatus}
+                              </span>
+                            </div>
+                          </button>
+                        );
+                      })}
                     </div>
-                    <div className="flex-1">
-                      <h3 className="leading-tight font-bold text-[#2a3439]">{staff.nombres}</h3>
-                      <p className="text-xs text-[#566166]">ID: {staff.cedula}</p>
-                      <p className="mt-1 text-xs font-semibold text-[#566166]">{staff.rol}</p>
-                    </div>
-                    <div className="text-right">
-                      <span
-                        className={`rounded px-2 py-1 text-[10px] font-bold tracking-wider uppercase ${liveStatusClasses}`}
-                      >
-                        {liveStatus}
-                      </span>
-                    </div>
-                  </button>
-                );
-              })
+                  ) : (
+                    <p className="text-sm text-[#566166]">
+                      {section.status === "Activo"
+                        ? "No hay personal activo actualmente."
+                        : section.status === "Descanso"
+                          ? "No hay personal descansando actualmente."
+                          : "No hay personal inactivo actualmente."}
+                    </p>
+                  )}
+                </section>
+              ))
             ) : isLoadingStaff ? (
               <p className="text-sm text-[#566166]">Cargando personal...</p>
             ) : (

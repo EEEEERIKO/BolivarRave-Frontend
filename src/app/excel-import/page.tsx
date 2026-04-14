@@ -17,6 +17,7 @@ const WEEK_DAYS = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"] as cons
 type ExistingEvent = {
   id: string;
   classId: string;
+  reservationType?: "normal" | "momentanea" | "iglesia";
   day: string;
   room: string;
   start: string;
@@ -101,6 +102,13 @@ type ReviewClass = ClassBlock & {
   conflicts: ConflictInfo[];
   decision: ConflictDecision;
 };
+
+type PreviewRow = {
+  item: ReviewClass;
+  rowType: "upsert" | "deleted";
+};
+
+type DeletedClassDecision = "pending" | "keep" | "delete";
 
 type ManualEntryRow = {
   id: string;
@@ -196,31 +204,105 @@ const normalizeText = (value: string) =>
     .replace(/\s+/g, " ")
     .trim();
 
+const OFFICIAL_ROOMS = [
+  "Aula Foro Unión 101",
+  "Aula Foro Unac 102",
+  "Sala Informática 1 Bolivar",
+  "Sala Informática 2 Bolivar",
+  "Salón 201",
+  "Salón 202",
+  "Salón 203",
+  "Laboratorio de Infantil 204",
+  "Salón 205",
+  "Salón 206",
+  "Salón 301",
+  "Salón 302",
+  "Salón 303",
+  "Salón 304",
+  "Salón 305",
+  "Laboratorio de Música 308",
+  "Salón 401",
+  "Salón 402",
+  "Laboratorio de análisis de datos y simulación financiera 403",
+  "Laboratorio de Desarrollo de Software (LDS) 404",
+  "Laboratorio Múltiple de Física 405",
+  "Salón 406",
+  "Aula Interamericana 501",
+  "Aula Interamericana 502",
+  "Aula Interamericana 503",
+  "Salón 505",
+  "Salón 506",
+] as const;
+
+const OFFICIAL_ROOM_SET = new Set<string>(OFFICIAL_ROOMS.map((room) => normalizeText(room)));
+
+const ROOM_ALIASES: Array<[RegExp, string]> = [
+  [/^aula foro union( 101)?$/, "Aula Foro Unión 101"],
+  [/^aula foro unac( 102)?$/, "Aula Foro Unac 102"],
+  [/^sala( de)? informatica 1 bolivar$/, "Sala Informática 1 Bolivar"],
+  [/^sala( de)? informatica 2 bolivar$/, "Sala Informática 2 Bolivar"],
+  [/^laboratorio (multiple )?de infantil( 204)?$/, "Laboratorio de Infantil 204"],
+  [/^laboratorio (multiple )?de musica( 308)?$/, "Laboratorio de Música 308"],
+  [/^laboratorio (multiple )?de fisica( 405)?$/, "Laboratorio Múltiple de Física 405"],
+  [/^laboratorio de (analisis de datos y )?simulacion financiera( 403)?$/, "Laboratorio de análisis de datos y simulación financiera 403"],
+  [/^laboratorio de desarrollo de software( lds)?( 404)?$/, "Laboratorio de Desarrollo de Software (LDS) 404"],
+  [/^aula interamericana (501|1)$/, "Aula Interamericana 501"],
+  [/^aula interamericana (502|2)$/, "Aula Interamericana 502"],
+  [/^aula interamericana (503|3)$/, "Aula Interamericana 503"],
+];
+
+const canonicalOfficialRoom = (value: string): string | null => {
+  const normalized = normalizeText(value)
+    .replace(/[()]/g, " ")
+    .replace(/\bmd\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!normalized) return null;
+
+  if (OFFICIAL_ROOM_SET.has(normalized)) {
+    return OFFICIAL_ROOMS.find((room) => normalizeText(room) === normalized) ?? null;
+  }
+
+  for (const [pattern, canonical] of ROOM_ALIASES) {
+    if (pattern.test(normalized)) {
+      return canonical;
+    }
+  }
+
+  return null;
+};
+
+const isValidOfficialRoom = (value: string): boolean => canonicalOfficialRoom(value) !== null;
+
 const normalizeRoomForCompare = (value: string) =>
   {
+    const canonical = canonicalOfficialRoom(value);
+    if (canonical) return canonical;
+
     const normalized = normalizeText(value)
       .replace(/[()]/g, " ")
       .replace(/\bmd\b/g, " ")
       .replace(/\s+/g, " ")
       .trim();
 
-    if (/^laboratorio de (analisis de datos y )?simulacion financiera( 403)?$/.test(normalized)) {
+    if (/^laboratorio (multiple )?de (analisis de datos y )?simulacion financiera( 403)?$/.test(normalized)) {
       return "laboratorio de simulacion financiera 403";
     }
 
-    if (/^laboratorio de desarrollo de software( lds)?( 404)?$/.test(normalized)) {
+    if (/^laboratorio (multiple )?de desarrollo de software( lds)?( 404)?$/.test(normalized)) {
       return "laboratorio de desarrollo de software lds 404";
     }
 
-    if (/^laboratorio de fisica( 405)?$/.test(normalized)) {
+    if (/^laboratorio (multiple )?de fisica( 405)?$/.test(normalized)) {
       return "laboratorio de fisica 405";
     }
 
-    if (/^laboratorio de musica( 308)?$/.test(normalized)) {
+    if (/^laboratorio (multiple )?de musica( 308)?$/.test(normalized)) {
       return "laboratorio de musica 308";
     }
 
-    if (/^laboratorio de infantil( 204)?$/.test(normalized)) {
+    if (/^laboratorio (multiple )?de infantil( 204)?$/.test(normalized)) {
       return "laboratorio de infantil 204";
     }
 
@@ -348,9 +430,10 @@ const slotKey = (slot: ClassSlot) =>
   [normalizeText(slot.day), normalizeRoomForCompare(slot.room), slot.startTime, slot.endTime].join("|");
 
 const buildClassBlocks = (rows: ParsedScheduleRowPayload[]): ClassBlock[] => {
+  const validRows = rows.filter((row) => isValidOfficialRoom(row.room));
   const map = new Map<string, ClassBlock>();
 
-  rows.forEach((row) => {
+  validRows.forEach((row) => {
     const key = classKey(row);
     const current = map.get(key);
 
@@ -613,6 +696,35 @@ const dedupeRows = (rows: ParsedScheduleRowPayload[]) => {
   return output;
 };
 
+const rowSignatureSet = (rows: ParsedScheduleRowPayload[]) => new Set(rows.flatMap(expandedRowSignatures));
+
+const areRowSetsEqual = (leftRows: ParsedScheduleRowPayload[], rightRows: ParsedScheduleRowPayload[]) => {
+  const left = rowSignatureSet(leftRows);
+  const right = rowSignatureSet(rightRows);
+
+  if (left.size !== right.size) return false;
+  for (const key of left) {
+    if (!right.has(key)) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
+const buildRowsByClassKey = (rows: ParsedScheduleRowPayload[]) => {
+  const map = new Map<string, ParsedScheduleRowPayload[]>();
+
+  rows.forEach((row) => {
+    const key = classKey(row);
+    const current = map.get(key) ?? [];
+    current.push(row);
+    map.set(key, current);
+  });
+
+  return map;
+};
+
 const formatHistoryDate = (value: string) => {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
@@ -652,6 +764,16 @@ const formatImportStatus = (status: string) => {
   return status;
 };
 
+const personalizeAnalyzeError = (rawMessage: string) => {
+  const normalized = rawMessage.toLowerCase();
+
+  if (normalized.includes("no se encontraron hojas validas con nombre de dia para importar")) {
+    return "No pudimos leer el Excel porque las hojas no tienen nombres válidos de día.\n\nRenombra las hojas como: Lunes, Martes, Miércoles/Miercoles, Jueves y Viernes.\nSi importas CSV, selecciona el día en el campo 'Día del CSV'.";
+  }
+
+  return rawMessage;
+};
+
 export default function ExcelImportPage() {
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -663,6 +785,7 @@ export default function ExcelImportPage() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [pageError, setPageError] = useState<string | null>(null);
+  const [invalidSheetNamesError, setInvalidSheetNamesError] = useState<string | null>(null);
   const [importResult, setImportResult] = useState<ImportResponse["import"] | null>(null);
   const [importProgress, setImportProgress] = useState<ImportProgress>({
     active: false,
@@ -673,7 +796,8 @@ export default function ExcelImportPage() {
 
   const [reviewClasses, setReviewClasses] = useState<ReviewClass[]>([]);
   const [rowsByClassKey, setRowsByClassKey] = useState<Map<string, ParsedScheduleRowPayload[]>>(new Map());
-  const [existingRowsByClassId, setExistingRowsByClassId] = useState<Map<string, ParsedScheduleRowPayload[]>>(new Map());
+  const [existingRowsByClassKey, setExistingRowsByClassKey] = useState<Map<string, ParsedScheduleRowPayload[]>>(new Map());
+  const [deletedClassDecisions, setDeletedClassDecisions] = useState<Record<string, DeletedClassDecision>>({});
   const [hasAnalyzed, setHasAnalyzed] = useState(false);
   const [manualMode, setManualMode] = useState(false);
   const [manualRows, setManualRows] = useState<ManualEntryRow[]>([createEmptyManualEntry()]);
@@ -694,11 +818,32 @@ export default function ExcelImportPage() {
       };
     }
 
+    if (isAnalyzing) {
+      return {
+        name: selectedFile.name,
+        detail: `Analizando archivo - ${formatFileSize(selectedFile.size)}`,
+      };
+    }
+
+    if (pageError) {
+      return {
+        name: selectedFile.name,
+        detail: `Archivo con errores de formato - ${formatFileSize(selectedFile.size)}`,
+      };
+    }
+
+    if (hasAnalyzed) {
+      return {
+        name: selectedFile.name,
+        detail: `Archivo validado - ${formatFileSize(selectedFile.size)}`,
+      };
+    }
+
     return {
       name: selectedFile.name,
-      detail: `Archivo cargado - ${formatFileSize(selectedFile.size)}`,
+      detail: `Archivo seleccionado - ${formatFileSize(selectedFile.size)}`,
     };
-  }, [selectedFile]);
+  }, [selectedFile, isAnalyzing, pageError, hasAnalyzed]);
 
   const conflictClasses = useMemo(() => reviewClasses.filter((item) => item.conflicts.length > 0), [reviewClasses]);
   const nonConflictClasses = useMemo(() => reviewClasses.filter((item) => item.conflicts.length === 0), [reviewClasses]);
@@ -721,19 +866,54 @@ export default function ExcelImportPage() {
   const unchangedClassKeys = useMemo(() => {
     const keys = new Set<string>();
 
-    reviewClasses.forEach((item) => {
-      const existingClassId = findUnchangedExistingClassId(
-        rowsByClassKey.get(item.key) ?? [],
-        existingRowsByClassId
-      );
-
-      if (existingClassId) {
-        keys.add(item.key);
+    rowsByClassKey.forEach((uploadedRows, key) => {
+      const existingRows = existingRowsByClassKey.get(key) ?? [];
+      if (existingRows.length > 0 && areRowSetsEqual(uploadedRows, existingRows)) {
+        keys.add(key);
       }
     });
 
     return keys;
-  }, [reviewClasses, rowsByClassKey, existingRowsByClassId]);
+  }, [rowsByClassKey, existingRowsByClassKey]);
+
+  const changedClassKeys = useMemo(() => {
+    const keys = new Set<string>();
+
+    rowsByClassKey.forEach((uploadedRows, key) => {
+      const existingRows = existingRowsByClassKey.get(key) ?? [];
+      if (existingRows.length > 0 && !areRowSetsEqual(uploadedRows, existingRows)) {
+        keys.add(key);
+      }
+    });
+
+    return keys;
+  }, [rowsByClassKey, existingRowsByClassKey]);
+
+  const deletedReviewClasses = useMemo(() => {
+    const rowsToDelete: ParsedScheduleRowPayload[] = [];
+
+    existingRowsByClassKey.forEach((existingRows, key) => {
+      if (!rowsByClassKey.has(key)) {
+        rowsToDelete.push(...existingRows);
+      }
+    });
+
+    return buildClassBlocks(rowsToDelete).map((item) => ({
+      ...item,
+      conflicts: [],
+      decision: "accept" as ConflictDecision,
+    }));
+  }, [existingRowsByClassKey, rowsByClassKey]);
+
+  useEffect(() => {
+    setDeletedClassDecisions((current) => {
+      const next: Record<string, DeletedClassDecision> = {};
+      deletedReviewClasses.forEach((item) => {
+        next[item.key] = current[item.key] ?? "pending";
+      });
+      return next;
+    });
+  }, [deletedReviewClasses]);
 
   const actionableReviewClasses = useMemo(
     () => reviewClasses.filter((item) => !unchangedClassKeys.has(item.key)),
@@ -748,15 +928,52 @@ export default function ExcelImportPage() {
     [actionableReviewClasses]
   );
 
+  const pendingDeletedCount = useMemo(
+    () => deletedReviewClasses.filter((item) => (deletedClassDecisions[item.key] ?? "pending") === "pending").length,
+    [deletedReviewClasses, deletedClassDecisions]
+  );
+
+  const deletedClassKeysToDelete = useMemo(
+    () =>
+      new Set(
+        deletedReviewClasses
+          .filter((item) => (deletedClassDecisions[item.key] ?? "pending") === "delete")
+          .map((item) => item.key)
+      ),
+    [deletedReviewClasses, deletedClassDecisions]
+  );
+
+  const hasEffectiveChanges = effectiveImportClassCount > 0 || deletedClassKeysToDelete.size > 0;
+
   const canConfirmImport =
     !isImporting &&
     ((manualMode && hasAnalyzed && manualRows.length > 0) ||
-      (hasAnalyzed && effectiveImportClassCount > 0 && pendingConflictCount === 0));
+      (hasAnalyzed && hasEffectiveChanges && pendingConflictCount === 0 && pendingDeletedCount === 0));
 
   const orderedPreviewRows = useMemo(() => {
     // Keep conflicts grouped first but stable in-place so rows do not "disappear" on decision click.
     return [...conflictClasses, ...nonConflictClasses].filter((item) => !unchangedClassKeys.has(item.key));
   }, [conflictClasses, nonConflictClasses, unchangedClassKeys]);
+
+  const previewRows = useMemo<PreviewRow[]>(
+    () => [
+      ...orderedPreviewRows.map((item) => ({ item, rowType: "upsert" as const })),
+      ...deletedReviewClasses.map((item) => ({ item, rowType: "deleted" as const })),
+    ],
+    [orderedPreviewRows, deletedReviewClasses]
+  );
+
+  const previousSlotsByClassKey = useMemo(() => {
+    const map = new Map<string, string>();
+    existingRowsByClassKey.forEach((rows, key) => {
+      const blocks = buildClassBlocks(rows);
+      const first = blocks[0];
+      if (first) {
+        map.set(key, formatSlots(first.slots));
+      }
+    });
+    return map;
+  }, [existingRowsByClassKey]);
 
   const latestImportsHistory = useMemo(() => importsHistory.slice(0, 10), [importsHistory]);
 
@@ -774,22 +991,33 @@ export default function ExcelImportPage() {
   }, []);
 
   const analyzeRowsAgainstCurrentSchedule = async (parsedRows: ParsedScheduleRowPayload[]) => {
-    const classRowsMap = new Map<string, ParsedScheduleRowPayload[]>();
-    parsedRows.forEach((row) => {
-      const key = classKey(row);
-      const current = classRowsMap.get(key) ?? [];
-      current.push(row);
-      classRowsMap.set(key, current);
-    });
+    const validParsedRows = parsedRows.filter((row) => isValidOfficialRoom(row.room));
+    const classRowsMap = buildRowsByClassKey(validParsedRows);
 
-    const classBlocks = buildClassBlocks(parsedRows);
+    const classBlocks = buildClassBlocks(validParsedRows);
     const existing = await fetchApiJson<ExistingEventsResponse>("/api/schedules/events");
     const reviewed = detectConflicts(classBlocks, existing.events ?? []);
+
+    const existingNormalRows = (existing.events ?? [])
+      .filter((event) => event.reservationType === "normal")
+      .map((event) => ({
+        faculty: event.faculty,
+        code: event.code,
+        subject: event.subject,
+        teacher: event.teacher,
+        startDate: event.startDate,
+        endDate: event.endDate,
+        day: event.day,
+        room: event.room,
+        startTime: event.start,
+        endTime: event.end,
+      }))
+      .filter((row) => isValidOfficialRoom(row.room));
 
     return {
       reviewed,
       classRowsMap,
-      existingRowsMap: buildExistingRowsByClassId(existing.events ?? []),
+      existingRowsByClassKeyMap: buildRowsByClassKey(existingNormalRows),
     };
   };
 
@@ -806,31 +1034,42 @@ export default function ExcelImportPage() {
       const analysis = await analyzeRowsAgainstCurrentSchedule(parsedRows);
       setReviewClasses(analysis.reviewed);
       setRowsByClassKey(analysis.classRowsMap);
-      setExistingRowsByClassId(analysis.existingRowsMap);
+      setExistingRowsByClassKey(analysis.existingRowsByClassKeyMap);
       setHasAnalyzed(true);
       setManualMode(false);
       setManualNotice(null);
     } catch (error) {
       const message = error instanceof Error ? error.message : "No se pudo analizar el archivo";
+      const friendlyMessage = personalizeAnalyzeError(message);
       const isMissingColumns = message.includes("Faltan columnas requeridas");
+      const isInvalidSheetNames = friendlyMessage.includes("Renombra las hojas como:");
 
-      if (isMissingColumns) {
+      if (isInvalidSheetNames) {
+        setInvalidSheetNamesError("No pudimos leer el Excel porque las hojas no tienen nombres válidos de día.");
+        setHasAnalyzed(false);
+        setReviewClasses([]);
+        setRowsByClassKey(new Map());
+        setExistingRowsByClassKey(new Map());
+        setManualMode(false);
+        setManualNotice(null);
+        setPageError(null);
+      } else if (isMissingColumns) {
         setManualMode(true);
         setManualRows([createEmptyManualEntry()]);
         setReviewClasses([]);
         setRowsByClassKey(new Map());
-        setExistingRowsByClassId(new Map());
+        setExistingRowsByClassKey(new Map());
         setHasAnalyzed(true);
         setManualNotice(
           "No se detectaron columnas estandar. Completa los datos faltantes directamente en Schedule Data Preview."
         );
         setPageError(null);
       } else {
-        setPageError(message);
+        setPageError(friendlyMessage);
         setHasAnalyzed(false);
         setReviewClasses([]);
         setRowsByClassKey(new Map());
-        setExistingRowsByClassId(new Map());
+        setExistingRowsByClassKey(new Map());
         setManualMode(false);
         setManualNotice(null);
       }
@@ -852,10 +1091,11 @@ export default function ExcelImportPage() {
     setSelectedFile(file);
     setFileError(null);
     setPageError(null);
+    setInvalidSheetNamesError(null);
     setImportResult(null);
     setReviewClasses([]);
     setRowsByClassKey(new Map());
-    setExistingRowsByClassId(new Map());
+    setExistingRowsByClassKey(new Map());
     setHasAnalyzed(false);
     setManualMode(false);
     setManualRows([createEmptyManualEntry()]);
@@ -893,14 +1133,23 @@ export default function ExcelImportPage() {
     );
   };
 
+  const setDeletedClassDecision = (classKeyValue: string, decision: DeletedClassDecision) => {
+    setDeletedClassDecisions((current) => ({
+      ...current,
+      [classKeyValue]: decision,
+    }));
+  };
+
   const clearImport = () => {
     setSelectedFile(null);
     setFileError(null);
     setPageError(null);
+    setInvalidSheetNamesError(null);
     setImportResult(null);
     setReviewClasses([]);
     setRowsByClassKey(new Map());
-    setExistingRowsByClassId(new Map());
+    setExistingRowsByClassKey(new Map());
+    setDeletedClassDecisions({});
     setHasAnalyzed(false);
     setManualMode(false);
     setManualRows([createEmptyManualEntry()]);
@@ -910,6 +1159,7 @@ export default function ExcelImportPage() {
   const handleConfirmImport = async () => {
     setIsImporting(true);
     setPageError(null);
+    setInvalidSheetNamesError(null);
     setImportProgress({
       active: true,
       percent: 5,
@@ -920,7 +1170,7 @@ export default function ExcelImportPage() {
     try {
       let workingReviewClasses = reviewClasses;
       let workingRowsByClassKey = rowsByClassKey;
-      let workingExistingRowsByClassId = existingRowsByClassId;
+      let workingExistingRowsByClassKey = existingRowsByClassKey;
 
       if (manualMode) {
         const manualParsedRows = manualRows.map((row, index) => toParsedRowFromManual(row, index));
@@ -928,11 +1178,11 @@ export default function ExcelImportPage() {
 
         workingReviewClasses = analysis.reviewed;
         workingRowsByClassKey = analysis.classRowsMap;
-        workingExistingRowsByClassId = analysis.existingRowsMap;
+        workingExistingRowsByClassKey = analysis.existingRowsByClassKeyMap;
 
         setReviewClasses(analysis.reviewed);
         setRowsByClassKey(analysis.classRowsMap);
-        setExistingRowsByClassId(analysis.existingRowsMap);
+        setExistingRowsByClassKey(analysis.existingRowsByClassKeyMap);
         setManualMode(false);
       }
 
@@ -945,62 +1195,53 @@ export default function ExcelImportPage() {
       const workingAccepted = workingConflictClasses.filter((item) => item.decision === "accept").length;
       const workingRejected = workingConflictClasses.filter((item) => item.decision === "reject").length;
 
-      const unchangedPairs = workingReviewClasses
-        .map((item) => ({
-          classKey: item.key,
-          existingClassId: findUnchangedExistingClassId(
-            workingRowsByClassKey.get(item.key) ?? [],
-            workingExistingRowsByClassId
-          ),
-        }))
-        .filter((item) => !!item.existingClassId) as Array<{ classKey: string; existingClassId: string }>;
+      const workingRowsToDelete: ParsedScheduleRowPayload[] = [];
+      workingExistingRowsByClassKey.forEach((existingRows, key) => {
+        if (!workingRowsByClassKey.has(key)) {
+          workingRowsToDelete.push(...existingRows);
+        }
+      });
 
-      const unchangedClassKeys = new Set(unchangedPairs.map((item) => item.classKey));
-      const unchangedExistingIds = new Set(unchangedPairs.map((item) => item.existingClassId));
+      const workingDeletedReviewClasses = buildClassBlocks(workingRowsToDelete);
+      const workingPendingDeleted = workingDeletedReviewClasses.filter(
+        (item) => (deletedClassDecisions[item.key] ?? "pending") === "pending"
+      ).length;
 
       if (workingPending > 0) {
         throw new Error("Debes revisar todos los conflictos antes de confirmar la importacion.");
       }
 
-      const keptNewClasses = workingReviewClasses.filter(
-        (item) => !unchangedClassKeys.has(item.key) && (item.conflicts.length === 0 || item.decision === "accept")
-      );
-      const rejectedClasses = workingReviewClasses.filter((item) => item.conflicts.length > 0 && item.decision === "reject");
-
-      if (keptNewClasses.length === 0) {
-        setImportProgress({ active: false, percent: 0, stage: "", detail: "" });
-        throw new Error("No hay clases nuevas o modificadas para importar.");
+      if (workingPendingDeleted > 0) {
+        throw new Error("Debes decidir qué hacer con todas las clases que no aparecen en el Excel (conservar o eliminar).");
       }
 
-      const oldIdsOverriddenByAccepted = new Set(
-        keptNewClasses.flatMap((item) =>
-          item.conflicts
-            .filter((conflict) => conflict.type === "existing" && conflict.existingClassId)
-            .map((conflict) => conflict.existingClassId as string)
-        )
+      const rejectedClasses = workingReviewClasses.filter((item) => item.conflicts.length > 0 && item.decision === "reject");
+      const keptClasses = workingReviewClasses.filter(
+        (item) => item.conflicts.length === 0 || item.decision === "accept"
       );
 
-      const oldIdsToKeep = new Set(
-        rejectedClasses.flatMap((item) =>
-          item.conflicts
-            .filter((conflict) => conflict.type === "existing" && conflict.existingClassId)
-            .map((conflict) => conflict.existingClassId as string)
-        )
+      const deletedClassesToKeep = workingDeletedReviewClasses.filter(
+        (item) => (deletedClassDecisions[item.key] ?? "pending") === "keep"
       );
 
-      unchangedExistingIds.forEach((id) => oldIdsToKeep.add(id));
-
-      oldIdsOverriddenByAccepted.forEach((id) => oldIdsToKeep.delete(id));
-
-      const newRows = keptNewClasses.flatMap((item) => workingRowsByClassKey.get(item.key) ?? []);
-      const oldRows = [...oldIdsToKeep].flatMap((oldClassId) => workingExistingRowsByClassId.get(oldClassId) ?? []);
-      const finalRows = dedupeRows([...newRows, ...oldRows]);
+      const newRows = keptClasses.flatMap((item) => workingRowsByClassKey.get(item.key) ?? []);
+      const oldRows = rejectedClasses.flatMap((item) => workingExistingRowsByClassKey.get(item.key) ?? []);
+      const oldRowsFromKeptDeleted = deletedClassesToKeep.flatMap(
+        (item) => workingExistingRowsByClassKey.get(item.key) ?? []
+      );
+      const finalRows = dedupeRows([...newRows, ...oldRows, ...oldRowsFromKeptDeleted]);
       const totalRowsToSend = finalRows.length;
 
-      if (!finalRows.length) {
-        setImportProgress({ active: false, percent: 0, stage: "", detail: "" });
-        throw new Error("No quedaron filas para importar despues de resolver conflictos.");
-      }
+      console.groupCollapsed("[Excel Import] Confirmación");
+      console.log("Archivo:", selectedFile?.name ?? "archivo.xlsx");
+      console.log("Clases analizadas:", workingReviewClasses.length);
+      console.log("Clases nuevas/aceptadas:", keptClasses.length);
+      console.log("Clases rechazadas (se conservan viejas):", rejectedClasses.length);
+      console.log("Clases no encontradas en Excel:", workingDeletedReviewClasses.length);
+      console.log("Clases no encontradas que se conservarán:", deletedClassesToKeep.length);
+      console.log("Filas finales a enviar:", totalRowsToSend);
+      console.log("Primeras filas finales:", finalRows.slice(0, 10));
+      console.groupEnd();
 
       setImportProgress({
         active: true,
@@ -1034,6 +1275,17 @@ export default function ExcelImportPage() {
 
         xhr.open("POST", "/api/schedules/import-parsed", true);
         xhr.setRequestHeader("Content-Type", "application/json");
+
+        console.groupCollapsed("[Excel Import] XHR request");
+        console.log("POST /api/schedules/import-parsed");
+        console.log("Payload rows:", finalRows.length);
+        console.log("Payload meta:", {
+          conflictsDetected: workingConflictClasses.length,
+          conflictsAccepted: workingAccepted,
+          conflictsRejected: workingRejected,
+          deletedPending: workingPendingDeleted,
+        });
+        console.groupEnd();
 
         xhr.upload.onprogress = (event) => {
           if (!event.lengthComputable) {
@@ -1120,6 +1372,11 @@ export default function ExcelImportPage() {
           stopTicker();
           const text = xhr.responseText ?? "";
 
+          console.groupCollapsed("[Excel Import] XHR response");
+          console.log("Status:", xhr.status);
+          console.log("Response text:", text);
+          console.groupEnd();
+
           if (xhr.status >= 200 && xhr.status < 300) {
             try {
               const parsed = JSON.parse(text) as ImportResponse;
@@ -1153,7 +1410,8 @@ export default function ExcelImportPage() {
       setSelectedFile(null);
       setReviewClasses([]);
       setRowsByClassKey(new Map());
-      setExistingRowsByClassId(new Map());
+      setExistingRowsByClassKey(new Map());
+      setDeletedClassDecisions({});
       setHasAnalyzed(false);
       setManualMode(false);
       setManualRows([createEmptyManualEntry()]);
@@ -1182,6 +1440,46 @@ export default function ExcelImportPage() {
 
   return (
     <div className="bg-background-light p-8 dark:bg-background-dark">
+      {invalidSheetNamesError ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl border border-red-200 bg-white shadow-2xl dark:border-red-800 dark:bg-slate-900">
+            <div className="border-b border-red-200 bg-red-50 px-6 py-5 dark:border-red-800 dark:bg-red-900/30">
+              <div className="flex items-center gap-3">
+                <span className="material-symbols-outlined text-2xl text-red-600 dark:text-red-400">error</span>
+                <h3 className="text-lg font-bold text-red-700 dark:text-red-400">Excel con nombre de hojas inválidas</h3>
+              </div>
+            </div>
+            <div className="space-y-4 px-6 py-6">
+              <p className="text-sm leading-relaxed text-slate-600 dark:text-slate-300">{invalidSheetNamesError}</p>
+              <div className="rounded-md border border-blue-200 bg-blue-50 p-3 dark:border-blue-800 dark:bg-blue-900/30">
+                <p className="mb-2 text-xs font-bold text-blue-900 dark:text-blue-300">Las hojas deben llamarse exactamente:</p>
+                <ul className="space-y-1 text-xs text-blue-800 dark:text-blue-200">
+                  <li>✓ <span className="font-semibold">Lunes</span></li>
+                  <li>✓ <span className="font-semibold">Martes</span></li>
+                  <li>✓ <span className="font-semibold">Miércoles</span> o <span className="font-semibold">Miercoles</span></li>
+                  <li>✓ <span className="font-semibold">Jueves</span></li>
+                  <li>✓ <span className="font-semibold">Viernes</span></li>
+                </ul>
+              </div>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Si tu archivo es CSV (un solo día), selecciona el día en el campo "Día del CSV" debajo del selector de archivo.
+              </p>
+            </div>
+            <div className="border-t border-slate-200 bg-slate-50 px-6 py-4 dark:border-slate-800 dark:bg-slate-900/50">
+              <button
+                type="button"
+                onClick={() => {
+                  setInvalidSheetNamesError(null);
+                  setSelectedFile(null);
+                }}
+                className="w-full rounded-lg bg-primary px-4 py-2 font-semibold text-white transition-all hover:bg-primary/90"
+              >
+                Entendido, cargar otro archivo
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       <div className="mx-auto max-w-6xl space-y-8">
         <div className="flex flex-col gap-1">
           <h2 className="text-3xl font-black tracking-tight text-slate-900 dark:text-slate-50">Importar Horario</h2>
@@ -1281,7 +1579,7 @@ export default function ExcelImportPage() {
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
             <p className="mb-1 text-xs font-bold tracking-widest text-slate-500 uppercase">Clases Totales</p>
-            <h4 className="text-2xl font-black text-slate-900 dark:text-white">{hasAnalyzed ? reviewClasses.length : "-"}</h4>
+            <h4 className="text-2xl font-black text-slate-900 dark:text-white">{hasAnalyzed ? previewRows.length : "-"}</h4>
           </div>
           <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
             <p className="mb-1 text-xs font-bold tracking-widest text-slate-500 uppercase">Clases con conflictos</p>
@@ -1308,15 +1606,15 @@ export default function ExcelImportPage() {
                   Completa los campos faltantes
                 </div>
               ) :
-              conflictClasses.length === 0 ? (
+              conflictClasses.length === 0 && pendingDeletedCount === 0 ? (
                 <div className="flex items-center gap-2 text-sm font-bold text-green-600 dark:text-green-400">
                   <span className="material-symbols-outlined text-sm">verified</span>
-                  Sin conflictos detectados
+                  Sin conflictos ni eliminaciones pendientes
                 </div>
               ) : (
                 <div className="flex items-center gap-2 text-sm font-bold text-amber-700 dark:text-amber-400">
                   <span className="material-symbols-outlined text-sm">warning</span>
-                  Conflictos detectados
+                  Revisión pendiente
                 </div>
               )
             ) : (
@@ -1404,11 +1702,26 @@ export default function ExcelImportPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                  {orderedPreviewRows.length ? (
-                    orderedPreviewRows.map((item) => {
-                      const isConflict = item.conflicts.length > 0;
+                  {previewRows.length ? (
+                    previewRows.map((row) => {
+                      const item = row.item;
+                      const isDeleted = row.rowType === "deleted";
+                      const isConflict = !isDeleted && item.conflicts.length > 0;
+                      const isChanged = !isDeleted && changedClassKeys.has(item.key);
+                      const previousSlots = previousSlotsByClassKey.get(item.key);
+                      const deletedDecision = deletedClassDecisions[item.key] ?? "pending";
+
                       return (
-                        <tr key={item.key} className={isConflict ? "bg-amber-50/40" : "hover:bg-slate-50 dark:hover:bg-slate-800/30"}>
+                        <tr
+                          key={`${row.rowType}-${item.key}`}
+                          className={
+                            isDeleted
+                              ? "bg-rose-50/30"
+                              : isConflict
+                                ? "bg-amber-50/40"
+                                : "hover:bg-slate-50 dark:hover:bg-slate-800/30"
+                          }
+                        >
                           <td className="px-6 py-4 font-medium">
                             <div className="font-semibold text-slate-900 dark:text-slate-100">{item.code} | {item.subject}</div>
                             <div className="text-xs text-slate-500">{item.teacher}</div>
@@ -1419,7 +1732,14 @@ export default function ExcelImportPage() {
                             {formatDisplayDateRange(item.startDate, item.endDate)}
                           </td>
                           <td className="px-6 py-4 text-xs text-slate-600">
-                            {isConflict ? (
+                            {isDeleted ? (
+                              <div className="space-y-1">
+                                <div>
+                                  <span className="font-semibold text-rose-700">Clase no encontrada en el Excel:</span>{" "}
+                                  ¿Deseas conservarla en el sistema o eliminarla del horario normal?
+                                </div>
+                              </div>
+                            ) : isConflict ? (
                               <div className="space-y-1">
                                 <div>
                                   <span className="font-semibold text-blue-700">Nueva propuesta:</span>{" "}
@@ -1441,13 +1761,38 @@ export default function ExcelImportPage() {
                                   </div>
                                 ))}
                               </div>
+                            ) : isChanged ? (
+                              <div className="space-y-1">
+                                <div>
+                                  <span className="font-semibold text-blue-700">Clase cambiada:</span>{" "}
+                                  Se actualizará con nuevo bloque.
+                                </div>
+                                {previousSlots ? (
+                                  <div>
+                                    <span className="font-semibold text-slate-700">Antes:</span> {previousSlots}
+                                  </div>
+                                ) : null}
+                                <div>
+                                  <span className="font-semibold text-emerald-700">Ahora:</span> {formatSlots(item.slots)}
+                                </div>
+                              </div>
                             ) : (
-                              "Sin conflicto"
+                              "Clase nueva"
                             )}
                           </td>
                           <td className="px-6 py-4">
-                            {!isConflict ? (
-                              <span className="rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-bold text-green-700 uppercase">Listo</span>
+                            {isDeleted ? (
+                              deletedDecision === "pending" ? (
+                                <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-bold text-amber-700 uppercase">Pendiente</span>
+                              ) : deletedDecision === "delete" ? (
+                                <span className="rounded-full bg-rose-100 px-2.5 py-0.5 text-xs font-bold text-rose-700 uppercase">Eliminar</span>
+                              ) : (
+                                <span className="rounded-full bg-slate-200 px-2.5 py-0.5 text-xs font-bold text-slate-700 uppercase">Conservar</span>
+                              )
+                            ) : !isConflict ? (
+                              <span className="rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-bold text-green-700 uppercase">
+                                {isChanged ? "Cambiada" : "Nueva"}
+                              </span>
                             ) : item.decision === "pending" ? (
                               <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-bold text-amber-700 uppercase">Pendiente</span>
                             ) : item.decision === "accept" ? (
@@ -1457,7 +1802,34 @@ export default function ExcelImportPage() {
                             )}
                           </td>
                           <td className="px-6 py-4">
-                            {isConflict ? (
+                            {isDeleted ? (
+                              <div className="flex justify-end gap-2">
+                                <button
+                                  type="button"
+                                  className={`inline-flex h-8 items-center justify-center rounded-md border px-2 text-xs font-semibold ${
+                                    deletedDecision === "keep"
+                                      ? "border-slate-700 bg-slate-200 text-slate-800 ring-2 ring-slate-400"
+                                      : "border-slate-300 text-slate-600"
+                                  }`}
+                                  title="Conservar esta clase aunque no aparezca en el Excel"
+                                  onClick={() => setDeletedClassDecision(item.key, "keep")}
+                                >
+                                  Conservar
+                                </button>
+                                <button
+                                  type="button"
+                                  className={`inline-flex h-8 items-center justify-center rounded-md border px-2 text-xs font-semibold ${
+                                    deletedDecision === "delete"
+                                      ? "border-red-700 bg-red-200 text-red-800 ring-2 ring-red-400"
+                                      : "border-slate-300 text-slate-600"
+                                  }`}
+                                  title="Eliminar esta clase porque no aparece en el Excel"
+                                  onClick={() => setDeletedClassDecision(item.key, "delete")}
+                                >
+                                  Eliminar
+                                </button>
+                              </div>
+                            ) : isConflict ? (
                               <div className="flex justify-end gap-2">
                                 <button
                                   type="button"
@@ -1493,7 +1865,7 @@ export default function ExcelImportPage() {
                     <tr>
                       <td colSpan={7} className="px-6 py-10 text-center text-slate-500">
                           {hasAnalyzed
-                            ? "No hay clases nuevas o modificadas para mostrar."
+                            ? "No hay clases nuevas, eliminadas o cambiadas para mostrar."
                             : "Carga un archivo para ver la visualización automáticamente."}
                       </td>
                     </tr>
@@ -1546,17 +1918,17 @@ export default function ExcelImportPage() {
               </div>
             ) : null}
 
-            {hasAnalyzed && conflictClasses.length > 0 ? (
+            {hasAnalyzed && (conflictClasses.length > 0 || pendingDeletedCount > 0) ? (
               <p className="max-w-lg text-center text-sm text-amber-700">
-                Conflictos detectados. Debes aceptar o rechazar los {pendingConflictCount} conflictos pendientes para continuar.
+                Debes revisar {pendingConflictCount} conflictos y {pendingDeletedCount} clases no encontradas en el Excel antes de continuar.
               </p>
             ) : null}
 
-            {hasAnalyzed && conflictClasses.length === 0 ? (
-              <p className="max-w-lg text-center text-sm text-green-700">Sin conflictos detectados.</p>
+            {hasAnalyzed && conflictClasses.length === 0 && pendingDeletedCount === 0 ? (
+              <p className="max-w-lg text-center text-sm text-green-700">Sin conflictos ni eliminaciones pendientes.</p>
             ) : null}
 
-            {hasAnalyzed && !manualMode && effectiveImportClassCount === 0 ? (
+            {hasAnalyzed && !manualMode && !hasEffectiveChanges ? (
               <p className="max-w-lg text-center text-sm text-slate-600">
                 No hay cambios para importar. El archivo coincide con el horario actual.
               </p>
