@@ -59,7 +59,7 @@ type NewEventFormState = {
   organizer: string;
   startDate: string;
   endDate: string;
-  status: AuditorioEstado;
+  status: AuditorioEstado | "";
   attendees: string;
   needsScreen: boolean;
   needsSound: boolean;
@@ -331,7 +331,7 @@ function createEmptyFormState(defaultDate: string): NewEventFormState {
     organizer: "",
     startDate: defaultDate,
     endDate: defaultDate,
-    status: "Pendiente",
+    status: "",
     attendees: "",
     needsScreen: false,
     needsSound: false,
@@ -545,7 +545,7 @@ export default function AuditorioPage() {
     requiereProyector: state.needsProjector,
     requiereFiltroAgua: state.needsWaterFilter,
     observaciones: state.observations.trim() || null,
-    estado: state.status,
+    estado: state.status as AuditorioEstado,
     horarios: state.scheduleBlocks
       .slice()
       .sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime))
@@ -766,6 +766,10 @@ export default function AuditorioPage() {
 
     if (formState.startDate && formState.endDate && formState.endDate < formState.startDate) {
       errors.endDate = "La fecha de fin debe ser igual o posterior a la fecha de inicio.";
+    }
+
+    if (!formState.status) {
+      errors.status = "Selecciona el estado de la reserva.";
     }
 
     const attendees = Number(formState.attendees);
@@ -1320,18 +1324,22 @@ export default function AuditorioPage() {
                   Estado
                   <select
                     value={formState.status}
-                    onChange={(event) =>
+                    onChange={(event) => {
+                      clearFieldError("status");
                       setFormState((current) => ({
                         ...current,
-                        status: event.target.value as AuditorioEstado,
-                      }))
-                    }
-                    className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                        status: event.target.value as AuditorioEstado | "",
+                      }));
+                    }}
+                    className={`mt-1 w-full rounded-md border px-3 py-2 text-sm ${fieldErrors.status ? "border-red-400 bg-red-50" : "border-slate-300"}`}
                   >
+                    <option value="" disabled>
+                      Selecciona un estado
+                    </option>
                     <option value="Pendiente">Pendiente</option>
                     <option value="Aprobada">Aprobada</option>
-                    <option value="Cancelada">Cancelada</option>
                   </select>
+                  {fieldErrors.status ? <p className="mt-1 text-xs text-red-600">{fieldErrors.status}</p> : null}
                 </label>
 
                 <label className="text-sm text-slate-700">

@@ -411,6 +411,15 @@ const scoreMatch = (item: ScheduleItem, query: string) => {
   return score;
 };
 
+function LoadingInline({ text }: { text: string }) {
+  return (
+    <span className="inline-flex items-center gap-2 text-xs font-semibold text-slate-500">
+      <span className="material-symbols-outlined animate-spin text-[14px]">progress_activity</span>
+      {text}
+    </span>
+  );
+}
+
 export default function Home() {
   const router = useRouter();
   const occupancyChartScrollRef = useRef<HTMLDivElement | null>(null);
@@ -1022,26 +1031,23 @@ export default function Home() {
 
   return (
     <div className="mx-auto max-w-7xl space-y-6 p-3 sm:space-y-8 sm:p-6 lg:p-8">
-      {isLoadingData ? (
-        <section className="rounded-2xl border border-[#295786]/20 bg-[#295786]/5 p-4">
-          <div className="flex items-center gap-3 text-[#295786]">
-            <span className="material-symbols-outlined animate-spin text-base">progress_activity</span>
-            <div>
-              <p className="text-sm font-bold">Cargando tablero...</p>
-              <p className="text-xs opacity-80">Puedes navegar la página mientras se actualizan los datos.</p>
-            </div>
-          </div>
-        </section>
-      ) : null}
-
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {kpis.map((kpi) => (
           <div key={kpi.title} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6 dark:border-slate-800 dark:bg-slate-900">
             <p className="mb-2 text-xs font-medium tracking-wider text-slate-500 uppercase transition-none transform-none motion-reduce:transition-none motion-reduce:transform-none">{kpi.title}</p>
             <div className="flex items-end justify-between">
-              <h3 className="text-3xl font-bold text-slate-900 dark:text-white">{isLoadingData ? "..." : kpi.value}</h3>
+              <h3 className="text-3xl font-bold text-slate-900 dark:text-white">
+                {isLoadingData ? <span className="material-symbols-outlined animate-spin text-[22px]">progress_activity</span> : kpi.value}
+              </h3>
               <span className={`rounded px-2 py-1 text-xs font-bold ${isLoadingData ? "bg-slate-100 text-slate-500" : kpi.chipClasses}`}>
-                {isLoadingData ? "Cargando" : kpi.chip}
+                {isLoadingData ? (
+                  <span className="inline-flex items-center gap-1">
+                    <span className="material-symbols-outlined animate-spin text-[12px]">progress_activity</span>
+                    Cargando
+                  </span>
+                ) : (
+                  kpi.chip
+                )}
               </span>
             </div>
           </div>
@@ -1210,7 +1216,7 @@ export default function Home() {
             ))}
             {miniMapRooms.length === 0 && (
               <div className="col-span-2 rounded-xl border border-slate-200 p-4 text-sm text-slate-500 md:col-span-4 lg:col-span-6">
-                {isLoadingData ? "Cargando mapa de salones..." : "No hay datos de salones para este piso."}
+                {isLoadingData ? <LoadingInline text="Cargando mapa de salones..." /> : "No hay datos de salones para este piso."}
               </div>
             )}
           </div>
@@ -1245,11 +1251,18 @@ export default function Home() {
             <div className="mb-2 flex items-center justify-between gap-2">
               <h4 className="text-sm font-bold tracking-wider text-slate-800 uppercase dark:text-slate-200">Ocupación por hora de salones</h4>
               <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-bold tracking-wider text-slate-600 uppercase dark:bg-slate-800 dark:text-slate-300">
-                {isLoadingData ? "Cargando" : "Datos en vivo"}
+                {isLoadingData ? (
+                  <span className="inline-flex items-center gap-1">
+                    <span className="material-symbols-outlined animate-spin text-[12px]">progress_activity</span>
+                    Cargando
+                  </span>
+                ) : (
+                  "Datos en vivo"
+                )}
               </span>
             </div>
             {isLoadingData ? (
-              <p className="mb-2 text-xs text-slate-500">Actualizando ocupación por hora...</p>
+              <p className="mb-2"><LoadingInline text="Actualizando ocupación por hora..." /></p>
             ) : null}
             <div ref={occupancyChartScrollRef} className="overflow-x-auto">
               <div className="h-72 min-w-[920px] w-full sm:min-w-0">
@@ -1374,7 +1387,7 @@ export default function Home() {
             ))}
             {nextClasses.length === 0 && (
               <div className="p-4 text-sm text-slate-500">
-                {isLoadingData ? "Cargando proximas clases..." : "No hay clases que inicien en los proximos 30 minutos."}
+                {isLoadingData ? <LoadingInline text="Cargando próximas clases..." /> : "No hay clases que inicien en los proximos 30 minutos."}
               </div>
             )}
           </div>
@@ -1417,7 +1430,7 @@ export default function Home() {
               ))}
               {recentActivity.length === 0 && (
                 <div className="p-4 text-sm text-slate-500">
-                  {isLoadingData ? "Cargando actividad reciente..." : "Aún no hay actividad de importación registrada."}
+                  {isLoadingData ? <LoadingInline text="Cargando actividad reciente..." /> : "Aún no hay actividad de importación registrada."}
                 </div>
               )}
             </div>
