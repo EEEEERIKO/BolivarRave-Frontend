@@ -15,6 +15,16 @@ export const useWebSocketSchedules = ({
   const socketRef = useRef<Socket | null>(null);
   const isConnectedRef = useRef(false);
   const connectionAttemptRef = useRef(0);
+  const onScheduleRefreshRef = useRef<UseWebSocketSchedulesOptions["onScheduleRefresh"]>(onScheduleRefresh);
+  const onScheduleChangeRef = useRef<UseWebSocketSchedulesOptions["onScheduleChange"]>(onScheduleChange);
+
+  useEffect(() => {
+    onScheduleRefreshRef.current = onScheduleRefresh;
+  }, [onScheduleRefresh]);
+
+  useEffect(() => {
+    onScheduleChangeRef.current = onScheduleChange;
+  }, [onScheduleChange]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -112,7 +122,7 @@ export const useWebSocketSchedules = ({
 
       // Notificar al componente
       console.log("🔄 Sincronizando datos desde la API...");
-      onScheduleRefresh?.();
+      onScheduleRefreshRef.current?.();
     });
 
     socket.on("schedule:changed", (event: { eventId?: string; slotId?: string }) => {
@@ -126,7 +136,7 @@ export const useWebSocketSchedules = ({
 
       // Notificar al componente
       console.log("🔄 Sincronizando cambio específico...");
-      onScheduleChange?.(event.eventId, event.slotId);
+      onScheduleChangeRef.current?.(event.eventId, event.slotId);
     });
 
     // Logs de debugging
@@ -146,7 +156,7 @@ export const useWebSocketSchedules = ({
       socket.emit("unsubscribe:schedules");
       socket.disconnect();
     };
-  }, [enabled, onScheduleRefresh, onScheduleChange]);
+  }, [enabled]);
 
   return {
     isConnectedRef,

@@ -1437,6 +1437,7 @@ export default function StaffPage() {
   const [isLoadingLiveSchedules, setIsLoadingLiveSchedules] = useState(false);
   const [liveJornadaByStaffId, setLiveJornadaByStaffId] = useState<Record<string, StaffJornadaItem[]>>({});
   const [livePausaByStaffId, setLivePausaByStaffId] = useState<Record<string, StaffPausaItem[]>>({});
+  const [cachedLiveStatusByStaffId, setCachedLiveStatusByStaffId] = useState<Record<string, StaffLiveStatus>>({});
   const [selectedStaffJornada, setSelectedStaffJornada] = useState<StaffJornadaItem[]>([]);
   const [selectedStaffPausas, setSelectedStaffPausas] = useState<StaffPausaItem[]>([]);
   const [isLoadingDailySchedule, setIsLoadingDailySchedule] = useState(false);
@@ -1494,6 +1495,13 @@ export default function StaffPage() {
   const selectedStaffSkills = selectedStaff?.habilidades ?? [];
 
   useEffect(() => {
+    const cachedLiveStatus = getCachedData<Record<string, StaffLiveStatus>>("live_status_by_staff_id");
+    if (cachedLiveStatus) {
+      setCachedLiveStatusByStaffId(cachedLiveStatus);
+    }
+  }, []);
+
+  useEffect(() => {
     let isCancelled = false;
 
     const loadLiveSchedules = async () => {
@@ -1522,41 +1530,39 @@ export default function StaffPage() {
       try {
         setIsLoadingLiveSchedules(true);
 
-        const results = await Promise.all(
-          staffList.map(async (staff) => {
-            const jornadaResponse = await fetchApiJson<StaffJornadaResponse>(`/api/staff/${staff.id}/jornada-semanal`, {
-              cache: "no-store",
-            }).catch(() => ({ jornadas: [] }));
-
-            const pausaResponse = await fetchApiJson<StaffPausaResponse>(`/api/staff/${staff.id}/pausas-programadas`, {
-              cache: "no-store",
-            }).catch(() => ({ pausas: [] }));
-
-            const jornadas = Array.isArray(jornadaResponse.jornadas)
-              ? jornadaResponse.jornadas.map((item) => ({
-                  ...item,
-                  diaSemana: toUiWorkWeekDay(item.diaSemana),
-                }))
-              : [];
-
-            const pausas = Array.isArray(pausaResponse.pausas)
-              ? pausaResponse.pausas.map((item) => ({
-                  ...item,
-                  diaSemana: toUiWorkWeekDay(item.diaSemana),
-                }))
-              : [];
-
-            return { staffId: staff.id, jornadas, pausas };
-          }),
-        );
+        // Fetch all staff schedules in 2 requests (bulk) instead of 2N requests.
+        const [jornadasResponse, pausasResponse] = await Promise.all([
+          fetchApiJson<StaffJornadasBulkResponse>("/api/staff/jornadas-bulk", {
+            cache: "no-store",
+          }).catch(() => ({
+            jornadas: {} as Record<string, Array<{ id: string; staffId: string; diaSemana: string; horaEntrada: string; horaSalida: string; totalHorasDia: number }>>,
+          })),
+          fetchApiJson<StaffPausasBulkResponse>("/api/staff/pausas-bulk", {
+            cache: "no-store",
+          }).catch(() => ({
+            pausas: {} as Record<string, Array<{ id: string; staffId: string; diaSemana: string; tipoPausa: "Comida" | "Descanso"; horaInicio: string; horaFin: string }>>,
+          })),
+        ]);
 
         if (isCancelled) return;
 
         const nextJornadas: Record<string, StaffJornadaItem[]> = {};
         const nextPausas: Record<string, StaffPausaItem[]> = {};
-        for (const result of results) {
-          nextJornadas[result.staffId] = result.jornadas;
-          nextPausas[result.staffId] = result.pausas;
+
+        for (const staff of staffList) {
+          const jornadaItems = jornadasResponse.jornadas[staff.id] ?? [];
+          const pausaItems = pausasResponse.pausas[staff.id] ?? [];
+
+          nextJornadas[staff.id] = jornadaItems.map((item) => ({
+            ...item,
+            diaSemana: toUiWorkWeekDay(item.diaSemana),
+          }));
+
+          nextPausas[staff.id] = pausaItems.map((item) => ({
+            ...item,
+            diaSemana: toUiWorkWeekDay(item.diaSemana),
+            tipoPausa: item.tipoPausa as StaffPausaItem["tipoPausa"],
+          }));
         }
 
         setLiveJornadaByStaffId(nextJornadas);
@@ -1795,13 +1801,33 @@ export default function StaffPage() {
     const statusMap: Record<string, StaffLiveStatus> = {};
 
     for (const staff of staffList) {
-      const jornadas = liveJornadaByStaffId[staff.id] ?? [];
-      const pausas = livePausaByStaffId[staff.id] ?? [];
-      statusMap[staff.id] = getLiveStatusFromSchedules(jornadas, pausas);
+      const hasLiveJornada = Object.prototype.hasOwnProperty.call(liveJornadaByStaffId, staff.id);
+      const hasLivePausa = Object.prototype.hasOwnProperty.call(livePausaByStaffId, staff.id);
+
+      if (hasLiveJornada && hasLivePausa) {
+        const jornadas = liveJornadaByStaffId[staff.id] ?? [];
+        const pausas = livePausaByStaffId[staff.id] ?? [];
+        statusMap[staff.id] = getLiveStatusFromSchedules(jornadas, pausas);
+        continue;
+      }
+
+      const cachedStatus = cachedLiveStatusByStaffId[staff.id];
+      if (cachedStatus) {
+        statusMap[staff.id] = cachedStatus;
+        continue;
+      }
+
+      // Fallback while live schedule data is loading.
+      statusMap[staff.id] = staff.estado === "Active" ? "Activo" : "Inactivo";
     }
 
     return statusMap;
-  }, [staffList, liveJornadaByStaffId, livePausaByStaffId]);
+  }, [staffList, liveJornadaByStaffId, livePausaByStaffId, cachedLiveStatusByStaffId]);
+
+  useEffect(() => {
+    if (Object.keys(liveStatusByStaffId).length === 0) return;
+    setCachedData("live_status_by_staff_id", liveStatusByStaffId, { ttl: 10 * 60 * 1000 });
+  }, [liveStatusByStaffId]);
 
   const staffByLiveStatus = useMemo(() => {
     const active: StaffApi[] = [];
