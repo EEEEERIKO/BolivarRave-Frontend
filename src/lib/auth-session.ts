@@ -6,6 +6,8 @@ export type AuthSession = {
   roleLabel: string;
   avatarUrl?: string;
   cedula: string;
+  staffId?: string;
+  accessToken: string;
 };
 
 const AUTH_SESSION_KEY = "unac_auth_session_v1";
@@ -26,7 +28,7 @@ export function readAuthSession(): AuthSession | null {
 
   try {
     const parsed = JSON.parse(raw) as AuthSession;
-    if (!parsed || !parsed.role || !parsed.name || !parsed.roleLabel || !parsed.cedula) {
+    if (!parsed || !parsed.role || !parsed.name || !parsed.roleLabel || !parsed.cedula || !parsed.accessToken) {
       return null;
     }
     return parsed;

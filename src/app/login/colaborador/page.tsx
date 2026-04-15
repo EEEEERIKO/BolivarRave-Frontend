@@ -22,6 +22,23 @@ export default function LoginColaboradorPage() {
 
   const cleanCedula = useMemo(() => cedula.replace(/\D/g, ""), [cedula]);
 
+  const renderError = (message: string) => {
+    const normalizedMessage = message.toLowerCase();
+
+    if (normalizedMessage.includes("admin/monitor") || normalizedMessage.includes("portal de admin")) {
+      return (
+        <p className="rounded-md border border-[#f7c56c]/50 bg-[#fff8e6] px-3 py-2 text-xs font-medium text-[#8a5a00]">
+          Este usuario debe iniciar sesión con su contraseña en el portal de administradores o monitores.{' '}
+          <a className="font-bold text-[#3a5f94] hover:underline" href="/login">
+            Ir al portal de administradores
+          </a>
+        </p>
+      );
+    }
+
+    return <p className="rounded-md border border-[#fe8983]/50 bg-[#fe8983]/15 px-3 py-2 text-xs font-medium text-[#752121]">{message}</p>;
+  };
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
@@ -146,7 +163,7 @@ export default function LoginColaboradorPage() {
                 </div>
               </div>
 
-              {error ? <p className="rounded-md border border-[#fe8983]/50 bg-[#fe8983]/15 px-3 py-2 text-xs font-medium text-[#752121]">{error}</p> : null}
+              {error ? renderError(error) : null}
 
               <button
                 type="submit"

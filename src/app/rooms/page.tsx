@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { fetchApiJson } from "@/lib/api-client";
 
 type RoomStatus = "Available" | "Occupied" | "Starting Soon";
 
@@ -14,6 +15,7 @@ type RoomData = {
   session: string;
   section: string;
   professor: string;
+  faculty: string;
   schedule: string;
   remaining: string;
 };
@@ -31,6 +33,7 @@ type ApiSalon = {
       nombrePrincipal: string | null;
       responsable: string | null;
       codigoMateria: string | null;
+      facultad: string | null;
       actividad: string | null;
     };
   }>;
@@ -247,15 +250,9 @@ export default function RoomsPage() {
           setError(null);
         }
 
-        const response = await fetch("/api/schedules/rooms-info", {
+        const data = await fetchApiJson<ApiResponse>("/api/schedules/rooms-info", {
           cache: "no-store",
         });
-
-        if (!response.ok) {
-          throw new Error("Failed to fetch rooms");
-        }
-
-        const data = (await response.json()) as ApiResponse;
         const todayName = getTodayName();
         const now = new Date();
         const currentMinutes = now.getHours() * 60 + now.getMinutes();
@@ -367,6 +364,9 @@ export default function RoomsPage() {
             const professor = displaySchedule && displaySchedule.evento.responsable
               ? displaySchedule.evento.responsable.trim() || "N/A"
               : "N/A";
+            const faculty = displaySchedule && displaySchedule.evento.facultad
+              ? displaySchedule.evento.facultad.trim() || "Sin facultad"
+              : "Sin facultad";
             const schedule = displaySchedule
               ? `${formatTimeLabel(displaySchedule.horaInicio)} - ${formatTimeLabel(displaySchedule.horaFin)}`
               : "Disponible ahora";
@@ -381,6 +381,7 @@ export default function RoomsPage() {
               session,
               section: displaySchedule ? `${displaySchedule.evento.codigoMateria || ""}` : "Espacio libre",
               professor,
+              faculty,
               schedule,
               remaining,
             });
@@ -532,7 +533,7 @@ export default function RoomsPage() {
                 </div>
                 <div>
                   <p className="text-sm font-semibold">{selectedInfo.professor}</p>
-                  <p className="text-[10px] text-slate-500">Departamento</p>
+                  <p className="text-[10px] text-slate-500">{selectedInfo.faculty}</p>
                 </div>
               </div>
             </div>
@@ -623,7 +624,7 @@ export default function RoomsPage() {
                   </div>
                   <div>
                     <p className="text-sm font-semibold">{selectedInfo.professor}</p>
-                    <p className="text-[10px] text-slate-500">Departamento</p>
+                    <p className="text-[10px] text-slate-500">{selectedInfo.faculty}</p>
                   </div>
                 </div>
               </div>

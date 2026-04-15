@@ -5,7 +5,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { clearAuthSession, readAuthSession, type AuthSession } from "@/lib/auth-session";
+import { readAuthSession, type AuthSession } from "@/lib/auth-session";
 
 type NavItem = {
   label: string;
@@ -23,6 +23,7 @@ const navItems: NavItem[] = [
   { label: "Tareas", icon: "assignment_turned_in", href: "/tasks", isRoute: true },
   { label: "Inventario", icon: "inventory_2", href: "/inventory", isRoute: true },
   { label: "Importar Excel", icon: "upload_file", href: "/excel-import", isRoute: true },
+  { label: "Configuración", icon: "settings", href: "/settings", isRoute: true },
 ];
 
 function navClasses(isActive: boolean) {
@@ -63,13 +64,6 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
       router.replace("/login");
     }
   }, [isLoginRoute, router]);
-
-  const handleLogout = () => {
-    clearAuthSession();
-    setAuthSession(null);
-    router.replace("/login");
-    router.refresh();
-  };
 
   if (isLoginRoute) {
     return <>{children}</>;
@@ -125,12 +119,6 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
             );
           })}
 
-          <div className="mt-4 border-t border-slate-100 pt-4 dark:border-slate-800">
-            <button type="button" className={`${navClasses(false)} w-full`} onClick={handleLogout}>
-              <span className="material-symbols-outlined">settings</span>
-              <span>Cerrar sesión</span>
-            </button>
-          </div>
         </nav>
 
         <div className="border-t border-slate-200 p-4 dark:border-slate-800">

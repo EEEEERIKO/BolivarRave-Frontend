@@ -1,3 +1,5 @@
+import { readAuthSession } from "@/lib/auth-session";
+
 const trimSlash = (value: string) => value.replace(/\/+$/, "");
 
 const toFriendlyApiError = (path: string, message: string, status?: number) => {
@@ -21,6 +23,10 @@ const toFriendlyApiError = (path: string, message: string, status?: number) => {
 
   if (status === 401 || normalizedMessage.includes("no autorizado")) {
     return "No tienes permisos para realizar esta acción. Verifica tu sesión o credenciales.";
+  }
+
+  if (status === 403 && path.includes("/api/staff/login")) {
+    return message;
   }
 
   if (status === 403) {
@@ -102,7 +108,17 @@ export async function fetchApiJson<T>(path: string, init?: RequestInit): Promise
     const url = `${base}${normalizedPath}`;
     lastUrl = url;
     try {
-      const response = await fetch(url, init);
+      const session = typeof window !== "undefined" ? readAuthSession() : null;
+      const headers = new Headers(init?.headers ?? undefined);
+
+      if (session?.accessToken && !headers.has("Authorization")) {
+        headers.set("Authorization", `Bearer ${session.accessToken}`);
+      }
+
+      const response = await fetch(url, {
+        ...init,
+        headers,
+      });
       const rawText = await response.text();
       let body: (T | { error?: string }) | null = null;
 

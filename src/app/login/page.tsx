@@ -20,6 +20,23 @@ export default function LoginPage() {
 
   const cleanCedula = useMemo(() => cedula.replace(/\D/g, ""), [cedula]);
 
+  const renderError = (message: string) => {
+    const normalizedMessage = message.toLowerCase();
+
+    if (normalizedMessage.includes("portal de admin/monitor") || normalizedMessage.includes("debe ingresar por el portal")) {
+      return (
+        <p className="rounded-md border border-[#f7c56c]/50 bg-[#fff8e6] px-3 py-2 text-xs font-medium text-[#8a5a00]">
+          Este usuario debe acceder al portal de colaboradores con su cédula.{' '}
+          <a className="font-bold text-[#3a5f94] hover:underline" href="/login/colaborador">
+            Ir al portal de colaboradores
+          </a>
+        </p>
+      );
+    }
+
+    return <p className="rounded-md border border-[#fe8983]/50 bg-[#fe8983]/15 px-3 py-2 text-xs font-medium text-[#752121]">{message}</p>;
+  };
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
@@ -156,7 +173,7 @@ export default function LoginPage() {
                 </div>
               </div>
 
-              {error ? <p className="rounded-md border border-[#fe8983]/50 bg-[#fe8983]/15 px-3 py-2 text-xs font-medium text-[#752121]">{error}</p> : null}
+              {error ? renderError(error) : null}
 
               <div className="pt-3">
                 <button
