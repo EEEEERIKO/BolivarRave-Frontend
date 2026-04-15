@@ -5,6 +5,20 @@ import { Rnd, RndDragCallback, RndResizeCallback } from "react-rnd";
 import { fetchApiJson } from "@/lib/api-client";
 import { useWebSocketSchedules } from "@/lib/use-websocket-schedules";
 
+const toAmPmLabel = (value: string) => {
+  const [rawHour, rawMinute] = value.split(":");
+  const hour = Number(rawHour);
+  const minute = Number(rawMinute);
+
+  if (!Number.isInteger(hour) || !Number.isInteger(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+    return value;
+  }
+
+  const period = hour >= 12 ? "PM" : "AM";
+  const hour12 = hour % 12 === 0 ? 12 : hour % 12;
+  return `${hour12}:${String(minute).padStart(2, "0")} ${period}`;
+};
+
 type ScheduleEvent = {
   id: string;
   classId?: string;
@@ -25,12 +39,11 @@ type ScheduleEvent = {
     start: string;
     end: string;
   }>;
-  reservationType?: "normal" | "momentanea" | "iglesia";
+  reservationType?: ReservationType;
   color: "blue" | "emerald" | "amber" | "violet" | "red";
 };
 
 type UpdateScope = "week" | "always";
-
 type PendingScopedUpdate = {
   id: string;
   eventId: string;
@@ -2006,7 +2019,10 @@ export default function SchedulesPage() {
                       }`}
                       style={{ gridRow: rowIndex + 2, gridColumn: 1 }}
                     >
-                      {slot}
+                      {(() => {
+                        const [slotStart = "", slotEnd = ""] = slot.split("-");
+                        return `${toAmPmLabel(slotStart)} - ${toAmPmLabel(slotEnd)}`;
+                      })()}
                     </div>
 
                     {filteredRooms.map((room, roomIndex) => (
@@ -2020,7 +2036,10 @@ export default function SchedulesPage() {
                         }`}
                         style={{ gridRow: rowIndex + 2, gridColumn: roomIndex + 2 }}
                         onClick={() => setSelectedEventId(null)}
-                        title={`${room} - ${slot}`}
+                        title={`${room} - ${(() => {
+                          const [slotStart = "", slotEnd = ""] = slot.split("-");
+                          return `${toAmPmLabel(slotStart)} - ${toAmPmLabel(slotEnd)}`;
+                        })()}`}
                       />
                     ))}
                   </Fragment>
@@ -2279,7 +2298,7 @@ export default function SchedulesPage() {
                     >
                       {slotStarts.map((slot) => (
                         <option key={`edit-start-${slot}`} value={slot}>
-                          {slot}
+                          {toAmPmLabel(slot)}
                         </option>
                       ))}
                     </select>
@@ -2290,7 +2309,7 @@ export default function SchedulesPage() {
                     >
                       {slotEnds.map((slot) => (
                         <option key={`edit-end-${slot}`} value={slot}>
-                          {slot}
+                          {toAmPmLabel(slot)}
                         </option>
                       ))}
                     </select>
@@ -2564,7 +2583,7 @@ export default function SchedulesPage() {
                           <option value="">Selecciona hora inicio</option>
                           {slotStarts.map((slotStart) => (
                             <option key={`slot-start-${index}-${slotStart}`} value={slotStart}>
-                              {slotStart}
+                              {toAmPmLabel(slotStart)}
                             </option>
                           ))}
                         </select>
@@ -2584,7 +2603,7 @@ export default function SchedulesPage() {
                           <option value="">Selecciona hora fin</option>
                           {slotEnds.map((slotEnd) => (
                             <option key={`slot-end-${index}-${slotEnd}`} value={slotEnd}>
-                              {slotEnd}
+                              {toAmPmLabel(slotEnd)}
                             </option>
                           ))}
                         </select>
@@ -2647,20 +2666,30 @@ export default function SchedulesPage() {
                 onChange={(e) => setAvailableRoomForm((prev) => ({ ...prev, date: e.target.value }))}
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
               />
-              <input
-                type="time"
+              <select
                 required
                 value={availableRoomForm.start}
                 onChange={(e) => setAvailableRoomForm((prev) => ({ ...prev, start: e.target.value }))}
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
-              />
-              <input
-                type="time"
+              >
+                {slotStarts.map((slotStart) => (
+                  <option key={`available-start-${slotStart}`} value={slotStart}>
+                    {toAmPmLabel(slotStart)}
+                  </option>
+                ))}
+              </select>
+              <select
                 required
                 value={availableRoomForm.end}
                 onChange={(e) => setAvailableRoomForm((prev) => ({ ...prev, end: e.target.value }))}
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
-              />
+              >
+                {slotEnds.map((slotEnd) => (
+                  <option key={`available-end-${slotEnd}`} value={slotEnd}>
+                    {toAmPmLabel(slotEnd)}
+                  </option>
+                ))}
+              </select>
               <input
                 type="number"
                 min={1}

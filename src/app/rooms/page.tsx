@@ -106,6 +106,18 @@ function parseTimeToMinutes(value: string): number {
   return hours * 60 + minutes;
 }
 
+function formatTimeAmPm(value: string): string {
+  const label = formatTimeLabel(value);
+  const [hours, minutes] = label.split(":").map(Number);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
+    return label;
+  }
+
+  const suffix = hours >= 12 ? "PM" : "AM";
+  const normalizedHour = hours % 12 === 0 ? 12 : hours % 12;
+  return `${normalizedHour}:${String(minutes).padStart(2, "0")} ${suffix}`;
+}
+
 function getEffectiveFloor(room: { nombre: string; piso: number | null }): number | null {
   const roomNumber = extractRoomNumber(room.nombre);
   if (roomNumber !== 9999) {
@@ -306,7 +318,7 @@ export default function RoomsPage() {
             let status: RoomStatus = "Available";
             let displaySchedule: (typeof todaySchedules)[number] | null = null;
             let remaining = "-";
-            let cardDetail = "No class scheduled today";
+            let cardDetail = "No hay clases programadas hoy";
 
             const currentSchedule = todaySchedules.find((item) => {
               const start = parseTimeToMinutes(item.horaInicio);
@@ -324,7 +336,7 @@ export default function RoomsPage() {
               status = "Occupied";
               displaySchedule = currentSchedule;
               const end = parseTimeToMinutes(currentSchedule.horaFin);
-              remaining = `${Math.max(end - currentMinutes, 1)}m left`;
+              remaining = `${Math.max(end - currentMinutes, 1)} min restantes`;
               cardDetail = currentSchedule.evento.nombrePrincipal?.trim() || "Clase en curso";
             } else {
               const nextSchedule = todaySchedules.find((item) => {
@@ -338,26 +350,26 @@ export default function RoomsPage() {
                 if (minutesUntilStart <= 60) {
                   status = "Starting Soon";
                   displaySchedule = nextSchedule;
-                  remaining = `Starts in ${minutesUntilStart}m`;
-                  cardDetail = `Starts in ${minutesUntilStart}m`;
+                  remaining = `Inicia en ${minutesUntilStart} min`;
+                  cardDetail = `Inicia en ${minutesUntilStart} min`;
                 } else {
-                  cardDetail = `Next class at ${formatTimeLabel(nextSchedule.horaInicio)}`;
+                  cardDetail = `Próxima clase a las ${formatTimeAmPm(nextSchedule.horaInicio)}`;
                 }
               } else if (todaySchedules.length > 0) {
                 const lastTodaySchedule = todaySchedules[todaySchedules.length - 1];
-                cardDetail = `Last class ended at ${formatTimeLabel(lastTodaySchedule.horaFin)}`;
+                cardDetail = `Última clase terminó a las ${formatTimeLabel(lastTodaySchedule.horaFin)}`;
               }
             }
 
             const session = displaySchedule && hasSessionName(displaySchedule.evento.nombrePrincipal)
               ? displaySchedule.evento.nombrePrincipal.trim()
-              : "No active class";
+              : "Sin clase activa";
             const professor = displaySchedule && displaySchedule.evento.responsable
               ? displaySchedule.evento.responsable.trim() || "N/A"
               : "N/A";
             const schedule = displaySchedule
               ? `${formatTimeLabel(displaySchedule.horaInicio)} - ${formatTimeLabel(displaySchedule.horaFin)}`
-              : "Available now";
+              : "Disponible ahora";
 
             rooms.push({
               id: salon.id,
@@ -367,7 +379,7 @@ export default function RoomsPage() {
               status,
               cardDetail,
               session,
-              section: displaySchedule ? `${displaySchedule.evento.codigoMateria || ""}` : "Free slot",
+              section: displaySchedule ? `${displaySchedule.evento.codigoMateria || ""}` : "Espacio libre",
               professor,
               schedule,
               remaining,

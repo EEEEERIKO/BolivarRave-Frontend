@@ -197,6 +197,13 @@ const assignmentModeLabels: Record<AssignmentMode, string> = {
   automatica: "Automatica",
 };
 
+const TASK_RECURRENT_TIME_OPTIONS = Array.from({ length: 35 }, (_, idx) => {
+  const totalMinutes = 5 * 60 + idx * 30;
+  const hour = Math.floor(totalMinutes / 60);
+  const minute = totalMinutes % 60;
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+});
+
 function formatDateLabel(dateValue: string): string {
   if (!dateValue) {
     return "Sin fecha";
@@ -220,6 +227,20 @@ function formatTimeLabel(timeValue: string): string {
   }
 
   return timeValue;
+}
+
+function toAmPmLabel(timeValue: string): string {
+  const [hoursText = "", minutesText = ""] = timeValue.split(":");
+  const hours = Number(hoursText);
+  const minutes = Number(minutesText);
+
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
+    return timeValue;
+  }
+
+  const suffix = hours >= 12 ? "PM" : "AM";
+  const normalizedHour = hours % 12 === 0 ? 12 : hours % 12;
+  return `${normalizedHour}:${String(minutes).padStart(2, "0")} ${suffix}`;
 }
 
 function roomLabel(room: RoomItem): string {
@@ -309,6 +330,14 @@ export default function TasksPage() {
   const roomById = useMemo(() => new Map(rooms.map((item) => [item.id, item])), [rooms]);
 
   const selectedCatalogSkillIds = catalogById.get(instanceForm.tareaCatalogoId)?.habilidadesRequeridasIds ?? [];
+  const recurringTimeOptions = useMemo(() => {
+    if (!catalogForm.horaProgramada || TASK_RECURRENT_TIME_OPTIONS.includes(catalogForm.horaProgramada)) {
+      return TASK_RECURRENT_TIME_OPTIONS;
+    }
+
+    return [catalogForm.horaProgramada, ...TASK_RECURRENT_TIME_OPTIONS];
+  }, [catalogForm.horaProgramada]);
+
   const eligibleStaffIds = useMemo(() => {
     return new Set(staff.filter((person) => staffMatchesAllSkills(person.id, selectedCatalogSkillIds, staffSkills)).map((person) => person.id));
   }, [selectedCatalogSkillIds, staff, staffSkills]);
@@ -1513,14 +1542,17 @@ export default function TasksPage() {
                   </div>
                   <label className="block space-y-1 sm:col-span-2">
                     <span className="text-xs font-bold text-slate-500">Hora recurrente</span>
-                    <input
-                      type="time"
-                      min="05:00"
-                      max="22:00"
+                    <select
                       value={catalogForm.horaProgramada}
                       onChange={(event) => setCatalogForm((current) => ({ ...current, horaProgramada: event.target.value }))}
                       className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
-                    />
+                    >
+                      {recurringTimeOptions.map((time) => (
+                        <option key={time} value={time}>
+                          {toAmPmLabel(time)}
+                        </option>
+                      ))}
+                    </select>
                   </label>
                     </>
                   ) : null}
@@ -1540,6 +1572,7 @@ export default function TasksPage() {
                     <span className="text-xs font-bold text-slate-500">Hora esporádica</span>
                     <input
                       type="time"
+                      lang="en-US"
                       value={catalogForm.horaEsporadica}
                       onChange={(event) => setCatalogForm((current) => ({ ...current, horaEsporadica: event.target.value }))}
                       className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
@@ -1581,6 +1614,7 @@ export default function TasksPage() {
                           <span className="text-xs font-bold text-slate-500">Hora finalización</span>
                           <input
                             type="time"
+                            lang="en-US"
                             value={catalogForm.horaFinalizacion}
                             onChange={(event) => setCatalogForm((current) => ({ ...current, horaFinalizacion: event.target.value }))}
                             className="w-full appearance-none rounded-md border-none bg-white px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
@@ -1696,6 +1730,7 @@ export default function TasksPage() {
                 <span className="text-xs font-bold text-slate-500">Hora programada</span>
                 <input
                   type="time"
+                  lang="en-US"
                   value={instanceForm.horaProgramada}
                   onChange={(event) => setInstanceForm((current) => ({ ...current, horaProgramada: event.target.value }))}
                   className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"

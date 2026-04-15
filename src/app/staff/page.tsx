@@ -118,7 +118,7 @@ type EditableJornadaItem = {
 type EditablePausaItem = {
   id: string;
   diaSemana: WorkWeekDay | "";
-  tipoPausa: "Comida" | "Descanso";
+  tipoPausa: "" | "Comida" | "Descanso";
   horaInicio: string;
   horaFin: string;
 };
@@ -160,6 +160,34 @@ function calculateHoursDifference(startTime: string, endTime: string): number {
   if (start < 0 || end < 0 || end <= start) return 0;
   return Number(((end - start) / 60).toFixed(1));
 }
+
+function formatTimeAmPm(value: string): string {
+  if (!value) return "";
+
+  const [hoursText, minutesText] = value.split(":");
+  const hours = Number(hoursText);
+  const minutes = Number(minutesText);
+
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
+    return value;
+  }
+
+  const suffix = hours >= 12 ? "PM" : "AM";
+  const normalizedHour = ((hours + 11) % 12) + 1;
+  return `${normalizedHour}:${String(minutes).padStart(2, "0")} ${suffix}`;
+}
+
+const TIME_SLOT_OPTIONS = Array.from({ length: ((23 * 60) - (5 * 60)) / 30 + 1 }, (_, index) => {
+  const totalMinutes = 5 * 60 + index * 30;
+  const hour = String(Math.floor(totalMinutes / 60)).padStart(2, "0");
+  const minute = String(totalMinutes % 60).padStart(2, "0");
+  const value = `${hour}:${minute}`;
+
+  return {
+    value,
+    label: formatTimeAmPm(value),
+  };
+});
 
 const ACADEMIC_DAY_COLUMNS = [
   { key: "lunes", label: "L", dayName: "Lunes" },
@@ -459,7 +487,7 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
     () =>
       HOURS.map((hour) => (
         <div key={hour} className="flex h-[56px] items-center justify-center px-2 text-center text-[9px] font-bold leading-none whitespace-nowrap tabular-nums text-[#566166] sm:px-4 sm:text-[10px]">
-          {hour}
+          {formatTimeAmPm(`${hour}:00`)}
         </div>
       )),
     [],
@@ -662,7 +690,7 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
       {
         id: `pausa-${Date.now()}-${prev.length + 1}`,
         diaSemana: "",
-        tipoPausa: "Comida",
+        tipoPausa: "",
         horaInicio: "12:00",
         horaFin: "13:00",
       },
@@ -768,6 +796,10 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
 
       if (!row.diaSemana) {
         return `${label}: selecciona un día.`;
+      }
+
+      if (!row.tipoPausa) {
+        return `${label} (${row.diaSemana}): selecciona el tipo de pausa.`;
       }
 
       if (!row.horaInicio || !row.horaFin) {
@@ -1303,19 +1335,31 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
                     ))}
                   </select>
 
-                  <input
-                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                    onChange={(event) => updateEditorRow(row.id, "horaEntrada", event.target.value)}
-                    type="time"
-                    value={row.horaEntrada}
-                  />
+                        <select
+                          className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                          onChange={(event) => updateEditorRow(row.id, "horaEntrada", event.target.value)}
+                          value={row.horaEntrada}
+                        >
+                          <option value="">Hora de inicio</option>
+                          {TIME_SLOT_OPTIONS.map((option) => (
+                            <option key={`entrada-${option.value}`} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
 
-                  <input
-                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                    onChange={(event) => updateEditorRow(row.id, "horaSalida", event.target.value)}
-                    type="time"
-                    value={row.horaSalida}
-                  />
+                        <select
+                          className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                          onChange={(event) => updateEditorRow(row.id, "horaSalida", event.target.value)}
+                          value={row.horaSalida}
+                        >
+                          <option value="">Hora de fin</option>
+                          {TIME_SLOT_OPTIONS.map((option) => (
+                            <option key={`salida-${option.value}`} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
 
                   <div className="flex items-center rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-[#566166]">
                     <span className="font-medium">{row.totalHorasDia || "0"} h</span>
@@ -1377,6 +1421,7 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
                           onChange={(event) => updatePausaRow(row.id, "tipoPausa", event.target.value)}
                           value={row.tipoPausa}
                         >
+                          <option value="">Sin asignar</option>
                           {PAUSA_TIPOS.map((tipo) => (
                             <option key={`pausa-tipo-${tipo}`} value={tipo}>
                               {tipo}
@@ -1384,19 +1429,31 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
                           ))}
                         </select>
 
-                        <input
+                        <select
                           className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
                           onChange={(event) => updatePausaRow(row.id, "horaInicio", event.target.value)}
-                          type="time"
                           value={row.horaInicio}
-                        />
+                        >
+                          <option value="">Inicio</option>
+                          {TIME_SLOT_OPTIONS.map((option) => (
+                            <option key={`pausa-inicio-${option.value}`} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
 
-                        <input
+                        <select
                           className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
                           onChange={(event) => updatePausaRow(row.id, "horaFin", event.target.value)}
-                          type="time"
                           value={row.horaFin}
-                        />
+                        >
+                          <option value="">Fin</option>
+                          {TIME_SLOT_OPTIONS.map((option) => (
+                            <option key={`pausa-fin-${option.value}`} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
 
                         <button
                           className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold text-[#9f403d]"

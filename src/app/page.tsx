@@ -151,6 +151,20 @@ const TIME_OPTIONS = Array.from({ length: 33 }, (_, idx) => {
   const minute = totalMinutes % 60;
   return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 });
+
+const toAmPmLabel = (value: string) => {
+  const [h, m] = value.split(":");
+  const hour = Number(h);
+  const minute = Number(m);
+
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) {
+    return value;
+  }
+
+  const suffix = hour >= 12 ? "PM" : "AM";
+  const normalizedHour = hour % 12 === 0 ? 12 : hour % 12;
+  return `${normalizedHour}:${String(minute).padStart(2, "0")} ${suffix}`;
+};
 const DASHBOARD_CACHE_KEY = "dashboard_cache_v1";
 const DASHBOARD_CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -1131,7 +1145,7 @@ export default function Home() {
                           className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none ring-[#295786]/30 transition focus:ring-4 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
                         >
                           {TIME_OPTIONS.map((time) => (
-                            <option key={time} value={time}>{time}</option>
+                            <option key={time} value={time}>{toAmPmLabel(time)}</option>
                           ))}
                         </select>
                       </label>
@@ -1143,7 +1157,7 @@ export default function Home() {
                           className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none ring-[#295786]/30 transition focus:ring-4 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
                         >
                           {TIME_OPTIONS.filter((time) => toMinutes(time) > toMinutes(roomCheckStartTime)).map((time) => (
-                            <option key={time} value={time}>{time}</option>
+                            <option key={time} value={time}>{toAmPmLabel(time)}</option>
                           ))}
                         </select>
                       </label>
@@ -1268,7 +1282,13 @@ export default function Home() {
               <div className="h-72 min-w-[920px] w-full sm:min-w-0">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={occupancyByHour} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                    <XAxis dataKey="hour" tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
+                    <XAxis
+                      dataKey="hour"
+                      tickLine={false}
+                      axisLine={false}
+                      tick={{ fontSize: 11 }}
+                      tickFormatter={(value) => toAmPmLabel(String(value))}
+                    />
                     <YAxis
                       domain={[0, Math.max(totalRooms, 1)]}
                       tickLine={false}
@@ -1279,6 +1299,7 @@ export default function Home() {
                       width={OCCUPANCY_CHART_Y_AXIS_WIDTH}
                     />
                     <Tooltip
+                      labelFormatter={(label) => toAmPmLabel(String(label))}
                       contentStyle={{
                         borderRadius: 12,
                         border: "1px solid #cbd5e1",
