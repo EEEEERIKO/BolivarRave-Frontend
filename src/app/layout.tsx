@@ -7,9 +7,9 @@ export const metadata: Metadata = {
   title: "UNAC Bolivar | Horarios",
   description: "Frontend base para gestion de horarios academicos.",
   icons: {
-    icon: "/icon.png?v=4",
-    shortcut: "/icon.png?v=4",
-    apple: "/icon.png?v=4",
+    icon: "/icon.png?v=5",
+    shortcut: "/icon.png?v=5",
+    apple: "/icon.png?v=5",
   },
 };
 
