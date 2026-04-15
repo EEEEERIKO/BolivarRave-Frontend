@@ -3,6 +3,7 @@
 
 import { fetchApiJson } from "@/lib/api-client";
 import { getCachedData, setCachedData } from "@/lib/cache-storage";
+import { readAuthSession } from "@/lib/auth-session";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 type StaffView = "directory" | "schedule";
@@ -118,7 +119,7 @@ type EditableJornadaItem = {
 type EditablePausaItem = {
   id: string;
   diaSemana: WorkWeekDay | "";
-  tipoPausa: "Comida" | "Descanso";
+  tipoPausa: "" | "Comida" | "Descanso";
   horaInicio: string;
   horaFin: string;
 };
@@ -160,6 +161,55 @@ function calculateHoursDifference(startTime: string, endTime: string): number {
   if (start < 0 || end < 0 || end <= start) return 0;
   return Number(((end - start) / 60).toFixed(1));
 }
+
+function formatTimeAmPm(value: string): string {
+  if (!value) return "";
+
+  const [hoursText, minutesText] = value.split(":");
+  const hours = Number(hoursText);
+  const minutes = Number(minutesText);
+
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
+    return value;
+  }
+
+  const suffix = hours >= 12 ? "PM" : "AM";
+  const normalizedHour = ((hours + 11) % 12) + 1;
+  return `${normalizedHour}:${String(minutes).padStart(2, "0")} ${suffix}`;
+}
+
+function formatDurationHuman(hoursDecimal: number): string {
+  const totalMinutes = Math.round(hoursDecimal * 60);
+
+  if (totalMinutes <= 0) {
+    return "0 min";
+  }
+
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+
+  if (hours > 0 && minutes > 0) {
+    return `${hours} h ${minutes} min`;
+  }
+
+  if (hours > 0) {
+    return `${hours} h`;
+  }
+
+  return `${minutes} min`;
+}
+
+const TIME_SLOT_OPTIONS = Array.from({ length: ((23 * 60) - (5 * 60)) / 30 + 1 }, (_, index) => {
+  const totalMinutes = 5 * 60 + index * 30;
+  const hour = String(Math.floor(totalMinutes / 60)).padStart(2, "0");
+  const minute = String(totalMinutes % 60).padStart(2, "0");
+  const value = `${hour}:${minute}`;
+
+  return {
+    value,
+    label: formatTimeAmPm(value),
+  };
+});
 
 const ACADEMIC_DAY_COLUMNS = [
   { key: "lunes", label: "L", dayName: "Lunes" },
@@ -414,7 +464,17 @@ const getCurrentWorkWeekDay = (): WorkWeekDay => {
   return dayMap[currentDay] ?? "Lunes";
 };
 
-function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi[]; isLoadingStaff: boolean }) {
+function StaffScheduleBoard({
+  staffList,
+  isLoadingStaff,
+  canManageStaff,
+  isCollaborador,
+}: {
+  staffList: StaffApi[];
+  isLoadingStaff: boolean;
+  canManageStaff: boolean;
+  isCollaborador: boolean;
+}) {
   const [jornadaByStaffId, setJornadaByStaffId] = useState<Record<string, StaffJornadaItem[]>>({});
   const [pausaByStaffId, setPausaByStaffId] = useState<Record<string, StaffPausaItem[]>>({});
   const [isLoadingJornadas, setIsLoadingJornadas] = useState(false);
@@ -426,8 +486,17 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
   const [isLoadingPausas, setIsLoadingPausas] = useState(false);
   const [isSavingJornada, setIsSavingJornada] = useState(false);
   const [selectedScheduleDay, setSelectedScheduleDay] = useState<WorkWeekDay>(() => getCurrentWorkWeekDay());
+  const [nowTimestamp, setNowTimestamp] = useState(() => Date.now());
   const leftColumnRef = useRef<HTMLDivElement>(null);
   const rightColumnRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setNowTimestamp(Date.now());
+    }, 60 * 1000);
+
+    return () => window.clearInterval(intervalId);
+  }, []);
 
   // Sync vertical scrolls between left and right columns
   useEffect(() => {
@@ -454,22 +523,176 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
     };
   }, []);
 
+  const currentDate = useMemo(() => new Date(nowTimestamp), [nowTimestamp]);
+  const currentMinutes = currentDate.getHours() * 60 + currentDate.getMinutes();
+  const currentWorkDay = useMemo<WorkWeekDay>(() => {
+    const dayMap: WorkWeekDay[] = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
+    return dayMap[currentDate.getDay()] ?? "Lunes";
+  }, [currentDate]);
+
   const activeStaffCount = staffList.filter((staff) => staff.estado === "Active").length;
   const hourCells = useMemo(
     () =>
       HOURS.map((hour) => (
         <div key={hour} className="flex h-[56px] items-center justify-center px-2 text-center text-[9px] font-bold leading-none whitespace-nowrap tabular-nums text-[#566166] sm:px-4 sm:text-[10px]">
-          {hour}
+          {formatTimeAmPm(`${hour}:00`)}
         </div>
       )),
     [],
   );
   const staffWithSchedule = staffList.filter((staff) => (jornadaByStaffId[staff.id]?.length ?? 0) > 0).length;
   const withoutScheduleCount = Math.max(staffList.length - staffWithSchedule, 0);
-  const totalHoursScheduled = staffList.reduce((sum, staff) => {
-    const total = (jornadaByStaffId[staff.id] ?? []).reduce((acc, row) => acc + row.totalHorasDia, 0);
-    return sum + total;
+  const selectedDayKey = normalizeDayName(selectedScheduleDay);
+  const currentDayKey = normalizeDayName(currentWorkDay);
+
+  const isStaffWorkingNow = (staffId: string) => {
+    const jornadaToday = (jornadaByStaffId[staffId] ?? []).filter(
+      (row) => normalizeDayName(row.diaSemana) === currentDayKey,
+    );
+
+    if (jornadaToday.length === 0) return false;
+
+    const hasActiveJornada = jornadaToday.some((row) => {
+      const start = timeToMinutes(row.horaEntrada);
+      const end = timeToMinutes(row.horaSalida);
+      return Number.isFinite(start) && Number.isFinite(end) && start <= currentMinutes && currentMinutes < end;
+    });
+
+    if (!hasActiveJornada) return false;
+
+    const activePause = (pausaByStaffId[staffId] ?? []).some((pause) => {
+      if (normalizeDayName(pause.diaSemana) !== currentDayKey) return false;
+      const start = timeToMinutes(pause.horaInicio);
+      const end = timeToMinutes(pause.horaFin);
+      return Number.isFinite(start) && Number.isFinite(end) && start <= currentMinutes && currentMinutes < end;
+    });
+
+    return !activePause;
+  };
+
+  const workingNowCount = staffList.filter(
+    (staff) => staff.estado === "Active" && isStaffWorkingNow(staff.id),
+  ).length;
+
+  const staffWithScheduleOnSelectedDay = staffList.filter((staff) =>
+    (jornadaByStaffId[staff.id] ?? []).some((row) => normalizeDayName(row.diaSemana) === selectedDayKey),
+  ).length;
+
+  const totalSelectedDayHours = staffList.reduce((sum, staff) => {
+    const dayTotal = (jornadaByStaffId[staff.id] ?? [])
+      .filter((row) => normalizeDayName(row.diaSemana) === selectedDayKey)
+      .reduce((acc, row) => acc + row.totalHorasDia, 0);
+
+    return sum + dayTotal;
   }, 0);
+
+  const collaboratorStaff = isCollaborador ? (staffList[0] ?? null) : null;
+  const collaboratorJornadaRows = collaboratorStaff ? (jornadaByStaffId[collaboratorStaff.id] ?? []) : [];
+  const collaboratorPausaRows = collaboratorStaff ? (pausaByStaffId[collaboratorStaff.id] ?? []) : [];
+  const collaboratorSelectedDayJornadas = collaboratorJornadaRows.filter(
+    (row) => normalizeDayName(row.diaSemana) === selectedDayKey,
+  );
+  const collaboratorSelectedDayPausas = collaboratorPausaRows.filter(
+    (row) => normalizeDayName(row.diaSemana) === selectedDayKey,
+  );
+  const collaboratorSelectedDayPauseHours = collaboratorSelectedDayPausas.reduce(
+    (sum, row) => sum + calculateHoursDifference(row.horaInicio, row.horaFin),
+    0,
+  );
+  const collaboratorSelectedDayHours = collaboratorSelectedDayJornadas.reduce((sum, row) => sum + row.totalHorasDia, 0);
+  const collaboratorWeeklyHours = collaboratorJornadaRows.reduce((sum, row) => sum + row.totalHorasDia, 0);
+  const collaboratorPlanLabel = collaboratorStaff?.tipoContrato ?? "-";
+
+  const sortedStaffList = useMemo(() => {
+    return [...staffList].sort((a, b) => {
+      const aJornada = jornadaByStaffId[a.id] ?? [];
+      const bJornada = jornadaByStaffId[b.id] ?? [];
+
+      const aSelectedDay = aJornada.filter((row) => normalizeDayName(row.diaSemana) === selectedDayKey);
+      const bSelectedDay = bJornada.filter((row) => normalizeDayName(row.diaSemana) === selectedDayKey);
+
+      const aStartSelectedDay = aSelectedDay
+        .map((row) => timeToMinutes(row.horaEntrada))
+        .filter((value) => value >= 0)
+        .sort((left, right) => left - right)[0] ?? Infinity;
+      const bStartSelectedDay = bSelectedDay
+        .map((row) => timeToMinutes(row.horaEntrada))
+        .filter((value) => value >= 0)
+        .sort((left, right) => left - right)[0] ?? Infinity;
+
+      // On current-day view, always keep currently active people first.
+      if (selectedDayKey === currentDayKey) {
+        const aWorking = isStaffWorkingNow(a.id);
+        const bWorking = isStaffWorkingNow(b.id);
+        if (aWorking !== bWorking) {
+          return aWorking ? -1 : 1;
+        }
+
+        const aActiveStart = aSelectedDay
+          .filter((row) => {
+            const start = timeToMinutes(row.horaEntrada);
+            const end = timeToMinutes(row.horaSalida);
+            return Number.isFinite(start) && Number.isFinite(end) && start <= currentMinutes && currentMinutes < end;
+          })
+          .map((row) => timeToMinutes(row.horaEntrada))
+          .sort((left, right) => left - right)[0] ?? Infinity;
+
+        const bActiveStart = bSelectedDay
+          .filter((row) => {
+            const start = timeToMinutes(row.horaEntrada);
+            const end = timeToMinutes(row.horaSalida);
+            return Number.isFinite(start) && Number.isFinite(end) && start <= currentMinutes && currentMinutes < end;
+          })
+          .map((row) => timeToMinutes(row.horaEntrada))
+          .sort((left, right) => left - right)[0] ?? Infinity;
+
+        if (aActiveStart !== bActiveStart) {
+          return aActiveStart - bActiveStart;
+        }
+      }
+
+      if (aStartSelectedDay !== bStartSelectedDay) {
+        return aStartSelectedDay - bStartSelectedDay;
+      }
+
+      const aStart = aJornada
+        .map((row) => timeToMinutes(row.horaEntrada))
+        .filter((value) => value >= 0)
+        .sort((left, right) => left - right)[0] ?? Infinity;
+      const bStart = bJornada
+        .map((row) => timeToMinutes(row.horaEntrada))
+        .filter((value) => value >= 0)
+        .sort((left, right) => left - right)[0] ?? Infinity;
+
+      if (aStart !== bStart) {
+        return aStart - bStart;
+      }
+
+      return a.numeroStaff - b.numeroStaff;
+    });
+  }, [staffList, jornadaByStaffId, pausaByStaffId, selectedDayKey, currentDayKey, currentMinutes]);
+
+  useEffect(() => {
+    const timeline = rightColumnRef.current;
+    if (!timeline) return;
+
+    const totalScrollable = timeline.scrollWidth - timeline.clientWidth;
+    if (totalScrollable <= 0) return;
+
+    const clampedMinutes = Math.min(Math.max(currentMinutes, TIMELINE_START_MINUTES), TIMELINE_END_MINUTES);
+    const ratio = (clampedMinutes - TIMELINE_START_MINUTES) / TIMELINE_TOTAL_MINUTES;
+    const currentX = ratio * timeline.scrollWidth;
+    const targetLeft = Math.min(
+      Math.max(currentX - timeline.clientWidth / 2, 0),
+      totalScrollable,
+    );
+
+    const frame = window.requestAnimationFrame(() => {
+      timeline.scrollTo({ left: targetLeft, behavior: "smooth" });
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [selectedScheduleDay, currentMinutes, sortedStaffList.length]);
 
   const formatDayHoursLabel = (rows: StaffJornadaItem[]) => `${rows.reduce((sum, row) => sum + row.totalHorasDia, 0).toFixed(1)} h`;
 
@@ -581,6 +804,11 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
   };
 
   const openEditor = async (staff: StaffApi) => {
+    if (!canManageStaff) {
+      setScheduleError("Solo el perfil Administrador puede modificar jornadas y pausas.");
+      return;
+    }
+
     const current = jornadaByStaffId[staff.id] ?? [];
     const mappedRows: EditableJornadaItem[] = current.length > 0
       ? [...current]
@@ -662,7 +890,7 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
       {
         id: `pausa-${Date.now()}-${prev.length + 1}`,
         diaSemana: "",
-        tipoPausa: "Comida",
+        tipoPausa: "",
         horaInicio: "12:00",
         horaFin: "13:00",
       },
@@ -770,6 +998,10 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
         return `${label}: selecciona un día.`;
       }
 
+      if (!row.tipoPausa) {
+        return `${label} (${row.diaSemana}): selecciona el tipo de pausa.`;
+      }
+
       if (!row.horaInicio || !row.horaFin) {
         return `${label} (${row.diaSemana}): completa hora inicio y hora fin.`;
       }
@@ -811,6 +1043,11 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
 
   const saveJornada = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+
+    if (!canManageStaff) {
+      alert("Solo el perfil Administrador puede modificar jornadas y pausas.");
+      return;
+    }
 
     if (!editingStaff) {
       return;
@@ -968,40 +1205,65 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
     return days.join(", ");
   };
 
-  const getBandStyle = (jornada: StaffJornadaItem[]) => {
-    if (jornada.length === 0) {
-      return { left: "0%", right: "68%" };
+  const getBandSegments = (jornada: StaffJornadaItem[]) => {
+    const rawSegments = jornada
+      .map((row) => ({
+        start: timeToMinutes(row.horaEntrada),
+        end: timeToMinutes(row.horaSalida),
+      }))
+      .filter((segment) => Number.isFinite(segment.start) && Number.isFinite(segment.end) && segment.end > segment.start)
+      .map((segment) => ({
+        start: Math.max(segment.start, TIMELINE_START_MINUTES),
+        end: Math.min(segment.end, TIMELINE_END_MINUTES),
+      }))
+      .filter((segment) => segment.end > segment.start)
+      .sort((a, b) => a.start - b.start);
+
+    if (rawSegments.length === 0) {
+      return [] as Array<{ start: number; end: number; left: number; width: number }>;
     }
 
-    const start = jornada
-      .map((row) => timeToMinutes(row.horaEntrada))
-      .filter((value) => value >= 0)
-      .sort((left, right) => left - right)[0] ?? TIMELINE_START_MINUTES;
-    const end = jornada
-      .map((row) => timeToMinutes(row.horaSalida))
-      .filter((value) => value >= 0)
-      .sort((left, right) => right - left)[0] ?? TIMELINE_START_MINUTES + 60;
+    const mergedSegments: Array<{ start: number; end: number }> = [];
+    for (const segment of rawSegments) {
+      const previous = mergedSegments[mergedSegments.length - 1];
+      if (!previous || segment.start > previous.end) {
+        mergedSegments.push({ ...segment });
+        continue;
+      }
 
-    const normalizedStart = Math.max(start, TIMELINE_START_MINUTES);
-    const normalizedEnd = Math.min(end, TIMELINE_END_MINUTES);
-
-    if (normalizedEnd <= normalizedStart) {
-      return { left: "0%", right: "100%" };
+      previous.end = Math.max(previous.end, segment.end);
     }
 
-    const leftPct = ((normalizedStart - TIMELINE_START_MINUTES) / TIMELINE_TOTAL_MINUTES) * 100;
-    const rightPct = ((TIMELINE_END_MINUTES - normalizedEnd) / TIMELINE_TOTAL_MINUTES) * 100;
-
-    return {
-      left: `${Math.max(0, Math.min(100, leftPct))}%`,
-      right: `${Math.max(0, Math.min(100, rightPct))}%`,
-    };
+    return mergedSegments.map((segment) => {
+      const left = ((segment.start - TIMELINE_START_MINUTES) / TIMELINE_TOTAL_MINUTES) * 100;
+      const width = Math.max(((segment.end - segment.start) / TIMELINE_TOTAL_MINUTES) * 100, 1.2);
+      return { ...segment, left, width };
+    });
   };
 
   const totalWeeklyWorkHours = editorRows.reduce((sum, row) => sum + parseFloat(row.totalHorasDia || "0"), 0);
   const totalWeeklyPauseHours = editorPausaRows.reduce(
     (sum, row) => sum + calculateHoursDifference(row.horaInicio, row.horaFin),
     0,
+  );
+  const sortedEditorPausaRows = useMemo(
+    () =>
+      [...editorPausaRows].sort((left, right) => {
+        const leftDay = left.diaSemana ? (WORK_DAY_ORDER[left.diaSemana] ?? 99) : 99;
+        const rightDay = right.diaSemana ? (WORK_DAY_ORDER[right.diaSemana] ?? 99) : 99;
+        if (leftDay !== rightDay) return leftDay - rightDay;
+
+        const leftStart = timeToMinutes(left.horaInicio);
+        const rightStart = timeToMinutes(right.horaInicio);
+        if (leftStart !== rightStart) return leftStart - rightStart;
+
+        const leftEnd = timeToMinutes(left.horaFin);
+        const rightEnd = timeToMinutes(right.horaFin);
+        if (leftEnd !== rightEnd) return leftEnd - rightEnd;
+
+        return left.id.localeCompare(right.id);
+      }),
+    [editorPausaRows],
   );
   const totalWeeklyNetHours = Math.max(totalWeeklyWorkHours - totalWeeklyPauseHours, 0);
 
@@ -1030,40 +1292,79 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
       </div>
 
       <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4 md:gap-4">
-        <div className="rounded-xl border border-slate-200 bg-white p-3 sm:p-4 md:p-5">
-          <p className="text-[10px] font-bold tracking-widest text-[#566166] uppercase">Personal activo</p>
-          <div className="mt-1 flex items-baseline gap-1.5">
-            <span className="text-xl font-black text-[#2a3439] sm:text-2xl">{activeStaffCount}</span>
-            <span className="text-xs font-bold text-[#3a5f94]">/ {staffList.length} en total</span>
-          </div>
-        </div>
-        <div className="rounded-xl border border-slate-200 bg-white p-3 sm:p-4 md:p-5">
-          <p className="text-[10px] font-bold tracking-widest text-[#566166] uppercase">Sin horario</p>
-          <div className="mt-1 flex items-baseline gap-1.5">
-            <span className="text-xl font-black text-[#9f403d] sm:text-2xl">{withoutScheduleCount}</span>
-            <span className="text-xs font-medium text-[#566166]">pendientes de asignación</span>
-          </div>
-        </div>
-        <div className="rounded-xl border border-slate-200 bg-white p-3 sm:p-4 md:p-5">
-          <p className="text-[10px] font-bold tracking-widest text-[#566166] uppercase">Con horario</p>
-          <div className="mt-1 flex items-baseline gap-1.5">
-            <span className="text-xl font-black text-[#2a3439] sm:text-2xl">{staffWithSchedule}</span>
-            <span className="text-xs font-medium text-[#566166]">personas</span>
-          </div>
-        </div>
-        <div className="rounded-xl border border-slate-200 bg-white p-3 sm:p-4 md:p-5">
-          <p className="text-[10px] font-bold tracking-widest text-[#566166] uppercase">Horas semanales</p>
-          <div className="mt-1 flex items-baseline gap-1.5">
-            <span className="text-xl font-black text-[#2a3439] sm:text-2xl">{totalHoursScheduled.toFixed(1)}</span>
-            <span className="text-xs font-medium text-[#566166]">programadas</span>
-          </div>
-        </div>
+        {isCollaborador ? (
+          <>
+            <div className="flex min-h-[124px] flex-col justify-between rounded-xl border border-slate-200 bg-white p-3 sm:min-h-[132px] sm:p-4 md:p-5">
+              <p className="text-[10px] font-bold tracking-widest text-[#566166] uppercase">Tipo de plan</p>
+              <div className="mt-2 flex items-baseline gap-2">
+                <span className="text-xl leading-tight font-black text-[#2a3439] sm:text-2xl">{collaboratorPlanLabel}</span>
+              </div>
+            </div>
+            <div className="flex min-h-[124px] flex-col justify-between rounded-xl border border-slate-200 bg-white p-3 sm:min-h-[132px] sm:p-4 md:p-5">
+              <p className="text-[10px] font-bold tracking-widest text-[#566166] uppercase">Pausas</p>
+              <div className="mt-2 flex items-center gap-2">
+                <span className="text-xl leading-tight font-black text-[#2a3439] sm:text-2xl">{collaboratorSelectedDayPausas.length}</span>
+                <span className="h-4 w-px bg-slate-300" aria-hidden="true" />
+                <span className="text-xs font-medium text-[#566166] sm:text-sm">{formatDurationHuman(collaboratorSelectedDayPauseHours)} descanso</span>
+              </div>
+            </div>
+            <div className="flex min-h-[124px] flex-col justify-between rounded-xl border border-slate-200 bg-white p-3 sm:min-h-[132px] sm:p-4 md:p-5">
+              <p className="text-[10px] font-bold tracking-widest text-[#566166] uppercase">Horas totales del día</p>
+              <div className="mt-2 flex items-baseline gap-2">
+                <span className="text-xl leading-tight font-black text-[#2a3439] sm:text-2xl">{collaboratorSelectedDayHours.toFixed(1)}</span>
+                <span className="text-xs font-medium text-[#566166] sm:text-sm">{selectedScheduleDay}</span>
+              </div>
+            </div>
+            <div className="flex min-h-[124px] flex-col justify-between rounded-xl border border-slate-200 bg-white p-3 sm:min-h-[132px] sm:p-4 md:p-5">
+              <p className="text-[10px] font-bold tracking-widest text-[#566166] uppercase">Horas totales semanales</p>
+              <div className="mt-2 flex items-baseline gap-2">
+                <span className="text-xl leading-tight font-black text-[#2a3439] sm:text-2xl">{collaboratorWeeklyHours.toFixed(1)}</span>
+                <span className="text-xs font-medium text-[#566166] sm:text-sm">semana</span>
+              </div>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="rounded-xl border border-slate-200 bg-white p-3 sm:p-4 md:p-5">
+              <p className="text-[10px] font-bold tracking-widest text-[#566166] uppercase">Trabajando ahora</p>
+              <div className="mt-1 flex items-baseline gap-1.5">
+                <span className="text-xl font-black text-[#2a3439] sm:text-2xl">{workingNowCount}</span>
+                <span className="text-xs font-bold text-[#3a5f94]">/ {activeStaffCount} activos</span>
+              </div>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-white p-3 sm:p-4 md:p-5">
+              <p className="text-[10px] font-bold tracking-widest text-[#566166] uppercase">Sin horario</p>
+              <div className="mt-1 flex items-baseline gap-1.5">
+                <span className="text-xl font-black text-[#9f403d] sm:text-2xl">{withoutScheduleCount}</span>
+                <span className="text-xs font-medium text-[#566166]">pendientes de asignación</span>
+              </div>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-white p-3 sm:p-4 md:p-5">
+              <p className="text-[10px] font-bold tracking-widest text-[#566166] uppercase">Con horario</p>
+              <div className="mt-1 flex items-baseline gap-1.5">
+                <span className="text-xl font-black text-[#2a3439] sm:text-2xl">{staffWithScheduleOnSelectedDay}</span>
+                <span className="text-xs font-medium text-[#566166]">personas</span>
+              </div>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-white p-3 sm:p-4 md:p-5">
+              <p className="text-[10px] font-bold tracking-widest text-[#566166] uppercase">Horas totales del día</p>
+              <div className="mt-1 flex items-baseline gap-1.5">
+                <span className="text-xl font-black text-[#2a3439] sm:text-2xl">{totalSelectedDayHours.toFixed(1)}</span>
+                <span className="text-xs font-medium text-[#566166]">{selectedScheduleDay}</span>
+              </div>
+            </div>
+          </>
+        )}
       </div>
 
       {scheduleError ? <p className="text-sm font-medium text-[#9f403d]">{scheduleError}</p> : null}
 
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="flex h-auto min-h-[520px] flex-col md:h-[640px] md:flex-row lg:h-[696px]">
+        <div
+          className={`flex h-auto flex-col md:flex-row ${
+            isCollaborador ? "" : "min-h-[520px] md:h-[640px] lg:h-[696px]"
+          }`}
+        >
           {/* Fixed left column: Staff names */}
           <div className="flex w-full flex-col border-b border-slate-200 md:w-64 md:border-r md:border-b-0">
             <div className="flex h-[56px] items-center gap-2 border-b border-slate-200 bg-[#f0f4f7] px-4 text-xs font-bold tracking-wider text-[#2a3439] uppercase shadow-[6px_0_12px_rgba(15,23,42,0.04)]">
@@ -1071,32 +1372,25 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
               Miembro del personal
             </div>
 
-            <div className="max-h-[220px] flex-1 divide-y divide-slate-200 overflow-y-auto md:max-h-none" ref={leftColumnRef}>
+            <div
+              className={`flex-1 divide-y divide-slate-200 ${
+                isCollaborador ? "overflow-visible" : "max-h-[220px] overflow-y-auto md:max-h-none"
+              }`}
+              ref={leftColumnRef}
+            >
               {isLoadingStaff || isLoadingJornadas ? (
                 <p className="p-4 text-sm text-[#566166]">Cargando horario maestro...</p>
               ) : staffList.length === 0 ? (
                 <p className="p-4 text-sm text-[#566166]">No hay personal registrado.</p>
               ) : (
-                [...staffList].sort((a, b) => {
-                  const aJornada = jornadaByStaffId[a.id] ?? [];
-                  const bJornada = jornadaByStaffId[b.id] ?? [];
-                  const aStart = aJornada
-                    .map((row) => timeToMinutes(row.horaEntrada))
-                    .filter((value) => value >= 0)
-                    .sort((left, right) => left - right)[0] ?? Infinity;
-                  const bStart = bJornada
-                    .map((row) => timeToMinutes(row.horaEntrada))
-                    .filter((value) => value >= 0)
-                    .sort((left, right) => left - right)[0] ?? Infinity;
-                  return aStart - bStart;
-                }).map((staff) => {
+                sortedStaffList.map((staff) => {
                   const jornada = jornadaByStaffId[staff.id] ?? [];
-                  const selectedDayKey = normalizeDayName(selectedScheduleDay);
                   const jornadaForSelectedDay = jornada.filter((row) => normalizeDayName(row.diaSemana) === selectedDayKey);
                   const hasJornada = jornadaForSelectedDay.length > 0;
+                  const workingNow = isStaffWorkingNow(staff.id);
 
                   return (
-                    <div className="flex h-[62px] items-center gap-2.5 bg-white px-3 sm:h-[70px] sm:gap-3 sm:px-4 md:h-[74px]" key={staff.id}>
+                    <div className={`flex h-[62px] items-center gap-2.5 bg-white px-3 sm:h-[70px] sm:gap-3 sm:px-4 md:h-[74px] ${workingNow ? "border-l-4 border-emerald-500" : ""}`} key={staff.id}>
                       <div className="relative flex h-8 w-8 items-center justify-center overflow-hidden rounded-lg bg-[#e8eff3] text-[11px] font-black text-[#375c91] sm:h-10 sm:w-10 sm:text-xs">
                         <img
                           src={getStaffPhotoUrl(staff.cedula)}
@@ -1131,15 +1425,17 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
                         </p>
                         <p className="truncate text-[10px] text-[#566166]">{staff.rol}</p>
                       </div>
-                      <button
-                        aria-label={hasJornada ? "Editar horario" : "Asignar horario"}
-                        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-white text-[#3a5f94] transition hover:bg-[#3a5f94] hover:text-white"
-                        onClick={() => void openEditor(staff)}
-                        type="button"
-                        title={hasJornada ? "Editar horario" : "Asignar horario"}
-                      >
-                        <span className="material-symbols-outlined text-[17px]">edit_calendar</span>
-                      </button>
+                      {canManageStaff ? (
+                        <button
+                          aria-label={hasJornada ? "Editar horario" : "Asignar horario"}
+                          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-white text-[#3a5f94] transition hover:bg-[#3a5f94] hover:text-white"
+                          onClick={() => void openEditor(staff)}
+                          type="button"
+                          title={hasJornada ? "Editar horario" : "Asignar horario"}
+                        >
+                          <span className="material-symbols-outlined text-[17px]">edit_calendar</span>
+                        </button>
+                      ) : null}
                     </div>
                   );
                 })
@@ -1148,8 +1444,13 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
           </div>
 
           {/* Scrollable right column: Schedule timeline */}
-          <div className="flex min-h-[360px] flex-1 flex-col overflow-hidden md:min-h-0">
-            <div className="flex-1 overflow-x-auto overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden" ref={rightColumnRef}>
+          <div className={`flex min-w-0 flex-1 flex-col ${isCollaborador ? "min-h-0 overflow-visible" : "min-h-[360px] overflow-hidden md:min-h-0"}`}>
+            <div
+              className={`flex-1 overflow-x-auto [overscroll-behavior-x:contain] [touch-action:pan-x_pan-y] [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden ${
+                isCollaborador ? "overflow-y-visible" : "overflow-y-auto"
+              }`}
+              ref={rightColumnRef}
+            >
               <div className="w-max">
                 {/* Header with hours - sticky at top */}
                 <div className="sticky top-0 z-10 grid bg-[#f0f4f7] divide-x divide-slate-200" style={{ gridTemplateColumns: `repeat(${HOURS.length}, minmax(80px, 1fr))` }}>
@@ -1163,30 +1464,15 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
               ) : staffList.length === 0 ? (
                 <p className="p-4 text-sm text-[#566166]">No hay personal registrado.</p>
               ) : (
-                [...staffList].sort((a, b) => {
-                  const aJornada = jornadaByStaffId[a.id] ?? [];
-                  const bJornada = jornadaByStaffId[b.id] ?? [];
-                  const aStart = aJornada
-                    .map((row) => timeToMinutes(row.horaEntrada))
-                    .filter((value) => value >= 0)
-                    .sort((left, right) => left - right)[0] ?? Infinity;
-                  const bStart = bJornada
-                    .map((row) => timeToMinutes(row.horaEntrada))
-                    .filter((value) => value >= 0)
-                    .sort((left, right) => left - right)[0] ?? Infinity;
-                  return aStart - bStart;
-                }).map((staff) => {
+                sortedStaffList.map((staff) => {
                   const jornada = jornadaByStaffId[staff.id] ?? [];
                   const pausas = pausaByStaffId[staff.id] ?? [];
-                  const selectedDayKey = normalizeDayName(selectedScheduleDay);
                   const jornadaForSelectedDay = jornada.filter((row) => normalizeDayName(row.diaSemana) === selectedDayKey);
                   const pausasForSelectedDay = pausas
                     .filter((row) => normalizeDayName(row.diaSemana) === selectedDayKey)
                     .sort((a, b) => timeToMinutes(a.horaInicio) - timeToMinutes(b.horaInicio));
                   const hasJornada = jornadaForSelectedDay.length > 0;
-                  const firstStart = hasJornada ? jornadaForSelectedDay.map((row) => row.horaEntrada).sort()[0] : null;
-                  const lastEnd = hasJornada ? jornadaForSelectedDay.map((row) => row.horaSalida).sort().slice(-1)[0] : null;
-                  const bandStyle = getBandStyle(jornadaForSelectedDay);
+                  const bandSegments = getBandSegments(jornadaForSelectedDay);
 
                   return (
                     <div className="relative h-[62px] bg-white sm:h-[70px] md:h-[74px]" key={staff.id}>
@@ -1197,20 +1483,12 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
                       </div>
 
                       {/* Current time indicator if today */}
-                      {selectedScheduleDay === getCurrentWorkWeekDay() && (() => {
-                        const now = new Date();
-                        const currentMinutes = now.getHours() * 60 + now.getMinutes();
-                        if (currentMinutes >= TIMELINE_START_MINUTES && currentMinutes <= TIMELINE_END_MINUTES) {
-                          const leftPct = ((currentMinutes - TIMELINE_START_MINUTES) / TIMELINE_TOTAL_MINUTES) * 100;
-                          return (
-                            <div
-                              className="absolute top-0 bottom-0 w-0.5 bg-red-500 z-20"
-                              style={{ left: `${leftPct}%` }}
-                            />
-                          );
-                        }
-                        return null;
-                      })()}
+                      {selectedScheduleDay === currentWorkDay && currentMinutes >= TIMELINE_START_MINUTES && currentMinutes <= TIMELINE_END_MINUTES ? (
+                        <div
+                          className="absolute top-0 bottom-0 z-20 w-0.5 bg-red-500"
+                          style={{ left: `${((currentMinutes - TIMELINE_START_MINUTES) / TIMELINE_TOTAL_MINUTES) * 100}%` }}
+                        />
+                      ) : null}
 
                       {hasJornada && pausasForSelectedDay.length > 0 ? (
                         <div className="pointer-events-none absolute inset-y-2 z-10 left-0 right-0">
@@ -1242,16 +1520,51 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
                         </div>
                       ) : null}
 
-                      <div className="absolute inset-y-2 z-20 rounded-r-md border-l-4 border-[#3a5f94] bg-[#3a5f94]/10 px-4" style={bandStyle}>
-                        <div className="flex h-full items-center gap-2 overflow-hidden">
-                          <div className="h-2 w-2 shrink-0 rounded-full bg-[#3a5f94]" />
-                          <span className="truncate text-[10px] font-bold text-[#3a5f94]">
-                            {hasJornada
-                              ? `Jornada ${firstStart} - ${lastEnd} • ${formatDayHoursLabel(jornadaForSelectedDay)}${pausasForSelectedDay.length > 0 ? ` • Pausas: ${pausasForSelectedDay.length}` : ""}`
-                              : "Sin horario asignado"}
-                          </span>
+                      {bandSegments.map((segment, index) => (
+                        <div
+                          key={`${staff.id}-band-${index + 1}`}
+                          className="absolute inset-y-2 z-20 rounded-r-md border-l-4 border-[#3a5f94] bg-[#3a5f94]/10"
+                          style={{ left: `${segment.left}%`, width: `${segment.width}%` }}
+                        />
+                      ))}
+
+                      {hasJornada ? (
+                        <>
+                          {bandSegments.map((segment, index) => {
+                            const pauseCount = pausasForSelectedDay.filter((pausa) => {
+                              const pausaStart = timeToMinutes(pausa.horaInicio);
+                              const pausaEnd = timeToMinutes(pausa.horaFin);
+                              if (!Number.isFinite(pausaStart) || !Number.isFinite(pausaEnd) || pausaEnd <= pausaStart) {
+                                return false;
+                              }
+
+                              return pausaStart < segment.end && segment.start < pausaEnd;
+                            }).length;
+
+                            const segmentHours = Number(((segment.end - segment.start) / 60).toFixed(1));
+                            const segmentLabel = `${formatTimeAmPm(minutesToTime(segment.start))} - ${formatTimeAmPm(minutesToTime(segment.end))} • ${segmentHours} h${pauseCount > 0 ? ` • Pausas: ${pauseCount}` : ""}`;
+
+                            return (
+                              <div
+                                key={`${staff.id}-segment-label-${index + 1}`}
+                                className="pointer-events-none absolute inset-y-2 z-30 pr-2"
+                                style={{ left: `${segment.left}%`, width: `${segment.width}%` }}
+                              >
+                                <div className="flex h-full items-center gap-2 overflow-hidden pl-3">
+                                  <div className="h-2 w-2 shrink-0 rounded-full bg-[#3a5f94]" />
+                                  <span className="truncate text-[10px] font-bold text-[#3a5f94]">{segmentLabel}</span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </>
+                      ) : (
+                        <div className="pointer-events-none absolute inset-y-2 z-30 left-0 right-0 px-4">
+                          <div className="flex h-full items-center gap-2 overflow-hidden">
+                            <span className="truncate text-[10px] font-bold text-[#3a5f94]">Sin horario asignado</span>
+                          </div>
                         </div>
-                      </div>
+                      )}
                     </div>
                   );
                 })
@@ -1303,19 +1616,31 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
                     ))}
                   </select>
 
-                  <input
-                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                    onChange={(event) => updateEditorRow(row.id, "horaEntrada", event.target.value)}
-                    type="time"
-                    value={row.horaEntrada}
-                  />
+                        <select
+                          className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                          onChange={(event) => updateEditorRow(row.id, "horaEntrada", event.target.value)}
+                          value={row.horaEntrada}
+                        >
+                          <option value="">Hora de inicio</option>
+                          {TIME_SLOT_OPTIONS.map((option) => (
+                            <option key={`entrada-${option.value}`} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
 
-                  <input
-                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                    onChange={(event) => updateEditorRow(row.id, "horaSalida", event.target.value)}
-                    type="time"
-                    value={row.horaSalida}
-                  />
+                        <select
+                          className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                          onChange={(event) => updateEditorRow(row.id, "horaSalida", event.target.value)}
+                          value={row.horaSalida}
+                        >
+                          <option value="">Hora de fin</option>
+                          {TIME_SLOT_OPTIONS.map((option) => (
+                            <option key={`salida-${option.value}`} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
 
                   <div className="flex items-center rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-[#566166]">
                     <span className="font-medium">{row.totalHorasDia || "0"} h</span>
@@ -1357,7 +1682,7 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
                   </p>
                 ) : (
                   <div className="space-y-2">
-                    {editorPausaRows.map((row, index) => (
+                    {sortedEditorPausaRows.map((row, index) => (
                       <div className="grid grid-cols-1 gap-2 rounded-lg border border-slate-200 bg-white p-2 md:grid-cols-[1fr_1fr_1fr_1fr_auto]" key={row.id}>
                         <select
                           className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
@@ -1377,6 +1702,7 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
                           onChange={(event) => updatePausaRow(row.id, "tipoPausa", event.target.value)}
                           value={row.tipoPausa}
                         >
+                          <option value="">Sin asignar</option>
                           {PAUSA_TIPOS.map((tipo) => (
                             <option key={`pausa-tipo-${tipo}`} value={tipo}>
                               {tipo}
@@ -1384,19 +1710,31 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
                           ))}
                         </select>
 
-                        <input
+                        <select
                           className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
                           onChange={(event) => updatePausaRow(row.id, "horaInicio", event.target.value)}
-                          type="time"
                           value={row.horaInicio}
-                        />
+                        >
+                          <option value="">Inicio</option>
+                          {TIME_SLOT_OPTIONS.map((option) => (
+                            <option key={`pausa-inicio-${option.value}`} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
 
-                        <input
+                        <select
                           className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
                           onChange={(event) => updatePausaRow(row.id, "horaFin", event.target.value)}
-                          type="time"
                           value={row.horaFin}
-                        />
+                        >
+                          <option value="">Fin</option>
+                          {TIME_SLOT_OPTIONS.map((option) => (
+                            <option key={`pausa-fin-${option.value}`} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
 
                         <button
                           className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold text-[#9f403d]"
@@ -1449,6 +1787,10 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
 }
 
 export default function StaffPage() {
+  const authSession = useMemo(() => readAuthSession(), []);
+  const canManageStaff = authSession?.role === "admin";
+  const isCollaborador = authSession?.role === "colaborador";
+  const collaboratorStaffId = authSession?.staffId ?? null;
   const [view, setView] = useState<StaffView>("directory");
   const [showAddStaffForm, setShowAddStaffForm] = useState(false);
   const [showEditStaffForm, setShowEditStaffForm] = useState(false);
@@ -1517,9 +1859,41 @@ export default function StaffPage() {
 
   const selectedStaff = useMemo(() => {
     if (staffList.length === 0) return null;
+    if (isCollaborador) {
+      if (!collaboratorStaffId) return staffList[0] ?? null;
+      return staffList.find((staff) => staff.id === collaboratorStaffId) ?? staffList[0] ?? null;
+    }
     if (!selectedStaffId) return null;
     return staffList.find((staff) => staff.id === selectedStaffId) ?? null;
-  }, [selectedStaffId, staffList]);
+  }, [selectedStaffId, staffList, isCollaborador, collaboratorStaffId]);
+
+  useEffect(() => {
+    if (staffList.length === 0) return;
+    if (selectedStaffId && staffList.some((staff) => staff.id === selectedStaffId)) return;
+    const firstStaffId = staffList[0]?.id ?? null;
+    if (firstStaffId) {
+      setSelectedStaffId(firstStaffId);
+    }
+  }, [staffList, selectedStaffId]);
+
+  useEffect(() => {
+    if (!isCollaborador) return;
+
+    if (staffList.length === 0) {
+      if (selectedStaffId !== null) {
+        setSelectedStaffId(null);
+      }
+      return;
+    }
+
+    const forcedId = collaboratorStaffId && staffList.some((staff) => staff.id === collaboratorStaffId)
+      ? collaboratorStaffId
+      : (staffList[0]?.id ?? null);
+
+    if (forcedId && selectedStaffId !== forcedId) {
+      setSelectedStaffId(forcedId);
+    }
+  }, [isCollaborador, collaboratorStaffId, staffList, selectedStaffId]);
 
   const selectedStaffSkills = selectedStaff?.habilidades ?? [];
 
@@ -1993,6 +2367,11 @@ export default function StaffPage() {
   }
 
   function openAddStaffForm() {
+    if (!canManageStaff) {
+      setFormFeedback("Solo el perfil Administrador puede agregar personal.");
+      return;
+    }
+
     const initialNumber = getFirstAvailableStaffNumber(staffList);
     resetNewStaffForm(initialNumber);
     setShowAddStaffForm(true);
@@ -2009,6 +2388,11 @@ export default function StaffPage() {
   }
 
   const loadSkills = async () => {
+    if (isCollaborador) {
+      setSkillsCatalog([]);
+      return;
+    }
+
     try {
       setIsLoadingSkills(true);
       const tasksResponse = await fetchApiJson<{ skills?: Skill[] }>("/api/tasks/skills", {
@@ -2025,7 +2409,12 @@ export default function StaffPage() {
   const loadStaff = async () => {
     try {
       // Try to restore from cache first
-      const cachedStaff = getCachedData<StaffApi[]>("staff_list");
+      const cachedStaffRaw = getCachedData<StaffApi[]>("staff_list");
+      const cachedStaff = Array.isArray(cachedStaffRaw)
+        ? (isCollaborador && collaboratorStaffId
+          ? cachedStaffRaw.filter((staff) => staff.id === collaboratorStaffId)
+          : cachedStaffRaw)
+        : null;
       const hasCachedStaff = Array.isArray(cachedStaff) && cachedStaff.length > 0;
 
       if (cachedStaff && cachedStaff.length > 0) {
@@ -2040,7 +2429,10 @@ export default function StaffPage() {
         cache: "no-store",
       });
 
-      const nextStaff = Array.isArray(response.staff) ? response.staff : [];
+      const nextStaffRaw = Array.isArray(response.staff) ? response.staff : [];
+      const nextStaff = isCollaborador && collaboratorStaffId
+        ? nextStaffRaw.filter((staff) => staff.id === collaboratorStaffId)
+        : nextStaffRaw;
       setStaffList(nextStaff);
       setCachedData("staff_list", nextStaff);
 
@@ -2061,6 +2453,12 @@ export default function StaffPage() {
 
   async function handleAddStaffSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
+    if (!canManageStaff) {
+      alert("Solo el perfil Administrador puede agregar personal.");
+      return;
+    }
+
     try {
       setIsSavingNewStaff(true);
       const parsedNumber = Number(newStaff.staffNumber);
@@ -2157,6 +2555,11 @@ export default function StaffPage() {
   }
 
   function openEditStaffForm() {
+    if (!canManageStaff) {
+      setFormFeedback("Solo el perfil Administrador puede editar perfiles.");
+      return;
+    }
+
     if (!selectedStaff) {
       setFormFeedback("Selecciona un staff para editar.");
       return;
@@ -2196,6 +2599,11 @@ export default function StaffPage() {
 
   async function handleEditStaffSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
+    if (!canManageStaff) {
+      alert("Solo el perfil Administrador puede editar perfiles.");
+      return;
+    }
 
     if (!selectedStaff) {
       alert("Por favor selecciona un staff para editar.");
@@ -2415,6 +2823,11 @@ export default function StaffPage() {
   }
 
   async function handleDeleteStaff() {
+    if (!canManageStaff) {
+      alert("Solo el perfil Administrador puede eliminar personal.");
+      return;
+    }
+
     if (!selectedStaff) {
       alert("Por favor selecciona un staff para eliminar.");
       return;
@@ -3164,30 +3577,45 @@ export default function StaffPage() {
       </div>
 
       {view === "schedule" ? (
-        <StaffScheduleBoard isLoadingStaff={isLoadingStaff} staffList={staffList} />
+        <StaffScheduleBoard
+          canManageStaff={canManageStaff}
+          isCollaborador={isCollaborador}
+          isLoadingStaff={isLoadingStaff}
+          staffList={staffList}
+        />
       ) : (
         <main className="flex min-h-[calc(100vh-7rem)] flex-col gap-4 overflow-visible xl:flex-row xl:gap-6 xl:overflow-hidden">
         <div className="flex min-w-0 flex-1 flex-col gap-4 sm:gap-5">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <h2 className="tracking-tight text-2xl font-extrabold text-[#2a3439]">Directorio del personal</h2>
-              <p className="text-sm text-[#566166]">
-                Gestionando {staffList.length} integrantes académicos: {staffByLiveStatus.active.length} activos, {staffByLiveStatus.breakTime.length} en descanso y {staffByLiveStatus.inactive.length} inactivos
-              </p>
+              <h2 className="tracking-tight text-2xl font-extrabold text-[#2a3439]">
+                {isCollaborador ? "Mi perfil" : "Directorio del personal"}
+              </h2>
+              {isCollaborador ? (
+                <p className="text-sm text-[#566166]">Visualización de perfil personal.</p>
+              ) : (
+                <p className="text-sm text-[#566166]">
+                  Gestionando {staffList.length} integrantes académicos: {staffByLiveStatus.active.length} activos, {staffByLiveStatus.breakTime.length} en descanso y {staffByLiveStatus.inactive.length} inactivos
+                </p>
+              )}
             </div>
             <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
-              <button className="flex items-center justify-center gap-2 rounded-lg bg-[#d9e4ea] px-4 py-2 text-xs font-bold text-[#2a3439]">
-                <span className="material-symbols-outlined text-sm">filter_list</span>
-                Filtrar
-              </button>
-              <button
-                className="flex items-center justify-center gap-2 rounded-lg bg-[#3a5f94] px-4 py-2 text-xs font-bold text-white shadow-sm"
-                onClick={openAddStaffForm}
-                type="button"
-              >
-                <span className="material-symbols-outlined text-sm">person_add</span>
-                Agregar personal
-              </button>
+              {!isCollaborador ? (
+                <button className="flex items-center justify-center gap-2 rounded-lg bg-[#d9e4ea] px-4 py-2 text-xs font-bold text-[#2a3439]">
+                  <span className="material-symbols-outlined text-sm">filter_list</span>
+                  Filtrar
+                </button>
+              ) : null}
+              {canManageStaff ? (
+                <button
+                  className="flex items-center justify-center gap-2 rounded-lg bg-[#3a5f94] px-4 py-2 text-xs font-bold text-white shadow-sm"
+                  onClick={openAddStaffForm}
+                  type="button"
+                >
+                  <span className="material-symbols-outlined text-sm">person_add</span>
+                  Agregar personal
+                </button>
+              ) : null}
             </div>
           </div>
 
@@ -3196,9 +3624,13 @@ export default function StaffPage() {
           <div className="space-y-4 overflow-y-auto pr-0.5 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
             {staffList.length > 0 ? (
               [
-                { title: "Activos", status: "Activo" as StaffLiveStatus, items: staffByLiveStatus.active },
-                { title: "Descanso", status: "Descanso" as StaffLiveStatus, items: staffByLiveStatus.breakTime },
-                { title: "Inactivos", status: "Inactivo" as StaffLiveStatus, items: staffByLiveStatus.inactive },
+                ...(isCollaborador
+                  ? [{ title: "Mi perfil", status: "Activo" as StaffLiveStatus, items: staffList }]
+                  : [
+                    { title: "Activos", status: "Activo" as StaffLiveStatus, items: staffByLiveStatus.active },
+                    { title: "Descanso", status: "Descanso" as StaffLiveStatus, items: staffByLiveStatus.breakTime },
+                    { title: "Inactivos", status: "Inactivo" as StaffLiveStatus, items: staffByLiveStatus.inactive },
+                  ]),
               ].map((section) => (
                 <section key={section.title} className="rounded-xl border border-slate-200 bg-white p-3 sm:p-4">
                   <div className="mb-3 flex items-center justify-between">
@@ -3228,8 +3660,10 @@ export default function StaffPage() {
                             key={staff.id}
                             onClick={() => {
                               setSelectedStaffId(staff.id);
-                              setMobileDetailTab("profile");
-                              setIsStaffDetailModalOpen(true);
+                              if (!isCollaborador) {
+                                setMobileDetailTab("profile");
+                                setIsStaffDetailModalOpen(true);
+                              }
                             }}
                             type="button"
                           >
@@ -3277,6 +3711,8 @@ export default function StaffPage() {
                         );
                       })}
                     </div>
+                  ) : isCollaborador ? (
+                    <p className="text-sm text-[#566166]">No se encontró información de tu perfil.</p>
                   ) : (
                     <p className="text-sm text-[#566166]">
                       {section.status === "Activo"
@@ -3295,7 +3731,7 @@ export default function StaffPage() {
             )}
           </div>
 
-          {selectedStaff ? (
+          {selectedStaff && !isCollaborador ? (
           <>
           <div className="hidden grid-cols-1 gap-4 xl:grid xl:grid-cols-[1.55fr_1fr] xl:gap-6">
             <section className="rounded-2xl bg-[#e8eff3] p-4 sm:p-5">
@@ -3454,15 +3890,172 @@ export default function StaffPage() {
             </section>
           </div>
           </>
-          ) : (
+          ) : selectedStaff && isCollaborador ? (
+            <div className="space-y-4 xl:space-y-6">
+              <section className="rounded-2xl bg-[#e8eff3] p-4 sm:p-5">
+                <div className="mb-3 flex items-center justify-between">
+                  <h3 className="flex items-center gap-2 text-sm font-black text-[#153f73]">
+                    <span className="material-symbols-outlined">assignment</span>
+                    Tareas asignadas
+                  </h3>
+                  <span className="text-[11px] font-bold text-[#566166]">2 tareas pendientes</span>
+                </div>
+                <div className="space-y-2">
+                  <div className="flex items-center gap-3 rounded-lg bg-white p-3 shadow-sm">
+                    <input checked className="rounded border-slate-300 text-[#3a5f94] focus:ring-[#3a5f94]" type="checkbox" readOnly />
+                    <div className="flex-1">
+                      <p className="text-xs font-bold text-[#566166] line-through">Pasillo 3 limpio (ala norte)</p>
+                      <p className="text-[10px] text-slate-400">Completado a las 08:30</p>
+                    </div>
+                    <span className="material-symbols-outlined text-base text-green-500">check_circle</span>
+                  </div>
+                  <div className="flex items-center gap-3 rounded-lg border-l-4 border-amber-400 bg-white p-3 shadow-sm">
+                    <input className="rounded border-slate-300 text-[#3a5f94] focus:ring-[#3a5f94]" type="checkbox" />
+                    <div className="flex-1">
+                      <p className="text-xs font-bold text-[#2a3439]">Preparar salón 101 (rack AV)</p>
+                      <p className="text-[10px] text-[#566166]">Prioridad: alta • Vence a las 11:00</p>
+                    </div>
+                    <span className="material-symbols-outlined text-base text-amber-500">schedule</span>
+                  </div>
+                </div>
+              </section>
+
+              <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5 lg:p-6">
+                <h4 className="mb-4 flex items-center gap-2 text-[11px] font-black tracking-widest text-[#566166] uppercase">
+                  <span className="h-1.5 w-1.5 rounded-full bg-[#3a5f94]" />
+                  Horario diario del personal
+                </h4>
+                <div className="mb-2 text-[10px] font-semibold text-slate-400">{dailyScheduleDay}</div>
+                {isLoadingDailySchedule ? (
+                  <p className="text-xs text-[#566166]">Cargando horario...</p>
+                ) : dailyScheduleItems.length === 0 ? (
+                  <p className="text-xs text-[#566166]">Sin bloques configurados para este día.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {dailyScheduleItems.map((item) => (
+                      <div
+                        className={item.isPause
+                          ? `flex items-center justify-between rounded px-2 py-2 border-b border-slate-50 ${item.isCurrent ? "bg-amber-100 ring-1 ring-amber-300" : "bg-amber-50"}`
+                          : `flex items-center justify-between border-b border-slate-50 py-2 ${item.isCurrent ? "rounded bg-blue-50 ring-1 ring-blue-200 px-2" : ""}`}
+                        key={`collaborator-main-${item.id}`}
+                      >
+                        <span className={item.isPause ? "text-xs font-bold text-amber-700" : "text-xs font-bold text-[#2a3439]"}>
+                          {item.label}{item.isCurrent ? " (Ahora)" : ""}
+                        </span>
+                        <span className={item.isPause ? "text-xs text-amber-700" : "text-xs text-[#566166]"}>{item.range}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+
+              <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.55fr_1fr] xl:gap-6">
+                <section className="min-h-[340px] rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5 lg:min-h-[370px] lg:p-6">
+                  <h4 className="mb-4 flex items-center gap-2 text-[11px] font-black tracking-widest text-[#566166] uppercase">
+                    <span className="h-1.5 w-1.5 rounded-full bg-[#3a5f94]" />
+                    No disponibilidad académica
+                  </h4>
+                  <div className="overflow-x-auto">
+                    <div className="min-w-[640px] space-y-1">
+                      <div className="grid grid-cols-[112px_repeat(7,minmax(0,1fr))] gap-1">
+                        <div />
+                        {ACADEMIC_DAY_COLUMNS.map((column) => (
+                          <div className="h-4 text-center text-[8px] font-black text-slate-400 uppercase" key={`collaborator-main-${column.dayName}`}>
+                            {column.label}
+                          </div>
+                        ))}
+                      </div>
+
+                      {ACADEMIC_TIME_SEGMENTS.map((segment, segmentIndex) => (
+                        <div className="grid grid-cols-[112px_repeat(7,minmax(0,1fr))] gap-1" key={`collaborator-main-${segment.key}`}>
+                          <div className="flex items-center justify-end gap-1 pr-1 text-[9px] whitespace-nowrap">
+                            <span className="font-bold text-[#566166]">{ACADEMIC_SEGMENT_ROWS[segmentIndex].label}</span>
+                            <span className="text-slate-400">{ACADEMIC_SEGMENT_ROWS[segmentIndex].range}</span>
+                          </div>
+
+                          {ACADEMIC_DAY_COLUMNS.map((column, dayIndex) => {
+                            const isBlocked = academicUnavailabilityMatrix[dayIndex]?.[segmentIndex] ?? false;
+
+                            return (
+                              <div
+                                className={`h-8 rounded-sm ${isBlocked ? "bg-[#3a5f94]" : "bg-[#f0f4f7]"}`}
+                                key={`collaborator-main-${column.key}-${segment.key}`}
+                                title={`${column.dayName}: ${isBlocked ? "No disponible" : "Disponible"} (${ACADEMIC_SEGMENT_ROWS[segmentIndex].range})`}
+                              />
+                            );
+                          })}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    <div className="flex items-center justify-center gap-4 text-[10px] text-[#566166]">
+                      <span className="inline-flex items-center gap-1">
+                        <span className="h-2 w-2 rounded-full bg-[#3a5f94]" /> No disponible
+                      </span>
+                      <span className="inline-flex items-center gap-1">
+                        <span className="h-2 w-2 rounded-full border border-slate-300 bg-[#f0f4f7]" /> Disponible
+                      </span>
+                    </div>
+                  </div>
+                  {hasAcademicUnavailability ? (
+                    <p className="mt-2 text-center text-[10px] italic text-[#566166]">
+                      Los bloques resaltados indican horarios de clase.
+                    </p>
+                  ) : (
+                    <p className="mt-2 text-center text-[10px] italic text-[#566166]">
+                      No hay bloques de clase registrados para este personal.
+                    </p>
+                  )}
+                  {academicBlockedSlotDetails.length > 0 ? (
+                    <div className="mt-3 space-y-1 rounded-lg border border-slate-200 bg-white p-3">
+                      <p className="text-[10px] font-bold tracking-wider text-slate-400 uppercase">Detalle de Bloques</p>
+                      {academicBlockedSlotDetails.map((slot, index) => (
+                        <p className="text-xs text-[#2a3439]" key={`collaborator-main-${slot.dayKey}-${slot.start}-${index}`}>
+                          {slot.dayName}: {slot.start} - {slot.end}
+                        </p>
+                      ))}
+                    </div>
+                  ) : null}
+                </section>
+
+                <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5 lg:p-6">
+                  <h4 className="mb-4 flex items-center gap-2 text-[11px] font-black tracking-widest text-[#566166] uppercase">
+                    <span className="h-1.5 w-1.5 rounded-full bg-[#3a5f94]" />
+                    Actividades recientes e informes
+                  </h4>
+                  <div className="relative space-y-6 pl-6 before:absolute before:top-2 before:bottom-2 before:left-[7px] before:w-[2px] before:bg-[#cfdce3] before:content-['']">
+                    <div className="relative">
+                      <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-green-500" />
+                      <p className="text-[10px] font-bold text-slate-400">HOY, 10:45</p>
+                      <p className="text-sm font-bold text-[#2a3439]">Salón 302 limpiado</p>
+                      <p className="text-xs text-[#566166]">Actividad: registro de mantenimiento</p>
+                    </div>
+                    <div className="relative">
+                      <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-[#9f403d]" />
+                      <p className="text-[10px] font-bold text-slate-400">AYER, 14:15</p>
+                      <p className="text-sm font-bold text-[#9f403d]">Informe de llegada tardía</p>
+                      <p className="text-xs text-[#566166]">Infracción: 15 min de retraso sin aviso.</p>
+                    </div>
+                    <div className="relative">
+                      <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-green-500" />
+                      <p className="text-[10px] font-bold text-slate-400">24 OCT, 09:00</p>
+                      <p className="text-sm font-bold text-[#2a3439]">Inventario verificado</p>
+                      <p className="text-xs text-[#566166]">Actividad: auditoría de equipos</p>
+                    </div>
+                  </div>
+                </section>
+              </div>
+            </div>
+          ) : !isCollaborador ? (
             <div className="hidden xl:flex items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-[#566166]">
               Selecciona un miembro del personal para ver su información detallada.
             </div>
-          )}
+          ) : null}
         </div>
 
         {selectedStaff ? (
-        <div className="hidden h-auto w-full flex-col overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-2xl xl:flex xl:h-full xl:w-[320px]">
+        <div className={`${isCollaborador ? "flex" : "hidden xl:flex"} h-auto w-full flex-col overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-2xl xl:h-full xl:w-[320px]`}>
           <div className="flex flex-col items-center gap-2.5 border-b border-slate-200 bg-[#f0f4f7] p-4 sm:p-5 lg:p-6">
             <div className="relative">
               <div className="relative flex h-20 w-20 items-center justify-center overflow-hidden rounded-full border-4 border-white bg-[#d5e3ff] text-xl font-black text-[#153f73] shadow-lg sm:h-24 sm:w-24 sm:text-2xl">
@@ -3572,35 +4165,37 @@ export default function StaffPage() {
 
           </div>
 
-          <div className="flex gap-2.5 bg-slate-50 p-4 sm:p-5 lg:gap-3 lg:p-6">
-            <button
-              className="flex-1 rounded-xl bg-[#3a5f94] py-3 text-xs font-bold text-white shadow-lg shadow-[#3a5f94]/20 disabled:opacity-60"
-              disabled={!selectedStaff}
-              onClick={openEditStaffForm}
-              type="button"
-            >
-              Editar perfil
-            </button>
-            <button 
-              className="rounded-xl bg-[#9f403d] p-3 text-white transition-colors hover:bg-[#8a3631] disabled:opacity-60"
-              disabled={!selectedStaff}
-              onClick={handleDeleteStaff}
-              type="button"
-            >
-              <span className="material-symbols-outlined text-lg">delete</span>
-            </button>
-            <button className="rounded-xl border border-slate-200 bg-white p-3 text-[#9f403d] transition-colors hover:bg-red-50">
-              <span className="material-symbols-outlined text-lg">flag</span>
-            </button>
-          </div>
+          {canManageStaff ? (
+            <div className="flex gap-2.5 bg-slate-50 p-4 sm:p-5 lg:gap-3 lg:p-6">
+              <button
+                className="flex-1 rounded-xl bg-[#3a5f94] py-3 text-xs font-bold text-white shadow-lg shadow-[#3a5f94]/20 disabled:opacity-60"
+                disabled={!selectedStaff}
+                onClick={openEditStaffForm}
+                type="button"
+              >
+                Editar perfil
+              </button>
+              <button 
+                className="rounded-xl bg-[#9f403d] p-3 text-white transition-colors hover:bg-[#8a3631] disabled:opacity-60"
+                disabled={!selectedStaff}
+                onClick={handleDeleteStaff}
+                type="button"
+              >
+                <span className="material-symbols-outlined text-lg">delete</span>
+              </button>
+              <button className="rounded-xl border border-slate-200 bg-white p-3 text-[#9f403d] transition-colors hover:bg-red-50">
+                <span className="material-symbols-outlined text-lg">flag</span>
+              </button>
+            </div>
+          ) : null}
         </div>
         ) : (
-          <div className="hidden w-full items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white p-6 text-center text-sm text-[#566166] xl:flex xl:w-[320px]">
+          <div className={`${isCollaborador ? "flex" : "hidden xl:flex"} w-full items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white p-6 text-center text-sm text-[#566166] xl:w-[320px]`}>
             Sin personal seleccionado.
           </div>
         )}
 
-        {isStaffDetailModalOpen && selectedStaff ? (
+        {!isCollaborador && isStaffDetailModalOpen && selectedStaff ? (
           <div className="fixed inset-0 z-50 flex items-end bg-black/50 p-0 xl:hidden" role="dialog" aria-modal="true">
             <button
               type="button"
@@ -3644,256 +4239,256 @@ export default function StaffPage() {
               </div>
 
               <div className="min-h-0 flex-1 overflow-y-auto pr-1">
-              <div className="rounded-2xl border border-slate-100 bg-white shadow-sm">
-                <div className="flex flex-col items-center gap-2.5 border-b border-slate-200 bg-[#f0f4f7] p-4">
-                  <div className="relative flex h-20 w-20 items-center justify-center overflow-hidden rounded-full border-4 border-white bg-[#d5e3ff] text-xl font-black text-[#153f73] shadow-lg">
-                    <img
-                      src={getStaffPhotoUrl(selectedStaff.cedula)}
-                      alt={`${selectedStaff.nombres} ${selectedStaff.apellidos}`}
-                      className="absolute inset-0 h-full w-full object-cover"
-                      onError={(event) => {
-                        const image = event.currentTarget;
-                        image.style.display = "none";
-                        const fallback = image.parentElement?.querySelector<HTMLElement>("[data-staff-photo-fallback='true']");
-                        if (fallback) {
-                          fallback.style.display = "flex";
-                        }
-                      }}
-                      onLoad={(event) => {
-                        const image = event.currentTarget;
-                        const fallback = image.parentElement?.querySelector<HTMLElement>("[data-staff-photo-fallback='true']");
-                        if (fallback) {
-                          fallback.style.display = "none";
-                        }
-                      }}
-                    />
-                    <div
-                      data-staff-photo-fallback="true"
-                      className="absolute inset-0 hidden items-center justify-center bg-[#d5e3ff] text-xl font-black text-[#153f73]"
-                    >
-                      N.{selectedStaff.numeroStaff}
+                <div className="rounded-2xl border border-slate-100 bg-white shadow-sm">
+                  <div className="flex flex-col items-center gap-2.5 border-b border-slate-200 bg-[#f0f4f7] p-4">
+                    <div className="relative flex h-20 w-20 items-center justify-center overflow-hidden rounded-full border-4 border-white bg-[#d5e3ff] text-xl font-black text-[#153f73] shadow-lg">
+                      <img
+                        src={getStaffPhotoUrl(selectedStaff.cedula)}
+                        alt={`${selectedStaff.nombres} ${selectedStaff.apellidos}`}
+                        className="absolute inset-0 h-full w-full object-cover"
+                        onError={(event) => {
+                          const image = event.currentTarget;
+                          image.style.display = "none";
+                          const fallback = image.parentElement?.querySelector<HTMLElement>("[data-staff-photo-fallback='true']");
+                          if (fallback) {
+                            fallback.style.display = "flex";
+                          }
+                        }}
+                        onLoad={(event) => {
+                          const image = event.currentTarget;
+                          const fallback = image.parentElement?.querySelector<HTMLElement>("[data-staff-photo-fallback='true']");
+                          if (fallback) {
+                            fallback.style.display = "none";
+                          }
+                        }}
+                      />
+                      <div
+                        data-staff-photo-fallback="true"
+                        className="absolute inset-0 hidden items-center justify-center bg-[#d5e3ff] text-xl font-black text-[#153f73]"
+                      >
+                        N.{selectedStaff.numeroStaff}
+                      </div>
+                    </div>
+                    <div className="text-center">
+                      <h2 className="text-xl font-black text-[#2a3439]">{selectedStaff.nombres}</h2>
+                      <p className="text-sm font-medium text-[#566166]">{selectedStaff.apellidos}</p>
                     </div>
                   </div>
-                  <div className="text-center">
-                    <h2 className="text-xl font-black text-[#2a3439]">{selectedStaff.nombres}</h2>
-                    <p className="text-sm font-medium text-[#566166]">{selectedStaff.apellidos}</p>
-                  </div>
-                </div>
 
-                <div className="space-y-4 p-4">
-                  {mobileDetailTab === "profile" ? (
-                    <>
-                      <div className="grid grid-cols-2 gap-3">
-                        <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
-                          <p className="text-[10px] font-black text-slate-400 uppercase">Estado</p>
-                          <p className={`text-base font-black ${selectedStaffStatusClass}`}>
-                            {selectedStaffStatusLabel}
-                          </p>
-                        </div>
-                        <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
-                          <p className="text-[10px] font-black text-slate-400 uppercase">Horas</p>
-                          <p className={`text-base font-black ${selectedStaffBalanceHours >= 0 ? "text-green-600" : "text-[#9f403d]"}`}>
-                            {selectedStaffFormattedBalanceHours}
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="space-y-2">
-                        <p className="text-[10px] font-bold tracking-wider text-slate-400 uppercase">Información general</p>
-                        <p className="text-sm text-[#2a3439]"><span className="font-semibold">Cédula:</span> {selectedStaff.cedula}</p>
-                        <p className="text-sm text-[#2a3439]"><span className="font-semibold">Teléfono:</span> {selectedStaff.telefono}</p>
-                        <p className="text-sm text-[#2a3439]"><span className="font-semibold">Rol:</span> {selectedStaff.rol}</p>
-                        <p className="text-sm text-[#2a3439]"><span className="font-semibold">Acceso:</span> {accessRoleLabelById[(selectedStaff.roleId as StaffAccessRoleId) ?? 3]}</p>
-                        <p className="text-sm text-[#2a3439]"><span className="font-semibold">Contrato:</span> {selectedStaff.tipoContrato}</p>
-                        <p className="text-sm text-[#2a3439]"><span className="font-semibold">Carrera:</span> {selectedStaff.carrera}</p>
-                        <div className="space-y-1 pt-1">
-                          <p className="text-sm text-[#2a3439]"><span className="font-semibold">Habilidades:</span></p>
-                          {selectedStaffSkills.length ? (
-                            <div className="flex flex-wrap gap-1.5">
-                              {selectedStaffSkills.map((skill) => (
-                                <span
-                                  key={`mobile-profile-skill-${skill.id}`}
-                                  className="rounded-full border border-[#3a5f94]/20 bg-[#3a5f94]/10 px-2 py-0.5 text-[10px] font-semibold text-[#2f4f7d]"
-                                >
-                                  {skill.nombre}
-                                </span>
-                              ))}
-                            </div>
-                          ) : (
-                            <p className="text-xs text-[#566166]">Sin habilidades asignadas.</p>
-                          )}
-                        </div>
-                      </div>
-                    </>
-                  ) : null}
-
-                  {mobileDetailTab === "tasks" ? (
-                    <section className="rounded-2xl bg-[#e8eff3] p-4">
-                      <div className="mb-3 flex items-center justify-between">
-                        <h3 className="flex items-center gap-2 text-sm font-black text-[#153f73]">
-                          <span className="material-symbols-outlined">assignment</span>
-                          Tareas asignadas: {selectedStaff.nombres}
-                        </h3>
-                        <span className="text-[11px] font-bold text-[#566166]">2 pendientes</span>
-                      </div>
-                      <div className="space-y-2">
-                        <div className="flex items-center gap-3 rounded-lg bg-white p-3 shadow-sm">
-                          <input checked className="rounded border-slate-300 text-[#3a5f94] focus:ring-[#3a5f94]" type="checkbox" readOnly />
-                          <div className="flex-1">
-                            <p className="text-xs font-bold text-[#566166] line-through">Pasillo 3 limpio (ala norte)</p>
-                            <p className="text-[10px] text-slate-400">Completado a las 08:30</p>
+                  <div className="space-y-4 p-4">
+                    {mobileDetailTab === "profile" ? (
+                      <>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                            <p className="text-[10px] font-black text-slate-400 uppercase">Estado</p>
+                            <p className={`text-base font-black ${selectedStaffStatusClass}`}>
+                              {selectedStaffStatusLabel}
+                            </p>
+                          </div>
+                          <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                            <p className="text-[10px] font-black text-slate-400 uppercase">Horas</p>
+                            <p className={`text-base font-black ${selectedStaffBalanceHours >= 0 ? "text-green-600" : "text-[#9f403d]"}`}>
+                              {selectedStaffFormattedBalanceHours}
+                            </p>
                           </div>
                         </div>
-                        <div className="flex items-center gap-3 rounded-lg border-l-4 border-amber-400 bg-white p-3 shadow-sm">
-                          <input className="rounded border-slate-300 text-[#3a5f94] focus:ring-[#3a5f94]" type="checkbox" />
-                          <div className="flex-1">
-                            <p className="text-xs font-bold text-[#2a3439]">Preparar salón 101 (rack AV)</p>
-                            <p className="text-[10px] text-[#566166]">Prioridad: alta • Vence a las 11:00</p>
-                          </div>
-                        </div>
-                      </div>
-                    </section>
-                  ) : null}
 
-                  {mobileDetailTab === "daily" ? (
-                    <section className="rounded-2xl border border-slate-200 bg-white p-4">
-                      <h4 className="mb-4 flex items-center gap-2 text-[11px] font-black tracking-widest text-[#566166] uppercase">
-                        <span className="h-1.5 w-1.5 rounded-full bg-[#3a5f94]" />
-                        Horario diario del personal
-                      </h4>
-                      <div className="mb-2 text-[10px] font-semibold text-slate-400">{dailyScheduleDay}</div>
-                      {isLoadingDailySchedule ? (
-                        <p className="text-xs text-[#566166]">Cargando horario...</p>
-                      ) : dailyScheduleItems.length === 0 ? (
-                        <p className="text-xs text-[#566166]">Sin bloques configurados para este día.</p>
-                      ) : (
                         <div className="space-y-2">
-                          {dailyScheduleItems.map((item) => (
-                            <div
-                              className={item.isPause
-                                ? `flex items-center justify-between rounded px-2 py-2 border-b border-slate-50 ${item.isCurrent ? "bg-amber-100 ring-1 ring-amber-300" : "bg-amber-50"}`
-                                : `flex items-center justify-between border-b border-slate-50 py-2 ${item.isCurrent ? "rounded bg-blue-50 ring-1 ring-blue-200 px-2" : ""}`}
-                              key={`mobile-${item.id}`}
-                            >
-                              <span className={item.isPause ? "text-xs font-bold text-amber-700" : "text-xs font-bold text-[#2a3439]"}>
-                                {item.label}{item.isCurrent ? " (Ahora)" : ""}
-                              </span>
-                              <span className={item.isPause ? "text-xs text-amber-700" : "text-xs text-[#566166]"}>{item.range}</span>
-                            </div>
-                          ))}
+                          <p className="text-[10px] font-bold tracking-wider text-slate-400 uppercase">Información general</p>
+                          <p className="text-sm text-[#2a3439]"><span className="font-semibold">Cédula:</span> {selectedStaff.cedula}</p>
+                          <p className="text-sm text-[#2a3439]"><span className="font-semibold">Teléfono:</span> {selectedStaff.telefono}</p>
+                          <p className="text-sm text-[#2a3439]"><span className="font-semibold">Rol:</span> {selectedStaff.rol}</p>
+                          <p className="text-sm text-[#2a3439]"><span className="font-semibold">Acceso:</span> {accessRoleLabelById[(selectedStaff.roleId as StaffAccessRoleId) ?? 3]}</p>
+                          <p className="text-sm text-[#2a3439]"><span className="font-semibold">Contrato:</span> {selectedStaff.tipoContrato}</p>
+                          <p className="text-sm text-[#2a3439]"><span className="font-semibold">Carrera:</span> {selectedStaff.carrera}</p>
+                          <div className="space-y-1 pt-1">
+                            <p className="text-sm text-[#2a3439]"><span className="font-semibold">Habilidades:</span></p>
+                            {selectedStaffSkills.length ? (
+                              <div className="flex flex-wrap gap-1.5">
+                                {selectedStaffSkills.map((skill) => (
+                                  <span
+                                    key={`mobile-profile-skill-${skill.id}`}
+                                    className="rounded-full border border-[#3a5f94]/20 bg-[#3a5f94]/10 px-2 py-0.5 text-[10px] font-semibold text-[#2f4f7d]"
+                                  >
+                                    {skill.nombre}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="text-xs text-[#566166]">Sin habilidades asignadas.</p>
+                            )}
+                          </div>
                         </div>
-                      )}
-                    </section>
-                  ) : null}
+                      </>
+                    ) : null}
 
-                  {mobileDetailTab === "academic" ? (
-                    <section className="rounded-2xl border border-slate-200 bg-white p-4">
-                      <h4 className="mb-4 flex items-center gap-2 text-[11px] font-black tracking-widest text-[#566166] uppercase">
-                        <span className="h-1.5 w-1.5 rounded-full bg-[#3a5f94]" />
-                        No disponibilidad académica
-                      </h4>
-                      <div className="overflow-x-auto">
-                        <div className="min-w-[640px] space-y-1">
-                          <div className="grid grid-cols-[112px_repeat(7,minmax(0,1fr))] gap-1">
-                            <div />
-                            {ACADEMIC_DAY_COLUMNS.map((column) => (
-                              <div className="h-4 text-center text-[8px] font-black text-slate-400 uppercase" key={`modal-${column.dayName}`}>
-                                {column.label}
+                    {mobileDetailTab === "tasks" ? (
+                      <section className="rounded-2xl bg-[#e8eff3] p-4">
+                        <div className="mb-3 flex items-center justify-between">
+                          <h3 className="flex items-center gap-2 text-sm font-black text-[#153f73]">
+                            <span className="material-symbols-outlined">assignment</span>
+                            Tareas asignadas: {selectedStaff.nombres}
+                          </h3>
+                          <span className="text-[11px] font-bold text-[#566166]">2 pendientes</span>
+                        </div>
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-3 rounded-lg bg-white p-3 shadow-sm">
+                            <input checked className="rounded border-slate-300 text-[#3a5f94] focus:ring-[#3a5f94]" type="checkbox" readOnly />
+                            <div className="flex-1">
+                              <p className="text-xs font-bold text-[#566166] line-through">Pasillo 3 limpio (ala norte)</p>
+                              <p className="text-[10px] text-slate-400">Completado a las 08:30</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-3 rounded-lg border-l-4 border-amber-400 bg-white p-3 shadow-sm">
+                            <input className="rounded border-slate-300 text-[#3a5f94] focus:ring-[#3a5f94]" type="checkbox" />
+                            <div className="flex-1">
+                              <p className="text-xs font-bold text-[#2a3439]">Preparar salón 101 (rack AV)</p>
+                              <p className="text-[10px] text-[#566166]">Prioridad: alta • Vence a las 11:00</p>
+                            </div>
+                          </div>
+                        </div>
+                      </section>
+                    ) : null}
+
+                    {mobileDetailTab === "daily" ? (
+                      <section className="rounded-2xl border border-slate-200 bg-white p-4">
+                        <h4 className="mb-4 flex items-center gap-2 text-[11px] font-black tracking-widest text-[#566166] uppercase">
+                          <span className="h-1.5 w-1.5 rounded-full bg-[#3a5f94]" />
+                          Horario diario del personal
+                        </h4>
+                        <div className="mb-2 text-[10px] font-semibold text-slate-400">{dailyScheduleDay}</div>
+                        {isLoadingDailySchedule ? (
+                          <p className="text-xs text-[#566166]">Cargando horario...</p>
+                        ) : dailyScheduleItems.length === 0 ? (
+                          <p className="text-xs text-[#566166]">Sin bloques configurados para este día.</p>
+                        ) : (
+                          <div className="space-y-2">
+                            {dailyScheduleItems.map((item) => (
+                              <div
+                                className={item.isPause
+                                  ? `flex items-center justify-between rounded px-2 py-2 border-b border-slate-50 ${item.isCurrent ? "bg-amber-100 ring-1 ring-amber-300" : "bg-amber-50"}`
+                                  : `flex items-center justify-between border-b border-slate-50 py-2 ${item.isCurrent ? "rounded bg-blue-50 ring-1 ring-blue-200 px-2" : ""}`}
+                                key={`mobile-${item.id}`}
+                              >
+                                <span className={item.isPause ? "text-xs font-bold text-amber-700" : "text-xs font-bold text-[#2a3439]"}>
+                                  {item.label}{item.isCurrent ? " (Ahora)" : ""}
+                                </span>
+                                <span className={item.isPause ? "text-xs text-amber-700" : "text-xs text-[#566166]"}>{item.range}</span>
                               </div>
                             ))}
                           </div>
+                        )}
+                      </section>
+                    ) : null}
 
-                          {ACADEMIC_TIME_SEGMENTS.map((segment, segmentIndex) => (
-                            <div className="grid grid-cols-[112px_repeat(7,minmax(0,1fr))] gap-1" key={`modal-${segment.key}`}>
-                              <div className="flex items-center justify-end gap-1 pr-1 text-[9px] whitespace-nowrap">
-                                <span className="font-bold text-[#566166]">{ACADEMIC_SEGMENT_ROWS[segmentIndex].label}</span>
-                                <span className="text-slate-400">{ACADEMIC_SEGMENT_ROWS[segmentIndex].range}</span>
-                              </div>
-
-                              {ACADEMIC_DAY_COLUMNS.map((column, dayIndex) => {
-                                const isBlocked = academicUnavailabilityMatrix[dayIndex]?.[segmentIndex] ?? false;
-
-                                return (
-                                  <div
-                                    className={`h-8 rounded-sm ${isBlocked ? "bg-[#3a5f94]" : "bg-[#f0f4f7]"}`}
-                                    key={`modal-${column.key}-${segment.key}`}
-                                  />
-                                );
-                              })}
+                    {mobileDetailTab === "academic" ? (
+                      <section className="rounded-2xl border border-slate-200 bg-white p-4">
+                        <h4 className="mb-4 flex items-center gap-2 text-[11px] font-black tracking-widest text-[#566166] uppercase">
+                          <span className="h-1.5 w-1.5 rounded-full bg-[#3a5f94]" />
+                          No disponibilidad académica
+                        </h4>
+                        <div className="overflow-x-auto">
+                          <div className="min-w-[640px] space-y-1">
+                            <div className="grid grid-cols-[112px_repeat(7,minmax(0,1fr))] gap-1">
+                              <div />
+                              {ACADEMIC_DAY_COLUMNS.map((column) => (
+                                <div className="h-4 text-center text-[8px] font-black text-slate-400 uppercase" key={`modal-${column.dayName}`}>
+                                  {column.label}
+                                </div>
+                              ))}
                             </div>
-                          ))}
-                        </div>
-                      </div>
-                      {academicBlockedSlotDetails.length > 0 ? (
-                        <div className="mt-3 space-y-1 rounded-lg border border-slate-200 bg-white p-3">
-                          <p className="text-[10px] font-bold tracking-wider text-slate-400 uppercase">Detalle de Bloques</p>
-                          {academicBlockedSlotDetails.map((slot, index) => (
-                            <p className="text-xs text-[#2a3439]" key={`modal-${slot.dayKey}-${slot.start}-${index}`}>
-                              {slot.dayName}: {slot.start} - {slot.end}
-                            </p>
-                          ))}
-                        </div>
-                      ) : null}
-                    </section>
-                  ) : null}
 
-                  {mobileDetailTab === "activity" ? (
-                    <section className="rounded-2xl border border-slate-200 bg-white p-4">
-                      <h4 className="mb-4 flex items-center gap-2 text-[11px] font-black tracking-widest text-[#566166] uppercase">
-                        <span className="h-1.5 w-1.5 rounded-full bg-[#3a5f94]" />
-                        Actividades recientes e informes
-                      </h4>
-                      <div className="relative space-y-6 pl-6 before:absolute before:top-2 before:bottom-2 before:left-[7px] before:w-[2px] before:bg-[#cfdce3] before:content-['']">
-                        <div className="relative">
-                          <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-green-500" />
-                          <p className="text-[10px] font-bold text-slate-400">HOY, 10:45</p>
-                          <p className="text-sm font-bold text-[#2a3439]">Salón 302 limpiado</p>
-                          <p className="text-xs text-[#566166]">Actividad: registro de mantenimiento</p>
-                        </div>
-                        <div className="relative">
-                          <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-[#9f403d]" />
-                          <p className="text-[10px] font-bold text-slate-400">AYER, 14:15</p>
-                          <p className="text-sm font-bold text-[#9f403d]">Informe de llegada tardía</p>
-                          <p className="text-xs text-[#566166]">Infracción: 15 min de retraso sin aviso.</p>
-                        </div>
-                        <div className="relative">
-                          <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-green-500" />
-                          <p className="text-[10px] font-bold text-slate-400">24 OCT, 09:00</p>
-                          <p className="text-sm font-bold text-[#2a3439]">Inventario verificado</p>
-                          <p className="text-xs text-[#566166]">Actividad: auditoría de equipos</p>
-                        </div>
-                      </div>
-                    </section>
-                  ) : null}
+                            {ACADEMIC_TIME_SEGMENTS.map((segment, segmentIndex) => (
+                              <div className="grid grid-cols-[112px_repeat(7,minmax(0,1fr))] gap-1" key={`modal-${segment.key}`}>
+                                <div className="flex items-center justify-end gap-1 pr-1 text-[9px] whitespace-nowrap">
+                                  <span className="font-bold text-[#566166]">{ACADEMIC_SEGMENT_ROWS[segmentIndex].label}</span>
+                                  <span className="text-slate-400">{ACADEMIC_SEGMENT_ROWS[segmentIndex].range}</span>
+                                </div>
 
-                  {mobileDetailTab === "profile" ? (
-                    <div className="flex gap-2.5 pt-2">
-                      <button
-                        className="flex-1 rounded-xl bg-[#3a5f94] py-3 text-xs font-bold text-white shadow-lg shadow-[#3a5f94]/20 disabled:opacity-60"
-                        disabled={!selectedStaff}
-                        onClick={() => {
-                          setIsStaffDetailModalOpen(false);
-                          openEditStaffForm();
-                        }}
-                        type="button"
-                      >
-                        Editar perfil
-                      </button>
-                      <button
-                        className="rounded-xl bg-[#9f403d] p-3 text-white transition-colors hover:bg-[#8a3631] disabled:opacity-60"
-                        disabled={!selectedStaff}
-                        onClick={() => {
-                          setIsStaffDetailModalOpen(false);
-                          void handleDeleteStaff();
-                        }}
-                        type="button"
-                      >
-                        <span className="material-symbols-outlined text-lg">delete</span>
-                      </button>
-                    </div>
-                  ) : null}
+                                {ACADEMIC_DAY_COLUMNS.map((column, dayIndex) => {
+                                  const isBlocked = academicUnavailabilityMatrix[dayIndex]?.[segmentIndex] ?? false;
+
+                                  return (
+                                    <div
+                                      className={`h-8 rounded-sm ${isBlocked ? "bg-[#3a5f94]" : "bg-[#f0f4f7]"}`}
+                                      key={`modal-${column.key}-${segment.key}`}
+                                    />
+                                  );
+                                })}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                        {academicBlockedSlotDetails.length > 0 ? (
+                          <div className="mt-3 space-y-1 rounded-lg border border-slate-200 bg-white p-3">
+                            <p className="text-[10px] font-bold tracking-wider text-slate-400 uppercase">Detalle de Bloques</p>
+                            {academicBlockedSlotDetails.map((slot, index) => (
+                              <p className="text-xs text-[#2a3439]" key={`modal-${slot.dayKey}-${slot.start}-${index}`}>
+                                {slot.dayName}: {slot.start} - {slot.end}
+                              </p>
+                            ))}
+                          </div>
+                        ) : null}
+                      </section>
+                    ) : null}
+
+                    {mobileDetailTab === "activity" ? (
+                      <section className="rounded-2xl border border-slate-200 bg-white p-4">
+                        <h4 className="mb-4 flex items-center gap-2 text-[11px] font-black tracking-widest text-[#566166] uppercase">
+                          <span className="h-1.5 w-1.5 rounded-full bg-[#3a5f94]" />
+                          Actividades recientes e informes
+                        </h4>
+                        <div className="relative space-y-6 pl-6 before:absolute before:top-2 before:bottom-2 before:left-[7px] before:w-[2px] before:bg-[#cfdce3] before:content-['']">
+                          <div className="relative">
+                            <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-green-500" />
+                            <p className="text-[10px] font-bold text-slate-400">HOY, 10:45</p>
+                            <p className="text-sm font-bold text-[#2a3439]">Salón 302 limpiado</p>
+                            <p className="text-xs text-[#566166]">Actividad: registro de mantenimiento</p>
+                          </div>
+                          <div className="relative">
+                            <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-[#9f403d]" />
+                            <p className="text-[10px] font-bold text-slate-400">AYER, 14:15</p>
+                            <p className="text-sm font-bold text-[#9f403d]">Informe de llegada tardía</p>
+                            <p className="text-xs text-[#566166]">Infracción: 15 min de retraso sin aviso.</p>
+                          </div>
+                          <div className="relative">
+                            <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-green-500" />
+                            <p className="text-[10px] font-bold text-slate-400">24 OCT, 09:00</p>
+                            <p className="text-sm font-bold text-[#2a3439]">Inventario verificado</p>
+                            <p className="text-xs text-[#566166]">Actividad: auditoría de equipos</p>
+                          </div>
+                        </div>
+                      </section>
+                    ) : null}
+
+                    {mobileDetailTab === "profile" && canManageStaff ? (
+                      <div className="flex gap-2.5 pt-2">
+                        <button
+                          className="flex-1 rounded-xl bg-[#3a5f94] py-3 text-xs font-bold text-white shadow-lg shadow-[#3a5f94]/20 disabled:opacity-60"
+                          disabled={!selectedStaff}
+                          onClick={() => {
+                            setIsStaffDetailModalOpen(false);
+                            openEditStaffForm();
+                          }}
+                          type="button"
+                        >
+                          Editar perfil
+                        </button>
+                        <button
+                          className="rounded-xl bg-[#9f403d] p-3 text-white transition-colors hover:bg-[#8a3631] disabled:opacity-60"
+                          disabled={!selectedStaff}
+                          onClick={() => {
+                            setIsStaffDetailModalOpen(false);
+                            void handleDeleteStaff();
+                          }}
+                          type="button"
+                        >
+                          <span className="material-symbols-outlined text-lg">delete</span>
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
-              </div>
               </div>
             </div>
           </div>

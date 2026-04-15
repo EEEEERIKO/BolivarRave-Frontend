@@ -1,26 +1,30 @@
+/* eslint-disable @next/next/no-img-element */
 "use client";
 
 import Image from "next/image";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
+import { readAuthSession, type AuthSession } from "@/lib/auth-session";
 
 type NavItem = {
   label: string;
   icon: string;
   href: string;
   isRoute?: boolean;
+  allowedRoles?: Array<AuthSession["role"]>;
 };
 
 const navItems: NavItem[] = [
   { label: "Tablero", icon: "dashboard", href: "/", isRoute: true },
   { label: "Horarios", icon: "calendar_today", href: "/schedules", isRoute: true },
   { label: "Salones", icon: "meeting_room", href: "/rooms", isRoute: true },
-  { label: "Auditorio", icon: "theater_comedy", href: "/auditorio", isRoute: true },
+  { label: "Auditorio", icon: "theater_comedy", href: "/auditorio", isRoute: true, allowedRoles: ["admin", "monitor"] },
   { label: "Personal", icon: "groups", href: "/staff", isRoute: true },
-  { label: "Tareas", icon: "assignment_turned_in", href: "/tasks", isRoute: true },
-  { label: "Inventario", icon: "inventory_2", href: "/inventory", isRoute: true },
-  { label: "Importar Excel", icon: "upload_file", href: "/excel-import", isRoute: true },
+  { label: "Tareas", icon: "assignment_turned_in", href: "/tasks", isRoute: true, allowedRoles: ["admin", "monitor"] },
+  { label: "Inventario", icon: "inventory_2", href: "/inventory", isRoute: true, allowedRoles: ["admin", "monitor"] },
+  { label: "Importar Excel", icon: "upload_file", href: "/excel-import", isRoute: true, allowedRoles: ["admin"] },
+  { label: "Configuración", icon: "settings", href: "/settings", isRoute: true },
 ];
 
 function navClasses(isActive: boolean) {
@@ -31,16 +35,71 @@ function navClasses(isActive: boolean) {
   }`;
 }
 
+function getStaffPhotoUrl(cedula: string): string {
+  return `https://svga.unac.edu.co/svga/files/pics/${encodeURIComponent(cedula)}.jpg`;
+}
+
 export function AdminShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const isLoginRoute = pathname.startsWith("/login");
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [authSession, setAuthSession] = useState<AuthSession | null>(null);
+  const [isSessionReady, setIsSessionReady] = useState(false);
 
   useEffect(() => {
     setIsMobileMenuOpen(false);
   }, [pathname]);
 
+  useEffect(() => {
+    if (isLoginRoute) {
+      setIsSessionReady(true);
+      return;
+    }
+
+    const session = readAuthSession();
+    setAuthSession(session);
+    setIsSessionReady(true);
+
+    if (!session) {
+      router.replace("/login");
+      return;
+    }
+
+    if (pathname.startsWith("/excel-import") && session.role !== "admin") {
+      router.replace("/");
+      return;
+    }
+
+    if (
+      session.role === "colaborador" &&
+      (pathname.startsWith("/auditorio") || pathname.startsWith("/tasks") || pathname.startsWith("/inventory"))
+    ) {
+      router.replace("/");
+    }
+  }, [isLoginRoute, pathname, router]);
+
+  const visibleNavItems = useMemo(
+    () => navItems.filter((item) => !item.allowedRoles || item.allowedRoles.includes(authSession?.role ?? "colaborador")),
+    [authSession]
+  );
+
+  if (isLoginRoute) {
+    return <>{children}</>;
+  }
+
+  if (!isSessionReady || !authSession) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#f6f7f8] p-4">
+        <div className="rounded-xl border border-slate-200 bg-white px-5 py-4 text-sm font-medium text-slate-600 shadow-sm">
+          Cargando sesión...
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex min-h-screen bg-[#f6f7f8] font-[Inter,sans-serif] text-slate-900 dark:bg-[#13181f] dark:text-slate-100">
+    <div className="flex min-h-screen bg-[#f6f7f8] text-slate-900 dark:bg-[#13181f] dark:text-slate-100">
       <button
         type="button"
         aria-label="Cerrar navegación"
@@ -60,7 +119,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
         </div>
 
         <nav className="mt-4 flex-1 space-y-1 px-4">
-          {navItems.map((item) => {
+          {visibleNavItems.map((item) => {
             const isActive = item.isRoute ? pathname === item.href : false;
             if (item.isRoute) {
               return (
@@ -79,25 +138,41 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
             );
           })}
 
-          <div className="mt-4 border-t border-slate-100 pt-4 dark:border-slate-800">
-            <a className={navClasses(false)} href="#">
-              <span className="material-symbols-outlined">settings</span>
-              <span>Configuracion</span>
-            </a>
-          </div>
         </nav>
 
         <div className="border-t border-slate-200 p-4 dark:border-slate-800">
           <div className="flex items-center gap-3 rounded-xl bg-slate-50 p-2 dark:bg-slate-800">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              alt="Admin"
-              className="size-10 rounded-full border-2 border-white shadow-sm dark:border-slate-700"
-              src="https://lh3.googleusercontent.com/aida-public/AB6AXuCf7vWJrNb7o1XBBrzM2xzCS4_C7UmE435vlnJi2LoNwXddvTG_y1Ogz6uRM4V3mRh3XRRZJB8AOc_U2rXTIndFEodHHFChy9jNdJEfS5aS3zMov4-5YlCNNR2ZFUKnY2HyC1fQ4LIjLaclGk7AaoiK0gLsfvI1oLBXdfXNkBuXIDWlN62sWikIxc_eXc0wuvIjmTSLUmNghZSb5xYR3TErR2mXWrXqGGA_Je6nFh4HQ8N4NuZPFyR0MBYdAHAa_mMUgKSizBCC1w"
-            />
+            <div className="relative flex size-10 items-center justify-center overflow-hidden rounded-full border-2 border-white bg-[#295786] text-xs font-bold text-white shadow-sm dark:border-slate-700">
+              <img
+                src={getStaffPhotoUrl(authSession.cedula)}
+                alt={`Foto de perfil de ${authSession.name}`}
+                className="h-full w-full object-cover"
+                onError={(event) => {
+                  const image = event.currentTarget;
+                  image.style.display = "none";
+                  const fallback = image.parentElement?.querySelector<HTMLElement>("[data-profile-photo-fallback='true']");
+                  fallback?.classList.remove("hidden");
+                }}
+                onLoad={(event) => {
+                  const image = event.currentTarget;
+                  const fallback = image.parentElement?.querySelector<HTMLElement>("[data-profile-photo-fallback='true']");
+                  fallback?.classList.add("hidden");
+                  image.style.display = "block";
+                }}
+              />
+              <div data-profile-photo-fallback="true" className="hidden items-center justify-center">
+                {authSession.name
+                  .split(" ")
+                  .filter(Boolean)
+                  .slice(0, 2)
+                  .map((part) => part[0])
+                  .join("")
+                  .toUpperCase()}
+              </div>
+            </div>
             <div className="overflow-hidden">
-              <p className="truncate text-xs font-semibold">Dr. Ricardo Silva</p>
-              <p className="truncate text-[10px] text-slate-500">Administrador del sistema</p>
+              <p className="truncate text-xs font-semibold">{authSession.name}</p>
+              <p className="truncate text-[10px] text-slate-500">{authSession.roleLabel}</p>
             </div>
           </div>
         </div>

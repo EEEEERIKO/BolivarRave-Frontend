@@ -3,7 +3,22 @@
 import { FormEvent, Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Rnd, RndDragCallback, RndResizeCallback } from "react-rnd";
 import { fetchApiJson } from "@/lib/api-client";
+import { readAuthSession } from "@/lib/auth-session";
 import { useWebSocketSchedules } from "@/lib/use-websocket-schedules";
+
+const toAmPmLabel = (value: string) => {
+  const [rawHour, rawMinute] = value.split(":");
+  const hour = Number(rawHour);
+  const minute = Number(rawMinute);
+
+  if (!Number.isInteger(hour) || !Number.isInteger(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+    return value;
+  }
+
+  const period = hour >= 12 ? "PM" : "AM";
+  const hour12 = hour % 12 === 0 ? 12 : hour % 12;
+  return `${hour12}:${String(minute).padStart(2, "0")} ${period}`;
+};
 
 type ScheduleEvent = {
   id: string;
@@ -25,12 +40,11 @@ type ScheduleEvent = {
     start: string;
     end: string;
   }>;
-  reservationType?: "normal" | "momentanea" | "iglesia";
+  reservationType?: ReservationType;
   color: "blue" | "emerald" | "amber" | "violet" | "red";
 };
 
 type UpdateScope = "week" | "always";
-
 type PendingScopedUpdate = {
   id: string;
   eventId: string;
@@ -680,6 +694,8 @@ export default function SchedulesPage() {
   const pendingScopedUpdateRef = useRef<PendingScopedUpdate | null>(null);
   const isApplyingScopedUpdateRef = useRef(false);
   const isSchedulesWsEnabled = (process.env.NEXT_PUBLIC_ENABLE_SCHEDULES_WS ?? "").trim().toLowerCase() === "true";
+  const authSession = useMemo(() => readAuthSession(), []);
+  const canManageSchedules = authSession?.role === "admin";
 
   useEffect(() => {
     pendingScopedUpdateRef.current = pendingScopedUpdate;
@@ -2006,7 +2022,10 @@ export default function SchedulesPage() {
                       }`}
                       style={{ gridRow: rowIndex + 2, gridColumn: 1 }}
                     >
-                      {slot}
+                      {(() => {
+                        const [slotStart = "", slotEnd = ""] = slot.split("-");
+                        return `${toAmPmLabel(slotStart)} - ${toAmPmLabel(slotEnd)}`;
+                      })()}
                     </div>
 
                     {filteredRooms.map((room, roomIndex) => (
@@ -2020,7 +2039,10 @@ export default function SchedulesPage() {
                         }`}
                         style={{ gridRow: rowIndex + 2, gridColumn: roomIndex + 2 }}
                         onClick={() => setSelectedEventId(null)}
-                        title={`${room} - ${slot}`}
+                        title={`${room} - ${(() => {
+                          const [slotStart = "", slotEnd = ""] = slot.split("-");
+                          return `${toAmPmLabel(slotStart)} - ${toAmPmLabel(slotEnd)}`;
+                        })()}`}
                       />
                     ))}
                   </Fragment>
@@ -2047,11 +2069,11 @@ export default function SchedulesPage() {
                     bounds="parent"
                     dragGrid={[roomColWidth, slotHeight]}
                     resizeGrid={[roomColWidth, slotHeight]}
-                    disableDragging={!isEventSelected}
+                    disableDragging={!isEventSelected || !canManageSchedules}
                     size={{ width: geom.width, height: geom.height }}
                     position={{ x: geom.x, y: geom.y }}
                     enableResizing={
-                      isEventSelected
+                      isEventSelected && canManageSchedules
                         ? {
                             top: true,
                             right: false,
@@ -2081,7 +2103,7 @@ export default function SchedulesPage() {
                       setEditError(null);
                     }}
                     className={`z-10 overflow-hidden rounded-lg border-l-4 p-2 text-left shadow-sm transition hover:shadow-md ${getEventVisualClass(event)} ${
-                      isEventSelected ? "ring-2 ring-[#295786] cursor-grab active:cursor-grabbing" : "cursor-pointer"
+                      isEventSelected && canManageSchedules ? "ring-2 ring-[#295786] cursor-grab active:cursor-grabbing" : "cursor-pointer"
                     }`}
                     minHeight={slotHeight - 8}
                     minWidth={roomColWidth - 8}
@@ -2113,21 +2135,25 @@ export default function SchedulesPage() {
         </section>
 
         <div className="h-fit self-start xl:sticky xl:top-24">
-          <button
-            type="button"
-            onClick={() => {
-              resetCreateForm();
-              setIsCreateOpen(true);
-            }}
-            className="mb-3 w-full rounded-lg bg-[#295786] px-4 py-3 text-sm font-semibold text-white"
-          >
-            Agregar nueva clase
-          </button>
+          {canManageSchedules ? (
+            <button
+              type="button"
+              onClick={() => {
+                resetCreateForm();
+                setIsCreateOpen(true);
+              }}
+              className="mb-3 w-full rounded-lg bg-[#295786] px-4 py-3 text-sm font-semibold text-white"
+            >
+              Agregar nueva clase
+            </button>
+          ) : null}
 
           <aside className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
             <h2 className="text-sm font-bold tracking-wide text-slate-500 uppercase">Detalle interactivo</h2>
             <p className="mt-2 text-sm text-slate-600">
-              Arrastra bloques para mover clase de salon/hora. Redimensiona arriba o abajo para ampliar/reducir horas.
+              {canManageSchedules
+                ? "Arrastra bloques para mover clase de salon/hora. Redimensiona arriba o abajo para ampliar/reducir horas."
+                : "Vista de consulta: puedes seleccionar una clase para ver su información, navegar entre semanas y filtrar salones."}
             </p>
 
             {selectedEvent ? (
@@ -2150,24 +2176,26 @@ export default function SchedulesPage() {
                     <p className="text-sm text-slate-600">Horario: {selectedEvent.start} - {selectedEvent.end}</p>
                     <p className="text-sm text-slate-600">Rango: {selectedEvent.startDate} a {selectedEvent.endDate}</p>
 
-                    <div className="mt-4 grid grid-cols-2 gap-2">
-                      <button
-                        type="button"
-                        onClick={startEditEvent}
-                        disabled={isDeletingEvent}
-                        className="rounded-lg bg-[#295786] px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70"
-                      >
-                        Modificar datos
-                      </button>
-                      <button
-                        type="button"
-                        onClick={deleteSelectedEvent}
-                        disabled={isDeletingEvent}
-                        className="rounded-lg bg-red-600 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70"
-                      >
-                        {isDeletingEvent ? "Eliminando..." : "Eliminar clase"}
-                      </button>
-                    </div>
+                    {canManageSchedules ? (
+                      <div className="mt-4 grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={startEditEvent}
+                          disabled={isDeletingEvent}
+                          className="rounded-lg bg-[#295786] px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                          Modificar datos
+                        </button>
+                        <button
+                          type="button"
+                          onClick={deleteSelectedEvent}
+                          disabled={isDeletingEvent}
+                          className="rounded-lg bg-red-600 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                          {isDeletingEvent ? "Eliminando..." : "Eliminar clase"}
+                        </button>
+                      </div>
+                    ) : null}
                   </>
                 ) : (
                   <form className="space-y-3" onSubmit={saveEditEvent}>
@@ -2279,7 +2307,7 @@ export default function SchedulesPage() {
                     >
                       {slotStarts.map((slot) => (
                         <option key={`edit-start-${slot}`} value={slot}>
-                          {slot}
+                          {toAmPmLabel(slot)}
                         </option>
                       ))}
                     </select>
@@ -2290,7 +2318,7 @@ export default function SchedulesPage() {
                     >
                       {slotEnds.map((slot) => (
                         <option key={`edit-end-${slot}`} value={slot}>
-                          {slot}
+                          {toAmPmLabel(slot)}
                         </option>
                       ))}
                     </select>
@@ -2318,14 +2346,16 @@ export default function SchedulesPage() {
                     >
                       Cancelar
                     </button>
-                    <button
-                      type="button"
-                      disabled={isSavingEdit || isDeletingEvent}
-                      onClick={deleteSelectedEvent}
-                      className="rounded-lg bg-red-600 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70"
-                    >
-                      {isDeletingEvent ? "Eliminando..." : "Eliminar"}
-                    </button>
+                    {canManageSchedules ? (
+                      <button
+                        type="button"
+                        disabled={isSavingEdit || isDeletingEvent}
+                        onClick={deleteSelectedEvent}
+                        className="rounded-lg bg-red-600 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70"
+                      >
+                        {isDeletingEvent ? "Eliminando..." : "Eliminar"}
+                      </button>
+                    ) : null}
                   </div>
                   </form>
                 )}
@@ -2376,17 +2406,19 @@ export default function SchedulesPage() {
             </div>
           </aside>
 
-          <button
-            type="button"
-            onClick={() => {
-              setDeleteAllError(null);
-              setDeleteAllConfirmText("");
-              setIsDeleteAllOpen(true);
-            }}
-            className="mt-3 w-full rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700 shadow-sm hover:bg-red-100"
-          >
-            Eliminar horario completo
-          </button>
+          {canManageSchedules ? (
+            <button
+              type="button"
+              onClick={() => {
+                setDeleteAllError(null);
+                setDeleteAllConfirmText("");
+                setIsDeleteAllOpen(true);
+              }}
+              className="mt-3 w-full rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700 shadow-sm hover:bg-red-100"
+            >
+              Eliminar horario completo
+            </button>
+          ) : null}
         </div>
       </div>
 
@@ -2564,7 +2596,7 @@ export default function SchedulesPage() {
                           <option value="">Selecciona hora inicio</option>
                           {slotStarts.map((slotStart) => (
                             <option key={`slot-start-${index}-${slotStart}`} value={slotStart}>
-                              {slotStart}
+                              {toAmPmLabel(slotStart)}
                             </option>
                           ))}
                         </select>
@@ -2584,7 +2616,7 @@ export default function SchedulesPage() {
                           <option value="">Selecciona hora fin</option>
                           {slotEnds.map((slotEnd) => (
                             <option key={`slot-end-${index}-${slotEnd}`} value={slotEnd}>
-                              {slotEnd}
+                              {toAmPmLabel(slotEnd)}
                             </option>
                           ))}
                         </select>
@@ -2647,20 +2679,30 @@ export default function SchedulesPage() {
                 onChange={(e) => setAvailableRoomForm((prev) => ({ ...prev, date: e.target.value }))}
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
               />
-              <input
-                type="time"
+              <select
                 required
                 value={availableRoomForm.start}
                 onChange={(e) => setAvailableRoomForm((prev) => ({ ...prev, start: e.target.value }))}
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
-              />
-              <input
-                type="time"
+              >
+                {slotStarts.map((slotStart) => (
+                  <option key={`available-start-${slotStart}`} value={slotStart}>
+                    {toAmPmLabel(slotStart)}
+                  </option>
+                ))}
+              </select>
+              <select
                 required
                 value={availableRoomForm.end}
                 onChange={(e) => setAvailableRoomForm((prev) => ({ ...prev, end: e.target.value }))}
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
-              />
+              >
+                {slotEnds.map((slotEnd) => (
+                  <option key={`available-end-${slotEnd}`} value={slotEnd}>
+                    {toAmPmLabel(slotEnd)}
+                  </option>
+                ))}
+              </select>
               <input
                 type="number"
                 min={1}

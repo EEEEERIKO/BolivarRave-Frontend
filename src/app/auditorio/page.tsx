@@ -229,6 +229,34 @@ function overlapsByTime(startA: string, endA: string, startB: string, endB: stri
   return toMinutes(startA) < toMinutes(endB) && toMinutes(startB) < toMinutes(endA);
 }
 
+function formatTimeAmPm(value: string) {
+  if (!value) return "";
+
+  const [hoursText, minutesText] = value.split(":");
+  const hours = Number(hoursText);
+  const minutes = Number(minutesText);
+
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
+    return value;
+  }
+
+  const suffix = hours >= 12 ? "PM" : "AM";
+  const normalizedHour = ((hours + 11) % 12) + 1;
+  return `${normalizedHour}:${String(minutes).padStart(2, "0")} ${suffix}`;
+}
+
+const TIME_SLOT_OPTIONS = Array.from({ length: ((23 * 60 + 30) - (5 * 60)) / 30 + 1 }, (_, index) => {
+  const totalMinutes = 5 * 60 + index * 30;
+  const hour = String(Math.floor(totalMinutes / 60)).padStart(2, "0");
+  const minute = String(totalMinutes % 60).padStart(2, "0");
+  const value = `${hour}:${minute}`;
+
+  return {
+    value,
+    label: formatTimeAmPm(value),
+  };
+});
+
 function colorFromEstado(estado: AuditorioEstado): AuditoriumEvent["color"] {
   if (estado === "Aprobada") return "emerald";
   if (estado === "Pendiente") return "amber";
@@ -1432,18 +1460,30 @@ export default function AuditorioPage() {
                             onChange={(event) => updateScheduleBlock(block.id, "date", event.target.value)}
                             className={`rounded-md border px-2 py-1.5 text-sm ${blockDateError ? "border-red-400 bg-red-50" : "border-slate-300"}`}
                           />
-                          <input
-                            type="time"
+                          <select
                             value={block.startTime}
                             onChange={(event) => updateScheduleBlock(block.id, "startTime", event.target.value)}
                             className={`rounded-md border px-2 py-1.5 text-sm ${blockStartError || blockRangeError ? "border-red-400 bg-red-50" : "border-slate-300"}`}
-                          />
-                          <input
-                            type="time"
+                          >
+                            <option value="">Hora de inicio</option>
+                            {TIME_SLOT_OPTIONS.map((option) => (
+                              <option key={`start-${block.id}-${option.value}`} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                          <select
                             value={block.endTime}
                             onChange={(event) => updateScheduleBlock(block.id, "endTime", event.target.value)}
                             className={`rounded-md border px-2 py-1.5 text-sm ${blockEndError || blockRangeError ? "border-red-400 bg-red-50" : "border-slate-300"}`}
-                          />
+                          >
+                            <option value="">Hora de fin</option>
+                            {TIME_SLOT_OPTIONS.map((option) => (
+                              <option key={`end-${block.id}-${option.value}`} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
                           <button
                             type="button"
                             onClick={() => removeScheduleBlock(block.id)}

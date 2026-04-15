@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { fetchApiJson } from "@/lib/api-client";
 
 type RoomStatus = "Available" | "Occupied" | "Starting Soon";
 
@@ -14,6 +15,7 @@ type RoomData = {
   session: string;
   section: string;
   professor: string;
+  faculty: string;
   schedule: string;
   remaining: string;
 };
@@ -23,6 +25,7 @@ type ApiSalon = {
   nombre: string;
   piso: number | null;
   capacidad: number | null;
+  facultad?: string | null;
   horarios: Array<{
     diaSemana: string;
     horaInicio: string;
@@ -31,6 +34,7 @@ type ApiSalon = {
       nombrePrincipal: string | null;
       responsable: string | null;
       codigoMateria: string | null;
+      facultad: string | null;
       actividad: string | null;
     };
   }>;
@@ -48,7 +52,7 @@ type RoomsCachePayload = {
   rooms: RoomData[];
 };
 
-const ROOMS_CACHE_KEY = "rooms-page-cache-v2";
+const ROOMS_CACHE_KEY = "rooms-page-cache-v5";
 const ROOMS_CACHE_TTL_MS = 2 * 60 * 1000;
 let roomsMemoryCache: RoomsCachePayload | null = null;
 
@@ -104,6 +108,18 @@ function parseTimeToMinutes(value: string): number {
   const [hours, minutes] = label.split(":").map(Number);
   if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return Number.NaN;
   return hours * 60 + minutes;
+}
+
+function formatTimeAmPm(value: string): string {
+  const label = formatTimeLabel(value);
+  const [hours, minutes] = label.split(":").map(Number);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
+    return label;
+  }
+
+  const suffix = hours >= 12 ? "PM" : "AM";
+  const normalizedHour = hours % 12 === 0 ? 12 : hours % 12;
+  return `${normalizedHour}:${String(minutes).padStart(2, "0")} ${suffix}`;
 }
 
 function getEffectiveFloor(room: { nombre: string; piso: number | null }): number | null {
@@ -178,6 +194,40 @@ function hasSessionName(value: string | null | undefined): value is string {
   return value.trim().length > 0;
 }
 
+function getFacultyFromSalon(salon: ApiSalon): string {
+  const facultyName = salon.horarios.find((horario) => horario.evento.facultad?.trim())?.evento.facultad;
+  return facultyName?.trim() || "Sin facultad";
+}
+
+function getFacultyForDisplaySchedule(
+  salon: ApiSalon,
+  displaySchedule: ApiSalon["horarios"][number] | null,
+): string {
+  if (!displaySchedule) {
+    return getFacultyFromSalon(salon);
+  }
+
+  const directFaculty = displaySchedule.evento.facultad?.trim();
+  if (directFaculty) {
+    return directFaculty;
+  }
+
+  const sameScheduleFaculty = salon.horarios.find((horario) => {
+    const sameSlot =
+      horario.diaSemana === displaySchedule.diaSemana &&
+      horario.horaInicio === displaySchedule.horaInicio &&
+      horario.horaFin === displaySchedule.horaFin;
+    const sameEvent =
+      (horario.evento.nombrePrincipal ?? "") === (displaySchedule.evento.nombrePrincipal ?? "") &&
+      (horario.evento.responsable ?? "") === (displaySchedule.evento.responsable ?? "") &&
+      (horario.evento.codigoMateria ?? "") === (displaySchedule.evento.codigoMateria ?? "");
+
+    return sameSlot && sameEvent && Boolean(horario.evento.facultad?.trim());
+  })?.evento.facultad;
+
+  return sameScheduleFaculty?.trim() || "Sin facultad";
+}
+
 function readRoomsCache(): RoomsCachePayload | null {
   if (roomsMemoryCache) {
     return roomsMemoryCache;
@@ -188,6 +238,10 @@ function readRoomsCache(): RoomsCachePayload | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as RoomsCachePayload;
     if (!parsed || !Array.isArray(parsed.rooms) || typeof parsed.timestamp !== "number") {
+      return null;
+    }
+    const hasMissingFaculty = parsed.rooms.some((room) => !room.faculty || room.faculty === "Sin facultad");
+    if (hasMissingFaculty) {
       return null;
     }
     roomsMemoryCache = parsed;
@@ -235,15 +289,9 @@ export default function RoomsPage() {
           setError(null);
         }
 
-        const response = await fetch("/api/schedules/rooms-info", {
+        const data = await fetchApiJson<ApiResponse>("/api/schedules/rooms-info", {
           cache: "no-store",
         });
-
-        if (!response.ok) {
-          throw new Error("Failed to fetch rooms");
-        }
-
-        const data = (await response.json()) as ApiResponse;
         const todayName = getTodayName();
         const now = new Date();
         const currentMinutes = now.getHours() * 60 + now.getMinutes();
@@ -306,7 +354,7 @@ export default function RoomsPage() {
             let status: RoomStatus = "Available";
             let displaySchedule: (typeof todaySchedules)[number] | null = null;
             let remaining = "-";
-            let cardDetail = "No class scheduled today";
+            let cardDetail = "No hay clases programadas hoy";
 
             const currentSchedule = todaySchedules.find((item) => {
               const start = parseTimeToMinutes(item.horaInicio);
@@ -324,7 +372,7 @@ export default function RoomsPage() {
               status = "Occupied";
               displaySchedule = currentSchedule;
               const end = parseTimeToMinutes(currentSchedule.horaFin);
-              remaining = `${Math.max(end - currentMinutes, 1)}m left`;
+              remaining = `${Math.max(end - currentMinutes, 1)} min restantes`;
               cardDetail = currentSchedule.evento.nombrePrincipal?.trim() || "Clase en curso";
             } else {
               const nextSchedule = todaySchedules.find((item) => {
@@ -338,26 +386,27 @@ export default function RoomsPage() {
                 if (minutesUntilStart <= 60) {
                   status = "Starting Soon";
                   displaySchedule = nextSchedule;
-                  remaining = `Starts in ${minutesUntilStart}m`;
-                  cardDetail = `Starts in ${minutesUntilStart}m`;
+                  remaining = `Inicia en ${minutesUntilStart} min`;
+                  cardDetail = `Inicia en ${minutesUntilStart} min`;
                 } else {
-                  cardDetail = `Next class at ${formatTimeLabel(nextSchedule.horaInicio)}`;
+                  cardDetail = `Próxima clase a las ${formatTimeAmPm(nextSchedule.horaInicio)}`;
                 }
               } else if (todaySchedules.length > 0) {
                 const lastTodaySchedule = todaySchedules[todaySchedules.length - 1];
-                cardDetail = `Last class ended at ${formatTimeLabel(lastTodaySchedule.horaFin)}`;
+                cardDetail = `Última clase terminó a las ${formatTimeLabel(lastTodaySchedule.horaFin)}`;
               }
             }
 
             const session = displaySchedule && hasSessionName(displaySchedule.evento.nombrePrincipal)
               ? displaySchedule.evento.nombrePrincipal.trim()
-              : "No active class";
+              : "Sin clase activa";
             const professor = displaySchedule && displaySchedule.evento.responsable
               ? displaySchedule.evento.responsable.trim() || "N/A"
               : "N/A";
+            const faculty = getFacultyForDisplaySchedule(salon, displaySchedule);
             const schedule = displaySchedule
               ? `${formatTimeLabel(displaySchedule.horaInicio)} - ${formatTimeLabel(displaySchedule.horaFin)}`
-              : "Available now";
+              : "Disponible ahora";
 
             rooms.push({
               id: salon.id,
@@ -367,8 +416,9 @@ export default function RoomsPage() {
               status,
               cardDetail,
               session,
-              section: displaySchedule ? `${displaySchedule.evento.codigoMateria || ""}` : "Free slot",
+              section: displaySchedule ? `${displaySchedule.evento.codigoMateria || ""}` : "Espacio libre",
               professor,
+              faculty,
               schedule,
               remaining,
             });
@@ -520,7 +570,7 @@ export default function RoomsPage() {
                 </div>
                 <div>
                   <p className="text-sm font-semibold">{selectedInfo.professor}</p>
-                  <p className="text-[10px] text-slate-500">Departamento</p>
+                  <p className="text-[10px] text-slate-500">{selectedInfo.faculty}</p>
                 </div>
               </div>
             </div>
@@ -611,7 +661,7 @@ export default function RoomsPage() {
                   </div>
                   <div>
                     <p className="text-sm font-semibold">{selectedInfo.professor}</p>
-                    <p className="text-[10px] text-slate-500">Departamento</p>
+                    <p className="text-[10px] text-slate-500">{selectedInfo.faculty}</p>
                   </div>
                 </div>
               </div>
