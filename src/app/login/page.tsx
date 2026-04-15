@@ -167,7 +167,7 @@ export default function LoginPage() {
                   disabled={isSubmitting}
                   className="group flex w-full items-center justify-center gap-2 rounded-md bg-[#3a5f94] py-4 text-sm font-semibold text-[#f6f7ff] shadow-sm transition-all duration-200 hover:bg-[#2d5387] disabled:cursor-not-allowed disabled:opacity-70"
                 >
-                  {isSubmitting ? "Ingresando..." : "Ingresa al sistema."}
+                  {isSubmitting ? "Ingresando..." : "Ingresa al sistema"}
                   <span className="material-symbols-outlined transition-transform group-hover:translate-x-1">arrow_forward</span>
                 </button>
               </div>
