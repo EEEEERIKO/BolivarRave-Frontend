@@ -19,10 +19,10 @@ const navItems: NavItem[] = [
   { label: "Tablero", icon: "dashboard", href: "/", isRoute: true },
   { label: "Horarios", icon: "calendar_today", href: "/schedules", isRoute: true },
   { label: "Salones", icon: "meeting_room", href: "/rooms", isRoute: true },
-  { label: "Auditorio", icon: "theater_comedy", href: "/auditorio", isRoute: true },
+  { label: "Auditorio", icon: "theater_comedy", href: "/auditorio", isRoute: true, allowedRoles: ["admin", "monitor"] },
   { label: "Personal", icon: "groups", href: "/staff", isRoute: true },
-  { label: "Tareas", icon: "assignment_turned_in", href: "/tasks", isRoute: true },
-  { label: "Inventario", icon: "inventory_2", href: "/inventory", isRoute: true },
+  { label: "Tareas", icon: "assignment_turned_in", href: "/tasks", isRoute: true, allowedRoles: ["admin", "monitor"] },
+  { label: "Inventario", icon: "inventory_2", href: "/inventory", isRoute: true, allowedRoles: ["admin", "monitor"] },
   { label: "Importar Excel", icon: "upload_file", href: "/excel-import", isRoute: true, allowedRoles: ["admin"] },
   { label: "Configuración", icon: "settings", href: "/settings", isRoute: true },
 ];
@@ -67,6 +67,14 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
     }
 
     if (pathname.startsWith("/excel-import") && session.role !== "admin") {
+      router.replace("/");
+      return;
+    }
+
+    if (
+      session.role === "colaborador" &&
+      (pathname.startsWith("/auditorio") || pathname.startsWith("/tasks") || pathname.startsWith("/inventory"))
+    ) {
       router.replace("/");
     }
   }, [isLoginRoute, pathname, router]);
