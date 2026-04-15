@@ -35,6 +35,7 @@ function navClasses(isActive: boolean) {
 export function AdminShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
+  const isLoginRoute = pathname.startsWith("/login");
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [authSession, setAuthSession] = useState<AuthSession | null>(null);
   const [isSessionReady, setIsSessionReady] = useState(false);
@@ -44,7 +45,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   }, [pathname]);
 
   useEffect(() => {
-    if (pathname === "/login") {
+    if (isLoginRoute) {
       setIsSessionReady(true);
       return;
     }
@@ -56,7 +57,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
     if (!session) {
       router.replace("/login");
     }
-  }, [pathname, router]);
+  }, [isLoginRoute, router]);
 
   const handleLogout = () => {
     clearAuthSession();
@@ -65,7 +66,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
     router.refresh();
   };
 
-  if (pathname === "/login") {
+  if (isLoginRoute) {
     return <>{children}</>;
   }
 

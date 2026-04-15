@@ -32,23 +32,12 @@ const MOCK_USERS: MockUser[] = [
       cedula: "1001001002",
     },
   },
-  {
-    cedula: "1001001003",
-    password: "colab123",
-    session: {
-      role: "colaborador",
-      name: "Gerson Esteban Marin Gomez",
-      roleLabel: "Colaborador",
-      cedula: "1001001003",
-    },
-  },
 ];
 
 export default function LoginPage() {
   const router = useRouter();
   const [cedula, setCedula] = useState("");
   const [password, setPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -75,85 +64,156 @@ export default function LoginPage() {
   };
 
   return (
-    <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#f6f7f8] p-6 text-slate-900">
-      <div className="pointer-events-none absolute inset-0">
-        <div className="absolute -top-24 -right-16 h-80 w-80 rounded-full bg-[#295786]/20 blur-3xl" />
-        <div className="absolute -bottom-24 -left-12 h-80 w-80 rounded-full bg-[#bfd5ff]/35 blur-3xl" />
-      </div>
-
-      <div className="relative z-10 w-full max-w-md">
-        <div className="mb-8 rounded-2xl border border-slate-200 bg-white/85 p-5 shadow-sm backdrop-blur">
-          <div className="mb-4 flex items-center gap-3">
+    <div className="min-h-screen bg-[#f7f9fb] text-[#2a3439] selection:bg-[#bfd5ff] selection:text-[#153f73]">
+      <header className="sticky top-0 z-30 w-full border-b border-slate-200/60 bg-[#f7f9fb]/95 backdrop-blur">
+        <div className="mx-auto flex w-full max-w-screen-2xl items-center justify-between px-6 py-4 lg:px-8">
+          <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-lg bg-white">
               <Image src="/logo.png" alt="UNAC" width={40} height={40} className="h-10 w-10 object-contain" />
             </div>
-            <div>
-              <p className="text-sm font-black tracking-wide text-[#295786]">BOLIVAR RAVE</p>
-              <p className="text-[11px] text-slate-500">Portal administrativo UNAC</p>
+            <span className="text-lg font-semibold tracking-tight sm:text-xl">Administración Bolivar Rave</span>
+          </div>
+          <div className="flex items-center gap-5">
+            <button type="button" className="inline-flex items-center gap-2 rounded px-2 py-1 text-sm font-medium text-[#566166] hover:bg-slate-200/60 hover:text-[#3a5f94]">
+              <span className="material-symbols-outlined text-[18px]">language</span>
+              Español
+            </button>
+            <a href="#" className="text-sm font-semibold text-[#3a5f94] hover:opacity-80">
+              Soporte
+            </a>
+          </div>
+        </div>
+      </header>
+
+      <main className="flex items-center justify-center px-5 py-10 sm:px-6 md:py-14">
+        <div className="mx-auto flex w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-[#a9b4b9]/20 bg-[#f0f4f7] shadow-[0_10px_40px_rgba(42,52,57,0.06)] md:flex-row">
+          <div className="relative hidden w-1/2 overflow-hidden bg-[#e8eff3] md:flex md:flex-col md:justify-end">
+            <div className="absolute inset-0 z-10 bg-gradient-to-br from-[#3a5f94]/20 via-transparent to-transparent" />
+            <div className="absolute inset-0 z-10 bg-gradient-to-t from-[#0b0f10]/72 via-[#0b0f10]/28 to-transparent" />
+            <Image
+              src="/images/login-bg-bolivar-rave.webp"
+              alt="Edificio academico Bolivar Rave"
+              fill
+              priority
+              sizes="(min-width: 768px) 50vw, 100vw"
+              quality={90}
+              className="absolute inset-0 h-full w-full object-cover object-center"
+            />
+            <div className="relative z-20 p-10 text-white">
+              <h2 className="text-3xl leading-tight font-bold tracking-tight text-white [text-shadow:0_2px_14px_rgba(0,0,0,0.55)]">
+                Infraestructura Administrativa Inteligente
+              </h2>
+              <p className="mt-4 max-w-xs text-sm leading-relaxed text-white/95 [text-shadow:0_2px_10px_rgba(0,0,0,0.45)]">
+                Acceso seguro para administración y monitoreo institucional del Edificio Bolivar Rave.
+              </p>
             </div>
           </div>
-          <h1 className="text-2xl font-black tracking-tight text-slate-900">Iniciar sesión</h1>
-          <p className="mt-1 text-sm text-slate-600">Accede con tu cédula institucional para continuar.</p>
-        </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-lg shadow-[#295786]/5">
-          <form className="space-y-5" onSubmit={handleSubmit}>
-            <label className="block space-y-1.5">
-              <span className="text-[11px] font-bold tracking-widest text-slate-500 uppercase">Cédula</span>
-              <div className="relative">
-                <span className="material-symbols-outlined absolute top-1/2 left-3 -translate-y-1/2 text-slate-400">badge</span>
-                <input
-                  value={cedula}
-                  onChange={(event) => setCedula(event.target.value)}
-                  placeholder="1001001001"
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pr-3 pl-10 text-sm font-medium text-slate-900 outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/15"
-                />
+          <div className="flex w-full flex-col bg-white p-7 sm:p-10 md:w-1/2 md:p-14">
+            <div className="mb-8">
+              <span className="mb-2 block text-xs font-bold tracking-[0.2em] text-[#3a5f94] uppercase">Acceso seguro</span>
+              <h1 className="text-2xl font-bold tracking-tight text-[#2a3439]">Login Admin/Monitor</h1>
+              <p className="mt-2 text-sm text-[#566166]">Ingresa con tus credenciales institucionales para continuar.</p>
+            </div>
+
+            <form className="space-y-5" onSubmit={handleSubmit}>
+              <div>
+                <label htmlFor="national-id" className="mb-2 ml-1 block text-xs font-semibold text-[#566166]">
+                  Cédula de ciudadanía
+                </label>
+                <div className="group relative">
+                  <input
+                    id="national-id"
+                    value={cedula}
+                    onChange={(event) => setCedula(event.target.value)}
+                    placeholder="Número de identificación"
+                    className="w-full border-b-2 border-transparent bg-[#f0f4f7] px-4 py-3.5 text-sm text-[#2a3439] transition-all outline-none focus:border-[#3a5f94]"
+                  />
+                  <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-4 text-[#a9b4b9] group-focus-within:text-[#3a5f94]">
+                    <span className="material-symbols-outlined text-[20px]">badge</span>
+                  </div>
+                </div>
               </div>
-            </label>
 
-            <label className="block space-y-1.5">
-              <span className="text-[11px] font-bold tracking-widest text-slate-500 uppercase">Contraseña</span>
-              <div className="relative">
-                <span className="material-symbols-outlined absolute top-1/2 left-3 -translate-y-1/2 text-slate-400">lock</span>
-                <input
-                  type={showPassword ? "text" : "password"}
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  placeholder="••••••••"
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pr-10 pl-10 text-sm font-medium text-slate-900 outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/15"
-                />
+              <div>
+                <div className="mb-2 ml-1 flex items-center justify-between">
+                  <label htmlFor="password" className="block text-xs font-semibold text-[#566166]">
+                    Contraseña
+                  </label>
+                  <a href="#" className="text-xs font-medium text-[#3a5f94] hover:text-[#2d5387]">
+                    ¿Olvidaste tu contraseña?
+                  </a>
+                </div>
+                <div className="group relative">
+                  <input
+                    id="password"
+                    type="password"
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    placeholder="••••••••"
+                    className="w-full border-b-2 border-transparent bg-[#f0f4f7] px-4 py-3.5 text-sm text-[#2a3439] transition-all outline-none focus:border-[#3a5f94]"
+                  />
+                  <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-4 text-[#a9b4b9] group-focus-within:text-[#3a5f94]">
+                    <span className="material-symbols-outlined text-[20px]">lock</span>
+                  </div>
+                </div>
+              </div>
+
+              {error ? <p className="rounded-md border border-[#fe8983]/50 bg-[#fe8983]/15 px-3 py-2 text-xs font-medium text-[#752121]">{error}</p> : null}
+
+              <div className="pt-3">
                 <button
-                  type="button"
-                  className="absolute top-1/2 right-3 -translate-y-1/2 text-slate-500 hover:text-[#295786]"
-                  onClick={() => setShowPassword((current) => !current)}
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="group flex w-full items-center justify-center gap-2 rounded-md bg-[#3a5f94] py-4 text-sm font-semibold text-[#f6f7ff] shadow-sm transition-all duration-200 hover:bg-[#2d5387] disabled:cursor-not-allowed disabled:opacity-70"
                 >
-                  <span className="material-symbols-outlined text-[20px]">{showPassword ? "visibility_off" : "visibility"}</span>
+                  {isSubmitting ? "Ingresando..." : "Ingresa al sistema."}
+                  <span className="material-symbols-outlined transition-transform group-hover:translate-x-1">arrow_forward</span>
                 </button>
               </div>
-            </label>
+            </form>
 
-            {error ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs font-medium text-red-700">{error}</p> : null}
-
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#295786] px-4 py-3 text-sm font-bold text-white shadow-lg shadow-[#295786]/25 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {isSubmitting ? "Ingresando..." : "Entrar"}
-              <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
-            </button>
-          </form>
-
-          <div className="mt-6 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-3">
-            <p className="text-[11px] font-bold tracking-wider text-slate-600 uppercase">Accesos de prueba</p>
-            <ul className="mt-2 space-y-1 text-xs text-slate-600">
-              <li>Admin: 1001001001 / admin123</li>
-              <li>Monitor: 1001001002 / monitor123</li>
-              <li>Colaborador: 1001001003 / colab123</li>
-            </ul>
+            <div className="mt-auto border-t border-dashed border-[#d9e4ea] pt-8">
+              <div className="mb-4 flex items-center gap-3 text-[#566166]">
+                <div className="rounded-lg bg-[#e8eff3] p-2">
+                  <span className="material-symbols-outlined text-[18px]">verified_user</span>
+                </div>
+                <div className="text-xs leading-tight">
+                  <p className="font-semibold text-[#2a3439]">Seguridad institucional activa</p>
+                  <p>Sesión cifrada de extremo a extremo</p>
+                </div>
+              </div>
+              <div className="rounded-md border border-dashed border-slate-300 bg-slate-50 p-3">
+                <p className="text-[11px] font-bold tracking-wider text-[#566166] uppercase">Credenciales de prueba</p>
+                <ul className="mt-2 space-y-1 text-xs text-[#566166]">
+                  <li>Admin: 1001001001 / admin123</li>
+                  <li>Monitor: 1001001002 / monitor123</li>
+                  <li>Colaborador: usa URL separada (/login/colaborador)</li>
+                </ul>
+              </div>
+            </div>
           </div>
         </div>
-      </div>
-    </main>
+      </main>
+
+      <footer className="w-full border-t border-slate-200/50 bg-[#f7f9fb]">
+        <div className="mx-auto flex w-full max-w-screen-2xl flex-col items-center justify-between gap-4 px-6 py-10 md:flex-row lg:px-8">
+          <div className="text-sm leading-relaxed text-[#566166]">
+            © 2024 Administración Bolivar Rave. Todos los derechos reservados.
+          </div>
+          <div className="flex gap-7">
+            <a className="text-sm text-[#566166] transition-colors hover:text-[#3a5f94]" href="#">
+              Política de privacidad
+            </a>
+            <a className="text-sm text-[#566166] transition-colors hover:text-[#3a5f94]" href="#">
+              Términos
+            </a>
+            <a className="text-sm text-[#566166] transition-colors hover:text-[#3a5f94]" href="#">
+              Seguridad
+            </a>
+          </div>
+        </div>
+      </footer>
+    </div>
   );
 }
