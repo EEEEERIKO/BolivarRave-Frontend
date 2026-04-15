@@ -15,6 +15,7 @@ export default function SettingsPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const session = readAuthSession();
+  const isCollaborador = session?.role === "colaborador";
 
   const canChangePassword = session?.role === "admin" || session?.role === "monitor";
 
@@ -86,10 +87,15 @@ export default function SettingsPage() {
       <div className="mx-auto w-full max-w-4xl">
         <header className="mb-10">
           <h1 className="text-3xl font-extrabold tracking-tight text-[#2a3439]">Configuración</h1>
-          <p className="mt-2 text-sm text-[#566166]">Configura tu acceso institucional y parámetros de seguridad.</p>
+          <p className="mt-2 text-sm text-[#566166]">
+            {isCollaborador
+              ? "Gestiona tu sesión y preferencias generales del portal."
+              : "Configura tu acceso institucional y parámetros de seguridad."}
+          </p>
         </header>
 
         <div className="grid gap-10">
+          {!isCollaborador ? (
           <section className="rounded-xl bg-[#f0f4f7] p-1">
             <div className="rounded-[0.75rem] bg-white p-7 shadow-sm sm:p-8">
               <div className="mb-8 flex items-center gap-3">
@@ -159,6 +165,7 @@ export default function SettingsPage() {
               </div>
             </div>
           </section>
+          ) : null}
 
           <section className="rounded-xl bg-[#f0f4f7] p-1">
             <div className="rounded-[0.75rem] bg-white p-7 shadow-sm sm:p-8">
