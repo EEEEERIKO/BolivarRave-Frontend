@@ -3,64 +3,56 @@
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { FormEvent, useMemo, useState } from "react";
+import { fetchApiJson } from "@/lib/api-client";
 import { type AuthSession, writeAuthSession } from "@/lib/auth-session";
 
-type MockUser = {
-  cedula: string;
-  password: string;
+type LoginResponse = {
   session: AuthSession;
 };
-
-const MOCK_USERS: MockUser[] = [
-  {
-    cedula: "1001001001",
-    password: "admin123",
-    session: {
-      role: "admin",
-      name: "Dr. Ricardo Silva",
-      roleLabel: "Administrador del sistema",
-      cedula: "1001001001",
-    },
-  },
-  {
-    cedula: "1001001002",
-    password: "monitor123",
-    session: {
-      role: "monitor",
-      name: "Andrea Paola Rios",
-      roleLabel: "Monitor académico",
-      cedula: "1001001002",
-    },
-  },
-];
 
 export default function LoginPage() {
   const router = useRouter();
   const [cedula, setCedula] = useState("");
   const [password, setPassword] = useState("");
+  const [isPasswordVisible, setIsPasswordVisible] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const cleanCedula = useMemo(() => cedula.replace(/\D/g, ""), [cedula]);
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
     setIsSubmitting(true);
 
-    const match = MOCK_USERS.find(
-      (user) => user.cedula === cleanCedula && user.password === password,
-    );
-
-    if (!match) {
+    if (!cleanCedula || !password) {
       setIsSubmitting(false);
-      setError("Credenciales inválidas. Verifica cédula y contraseña.");
+      setError("Ingresa cédula y contraseña para continuar.");
       return;
     }
 
-    writeAuthSession(match.session);
-    router.push("/");
-    router.refresh();
+    try {
+      const data = await fetchApiJson<LoginResponse>("/api/staff/login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          cedula: cleanCedula,
+          password,
+          portal: "admin-monitor",
+        }),
+      });
+
+      writeAuthSession(data.session);
+      router.push("/");
+      router.refresh();
+    } catch (submitError) {
+      const message = submitError instanceof Error ? submitError.message : "No se pudo iniciar sesión.";
+      setError(message);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -147,15 +139,20 @@ export default function LoginPage() {
                 <div className="group relative">
                   <input
                     id="password"
-                    type="password"
+                    type={isPasswordVisible ? "text" : "password"}
                     value={password}
                     onChange={(event) => setPassword(event.target.value)}
                     placeholder="••••••••"
-                    className="w-full border-b-2 border-transparent bg-[#f0f4f7] px-4 py-3.5 text-sm text-[#2a3439] transition-all outline-none focus:border-[#3a5f94]"
+                    className="w-full border-b-2 border-transparent bg-[#f0f4f7] px-4 py-3.5 pr-12 text-sm text-[#2a3439] transition-all outline-none focus:border-[#3a5f94]"
                   />
-                  <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-4 text-[#a9b4b9] group-focus-within:text-[#3a5f94]">
-                    <span className="material-symbols-outlined text-[20px]">lock</span>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsPasswordVisible((prev) => !prev)}
+                    aria-label={isPasswordVisible ? "Ocultar contraseña" : "Mostrar contraseña"}
+                    className="absolute inset-y-0 right-0 flex items-center pr-4 text-[#a9b4b9] transition-colors hover:text-[#3a5f94] focus:text-[#3a5f94] focus:outline-none"
+                  >
+                    <span className="material-symbols-outlined text-[20px]">{isPasswordVisible ? "visibility_off" : "visibility"}</span>
+                  </button>
                 </div>
               </div>
 
@@ -184,11 +181,11 @@ export default function LoginPage() {
                 </div>
               </div>
               <div className="rounded-md border border-dashed border-slate-300 bg-slate-50 p-3">
-                <p className="text-[11px] font-bold tracking-wider text-[#566166] uppercase">Credenciales de prueba</p>
+                <p className="text-[11px] font-bold tracking-wider text-[#566166] uppercase">Acceso institucional</p>
                 <ul className="mt-2 space-y-1 text-xs text-[#566166]">
-                  <li>Admin: 1001001001 / admin123</li>
-                  <li>Monitor: 1001001002 / monitor123</li>
-                  <li>Colaborador: usa URL separada (/login/colaborador)</li>
+                  <li>Admin y Monitor: ingreso con cédula y contraseña.</li>
+                  <li>Colaborador: usa el portal separado con cédula.</li>
+                  <li>Si olvidaste tu contraseña, solicita soporte institucional.</li>
                 </ul>
               </div>
             </div>

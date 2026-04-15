@@ -1,34 +1,18 @@
+/* eslint-disable @next/next/no-img-element */
 "use client";
 
 import { useRouter } from "next/navigation";
 import { FormEvent, useMemo, useState } from "react";
+import { fetchApiJson } from "@/lib/api-client";
 import { type AuthSession, writeAuthSession } from "@/lib/auth-session";
 
-type CollaboratorMock = {
-  cedula: string;
+type LoginResponse = {
   session: AuthSession;
 };
 
-const COLLABORATOR_USERS: CollaboratorMock[] = [
-  {
-    cedula: "1001001003",
-    session: {
-      role: "colaborador",
-      name: "Gerson Esteban Marin Gomez",
-      roleLabel: "Colaborador",
-      cedula: "1001001003",
-    },
-  },
-  {
-    cedula: "1001001004",
-    session: {
-      role: "colaborador",
-      name: "Luisa Fernanda Torres",
-      roleLabel: "Colaborador",
-      cedula: "1001001004",
-    },
-  },
-];
+function getStaffPhotoUrl(cedula: string): string {
+  return `https://svga.unac.edu.co/svga/files/pics/${encodeURIComponent(cedula)}.jpg`;
+}
 
 export default function LoginColaboradorPage() {
   const router = useRouter();
@@ -38,21 +22,38 @@ export default function LoginColaboradorPage() {
 
   const cleanCedula = useMemo(() => cedula.replace(/\D/g, ""), [cedula]);
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
     setIsSubmitting(true);
 
-    const match = COLLABORATOR_USERS.find((user) => user.cedula === cleanCedula);
-    if (!match) {
+    if (!cleanCedula) {
       setIsSubmitting(false);
-      setError("Cédula no autorizada para el portal de colaboradores.");
+      setError("Ingresa una cédula válida para continuar.");
       return;
     }
 
-    writeAuthSession(match.session);
-    router.push("/");
-    router.refresh();
+    try {
+      const data = await fetchApiJson<LoginResponse>("/api/staff/login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          cedula: cleanCedula,
+          portal: "colaborador",
+        }),
+      });
+
+      writeAuthSession(data.session);
+      router.push("/");
+      router.refresh();
+    } catch (submitError) {
+      const message = submitError instanceof Error ? submitError.message : "No se pudo iniciar sesión.";
+      setError(message);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -90,10 +91,34 @@ export default function LoginColaboradorPage() {
         <section className="relative z-10 w-full max-w-md">
           <div className="rounded-xl border border-[#a9b4b9]/15 bg-white p-10 shadow-[0_10px_40px_rgba(42,52,57,0.06)]">
             <div className="mb-8 flex flex-col items-center">
-              <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-[#f0f4f7]">
-                <span className="material-symbols-outlined text-3xl text-[#3a5f94]" style={{ fontVariationSettings: "'FILL' 1" }}>
-                  badge
-                </span>
+              <div className="relative mb-6 flex h-16 w-16 items-center justify-center overflow-hidden rounded-full bg-[#f0f4f7]">
+                {cleanCedula ? (
+                  <img
+                    src={getStaffPhotoUrl(cleanCedula)}
+                    alt={`Foto del colaborador ${cleanCedula}`}
+                    className="h-full w-full object-cover"
+                    onError={(event) => {
+                      const image = event.currentTarget;
+                      image.style.display = "none";
+                      const fallback = image.parentElement?.querySelector<HTMLElement>("[data-staff-photo-fallback='true']");
+                      fallback?.classList.remove("hidden");
+                    }}
+                    onLoad={(event) => {
+                      const image = event.currentTarget;
+                      const fallback = image.parentElement?.querySelector<HTMLElement>("[data-staff-photo-fallback='true']");
+                      fallback?.classList.add("hidden");
+                      image.style.display = "block";
+                    }}
+                  />
+                ) : null}
+                <div
+                  data-staff-photo-fallback="true"
+                  className={`flex h-full w-full items-center justify-center ${cleanCedula ? "hidden" : ""}`}
+                >
+                  <span className="material-symbols-outlined text-3xl text-[#3a5f94]" style={{ fontVariationSettings: "'FILL' 1" }}>
+                    badge
+                  </span>
+                </div>
               </div>
               <h1 className="mb-2 text-center text-2xl font-bold tracking-tight text-[#2a3439]">Portal de colaboradores</h1>
               <p className="max-w-[280px] text-center text-sm leading-relaxed text-[#566166]">

@@ -1,3 +1,4 @@
+/* eslint-disable @next/next/no-img-element */
 "use client";
 
 import Image from "next/image";
@@ -30,6 +31,10 @@ function navClasses(isActive: boolean) {
       ? "bg-[#295786] text-white shadow-sm"
       : "text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
   }`;
+}
+
+function getStaffPhotoUrl(cedula: string): string {
+  return `https://svga.unac.edu.co/svga/files/pics/${encodeURIComponent(cedula)}.jpg`;
 }
 
 export function AdminShell({ children }: { children: React.ReactNode }) {
@@ -130,14 +135,33 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
 
         <div className="border-t border-slate-200 p-4 dark:border-slate-800">
           <div className="flex items-center gap-3 rounded-xl bg-slate-50 p-2 dark:bg-slate-800">
-            <div className="flex size-10 items-center justify-center rounded-full border-2 border-white bg-[#295786] text-xs font-bold text-white shadow-sm dark:border-slate-700">
-              {authSession.name
-                .split(" ")
-                .filter(Boolean)
-                .slice(0, 2)
-                .map((part) => part[0])
-                .join("")
-                .toUpperCase()}
+            <div className="relative flex size-10 items-center justify-center overflow-hidden rounded-full border-2 border-white bg-[#295786] text-xs font-bold text-white shadow-sm dark:border-slate-700">
+              <img
+                src={getStaffPhotoUrl(authSession.cedula)}
+                alt={`Foto de perfil de ${authSession.name}`}
+                className="h-full w-full object-cover"
+                onError={(event) => {
+                  const image = event.currentTarget;
+                  image.style.display = "none";
+                  const fallback = image.parentElement?.querySelector<HTMLElement>("[data-profile-photo-fallback='true']");
+                  fallback?.classList.remove("hidden");
+                }}
+                onLoad={(event) => {
+                  const image = event.currentTarget;
+                  const fallback = image.parentElement?.querySelector<HTMLElement>("[data-profile-photo-fallback='true']");
+                  fallback?.classList.add("hidden");
+                  image.style.display = "block";
+                }}
+              />
+              <div data-profile-photo-fallback="true" className="hidden items-center justify-center">
+                {authSession.name
+                  .split(" ")
+                  .filter(Boolean)
+                  .slice(0, 2)
+                  .map((part) => part[0])
+                  .join("")
+                  .toUpperCase()}
+              </div>
             </div>
             <div className="overflow-hidden">
               <p className="truncate text-xs font-semibold">{authSession.name}</p>
