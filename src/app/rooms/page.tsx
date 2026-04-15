@@ -25,6 +25,7 @@ type ApiSalon = {
   nombre: string;
   piso: number | null;
   capacidad: number | null;
+  facultad?: string | null;
   horarios: Array<{
     diaSemana: string;
     horaInicio: string;
@@ -51,7 +52,7 @@ type RoomsCachePayload = {
   rooms: RoomData[];
 };
 
-const ROOMS_CACHE_KEY = "rooms-page-cache-v2";
+const ROOMS_CACHE_KEY = "rooms-page-cache-v4";
 const ROOMS_CACHE_TTL_MS = 2 * 60 * 1000;
 let roomsMemoryCache: RoomsCachePayload | null = null;
 
@@ -193,6 +194,11 @@ function hasSessionName(value: string | null | undefined): value is string {
   return value.trim().length > 0;
 }
 
+function getFacultyFromSalon(salon: ApiSalon): string {
+  const facultyName = salon.facultad?.trim() || salon.horarios.find((horario) => horario.evento.facultad?.trim())?.evento.facultad;
+  return facultyName?.trim() || "Sin facultad";
+}
+
 function readRoomsCache(): RoomsCachePayload | null {
   if (roomsMemoryCache) {
     return roomsMemoryCache;
@@ -203,6 +209,10 @@ function readRoomsCache(): RoomsCachePayload | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as RoomsCachePayload;
     if (!parsed || !Array.isArray(parsed.rooms) || typeof parsed.timestamp !== "number") {
+      return null;
+    }
+    const hasMissingFaculty = parsed.rooms.some((room) => !room.faculty || room.faculty === "Sin facultad");
+    if (hasMissingFaculty) {
       return null;
     }
     roomsMemoryCache = parsed;
@@ -364,9 +374,7 @@ export default function RoomsPage() {
             const professor = displaySchedule && displaySchedule.evento.responsable
               ? displaySchedule.evento.responsable.trim() || "N/A"
               : "N/A";
-            const faculty = displaySchedule && displaySchedule.evento.facultad
-              ? displaySchedule.evento.facultad.trim() || "Sin facultad"
-              : "Sin facultad";
+            const faculty = salon.facultad?.trim() || displaySchedule?.evento.facultad?.trim() || getFacultyFromSalon(salon);
             const schedule = displaySchedule
               ? `${formatTimeLabel(displaySchedule.horaInicio)} - ${formatTimeLabel(displaySchedule.horaFin)}`
               : "Disponible ahora";

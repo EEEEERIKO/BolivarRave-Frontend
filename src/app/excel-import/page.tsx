@@ -1,8 +1,10 @@
 "use client";
 
 import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { ParsedScheduleRowPayload, parseScheduleWorkbookClient } from "@/lib/schedule-parser";
 import { fetchApiJson } from "@/lib/api-client";
+import { readAuthSession } from "@/lib/auth-session";
 
 const EXCEL_EXTENSIONS = [".xlsx", ".xls"];
 const CSV_EXTENSIONS = [".csv"];
@@ -775,6 +777,31 @@ const personalizeAnalyzeError = (rawMessage: string) => {
 };
 
 export default function ExcelImportPage() {
+  const router = useRouter();
+  const authSession = useMemo(() => readAuthSession(), []);
+  const canImportExcel = authSession?.role === "admin";
+
+  useEffect(() => {
+    if (!authSession) {
+      router.replace("/login");
+      return;
+    }
+
+    if (!canImportExcel) {
+      router.replace("/");
+    }
+  }, [authSession, canImportExcel, router]);
+
+  if (!authSession || !canImportExcel) {
+    return (
+      <div className="p-6">
+        <div className="mx-auto max-w-lg rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          Acceso restringido. Solo el perfil Administrador puede importar archivos Excel.
+        </div>
+      </div>
+    );
+  }
+
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   const [isDragOver, setIsDragOver] = useState(false);
@@ -1266,6 +1293,11 @@ export default function ExcelImportPage() {
         let processingTicker: ReturnType<typeof setInterval> | null = null;
         let processingStartedAt = 0;
 
+        if (!authSession?.accessToken) {
+          reject(new Error("Sesión no válida. Inicia sesión nuevamente."));
+          return;
+        }
+
         const stopTicker = () => {
           if (processingTicker) {
             clearInterval(processingTicker);
@@ -1275,6 +1307,7 @@ export default function ExcelImportPage() {
 
         xhr.open("POST", "/api/schedules/import-parsed", true);
         xhr.setRequestHeader("Content-Type", "application/json");
+        xhr.setRequestHeader("Authorization", `Bearer ${authSession.accessToken}`);
 
         console.groupCollapsed("[Excel Import] XHR request");
         console.log("POST /api/schedules/import-parsed");

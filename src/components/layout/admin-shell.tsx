@@ -4,7 +4,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { readAuthSession, type AuthSession } from "@/lib/auth-session";
 
 type NavItem = {
@@ -63,7 +63,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
     if (!session) {
       router.replace("/login");
     }
-  }, [isLoginRoute, router]);
+  }, [isLoginRoute, pathname, router]);
 
   if (isLoginRoute) {
     return <>{children}</>;
