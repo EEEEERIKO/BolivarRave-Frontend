@@ -556,15 +556,55 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
 
   const sortedStaffList = useMemo(() => {
     return [...staffList].sort((a, b) => {
-      const aWorking = isStaffWorkingNow(a.id);
-      const bWorking = isStaffWorkingNow(b.id);
-
-      if (aWorking !== bWorking) {
-        return aWorking ? -1 : 1;
-      }
-
       const aJornada = jornadaByStaffId[a.id] ?? [];
       const bJornada = jornadaByStaffId[b.id] ?? [];
+
+      const aSelectedDay = aJornada.filter((row) => normalizeDayName(row.diaSemana) === selectedDayKey);
+      const bSelectedDay = bJornada.filter((row) => normalizeDayName(row.diaSemana) === selectedDayKey);
+
+      const aStartSelectedDay = aSelectedDay
+        .map((row) => timeToMinutes(row.horaEntrada))
+        .filter((value) => value >= 0)
+        .sort((left, right) => left - right)[0] ?? Infinity;
+      const bStartSelectedDay = bSelectedDay
+        .map((row) => timeToMinutes(row.horaEntrada))
+        .filter((value) => value >= 0)
+        .sort((left, right) => left - right)[0] ?? Infinity;
+
+      // On current-day view, always keep currently active people first.
+      if (selectedDayKey === currentDayKey) {
+        const aWorking = isStaffWorkingNow(a.id);
+        const bWorking = isStaffWorkingNow(b.id);
+        if (aWorking !== bWorking) {
+          return aWorking ? -1 : 1;
+        }
+
+        const aActiveStart = aSelectedDay
+          .filter((row) => {
+            const start = timeToMinutes(row.horaEntrada);
+            const end = timeToMinutes(row.horaSalida);
+            return Number.isFinite(start) && Number.isFinite(end) && start <= currentMinutes && currentMinutes < end;
+          })
+          .map((row) => timeToMinutes(row.horaEntrada))
+          .sort((left, right) => left - right)[0] ?? Infinity;
+
+        const bActiveStart = bSelectedDay
+          .filter((row) => {
+            const start = timeToMinutes(row.horaEntrada);
+            const end = timeToMinutes(row.horaSalida);
+            return Number.isFinite(start) && Number.isFinite(end) && start <= currentMinutes && currentMinutes < end;
+          })
+          .map((row) => timeToMinutes(row.horaEntrada))
+          .sort((left, right) => left - right)[0] ?? Infinity;
+
+        if (aActiveStart !== bActiveStart) {
+          return aActiveStart - bActiveStart;
+        }
+      }
+
+      if (aStartSelectedDay !== bStartSelectedDay) {
+        return aStartSelectedDay - bStartSelectedDay;
+      }
 
       const aStart = aJornada
         .map((row) => timeToMinutes(row.horaEntrada))
@@ -575,9 +615,13 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
         .filter((value) => value >= 0)
         .sort((left, right) => left - right)[0] ?? Infinity;
 
-      return aStart - bStart;
+      if (aStart !== bStart) {
+        return aStart - bStart;
+      }
+
+      return a.numeroStaff - b.numeroStaff;
     });
-  }, [staffList, jornadaByStaffId, pausaByStaffId, currentDayKey, currentMinutes]);
+  }, [staffList, jornadaByStaffId, pausaByStaffId, selectedDayKey, currentDayKey, currentMinutes]);
 
   const formatDayHoursLabel = (rows: StaffJornadaItem[]) => `${rows.reduce((sum, row) => sum + row.totalHorasDia, 0).toFixed(1)} h`;
 
@@ -1095,7 +1139,7 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
       .sort((a, b) => a.start - b.start);
 
     if (rawSegments.length === 0) {
-      return [] as Array<{ left: number; width: number }>;
+      return [] as Array<{ start: number; end: number; left: number; width: number }>;
     }
 
     const mergedSegments: Array<{ start: number; end: number }> = [];
@@ -1112,28 +1156,33 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
     return mergedSegments.map((segment) => {
       const left = ((segment.start - TIMELINE_START_MINUTES) / TIMELINE_TOTAL_MINUTES) * 100;
       const width = Math.max(((segment.end - segment.start) / TIMELINE_TOTAL_MINUTES) * 100, 1.2);
-      return { left, width };
+      return { ...segment, left, width };
     });
-  };
-
-  const getJornadaRangesLabel = (jornada: StaffJornadaItem[]) => {
-    const ranges = jornada
-      .map((row) => ({
-        start: timeToMinutes(row.horaEntrada),
-        end: timeToMinutes(row.horaSalida),
-        label: `${formatTimeAmPm(row.horaEntrada)} - ${formatTimeAmPm(row.horaSalida)}`,
-      }))
-      .filter((range) => Number.isFinite(range.start) && Number.isFinite(range.end) && range.end > range.start)
-      .sort((a, b) => a.start - b.start)
-      .map((range) => range.label);
-
-    return ranges.join(" • ");
   };
 
   const totalWeeklyWorkHours = editorRows.reduce((sum, row) => sum + parseFloat(row.totalHorasDia || "0"), 0);
   const totalWeeklyPauseHours = editorPausaRows.reduce(
     (sum, row) => sum + calculateHoursDifference(row.horaInicio, row.horaFin),
     0,
+  );
+  const sortedEditorPausaRows = useMemo(
+    () =>
+      [...editorPausaRows].sort((left, right) => {
+        const leftDay = left.diaSemana ? (WORK_DAY_ORDER[left.diaSemana] ?? 99) : 99;
+        const rightDay = right.diaSemana ? (WORK_DAY_ORDER[right.diaSemana] ?? 99) : 99;
+        if (leftDay !== rightDay) return leftDay - rightDay;
+
+        const leftStart = timeToMinutes(left.horaInicio);
+        const rightStart = timeToMinutes(right.horaInicio);
+        if (leftStart !== rightStart) return leftStart - rightStart;
+
+        const leftEnd = timeToMinutes(left.horaFin);
+        const rightEnd = timeToMinutes(right.horaFin);
+        if (leftEnd !== rightEnd) return leftEnd - rightEnd;
+
+        return left.id.localeCompare(right.id);
+      }),
+    [editorPausaRows],
   );
   const totalWeeklyNetHours = Math.max(totalWeeklyWorkHours - totalWeeklyPauseHours, 0);
 
@@ -1292,8 +1341,6 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
                     .sort((a, b) => timeToMinutes(a.horaInicio) - timeToMinutes(b.horaInicio));
                   const hasJornada = jornadaForSelectedDay.length > 0;
                   const bandSegments = getBandSegments(jornadaForSelectedDay);
-                  const jornadaRangesLabel = getJornadaRangesLabel(jornadaForSelectedDay);
-                  const firstBandLeft = bandSegments[0]?.left ?? 0;
 
                   return (
                     <div className="relative h-[62px] bg-white sm:h-[70px] md:h-[74px]" key={staff.id}>
@@ -1350,14 +1397,35 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
                       ))}
 
                       {hasJornada ? (
-                        <div className="pointer-events-none absolute inset-y-2 z-30 right-0 pr-4" style={{ left: `${firstBandLeft}%` }}>
-                          <div className="flex h-full items-center gap-2 overflow-hidden pl-3">
-                            <div className="h-2 w-2 shrink-0 rounded-full bg-[#3a5f94]" />
-                            <span className="truncate text-[10px] font-bold text-[#3a5f94]">
-                              {`${jornadaRangesLabel} • ${formatDayHoursLabel(jornadaForSelectedDay)}${pausasForSelectedDay.length > 0 ? ` • Pausas: ${pausasForSelectedDay.length}` : ""}`}
-                            </span>
-                          </div>
-                        </div>
+                        <>
+                          {bandSegments.map((segment, index) => {
+                            const pauseCount = pausasForSelectedDay.filter((pausa) => {
+                              const pausaStart = timeToMinutes(pausa.horaInicio);
+                              const pausaEnd = timeToMinutes(pausa.horaFin);
+                              if (!Number.isFinite(pausaStart) || !Number.isFinite(pausaEnd) || pausaEnd <= pausaStart) {
+                                return false;
+                              }
+
+                              return pausaStart < segment.end && segment.start < pausaEnd;
+                            }).length;
+
+                            const segmentHours = Number(((segment.end - segment.start) / 60).toFixed(1));
+                            const segmentLabel = `${formatTimeAmPm(minutesToTime(segment.start))} - ${formatTimeAmPm(minutesToTime(segment.end))} • ${segmentHours} h${pauseCount > 0 ? ` • Pausas: ${pauseCount}` : ""}`;
+
+                            return (
+                              <div
+                                key={`${staff.id}-segment-label-${index + 1}`}
+                                className="pointer-events-none absolute inset-y-2 z-30 pr-2"
+                                style={{ left: `${segment.left}%`, width: `${segment.width}%` }}
+                              >
+                                <div className="flex h-full items-center gap-2 overflow-hidden pl-3">
+                                  <div className="h-2 w-2 shrink-0 rounded-full bg-[#3a5f94]" />
+                                  <span className="truncate text-[10px] font-bold text-[#3a5f94]">{segmentLabel}</span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </>
                       ) : (
                         <div className="pointer-events-none absolute inset-y-2 z-30 left-0 right-0 px-4">
                           <div className="flex h-full items-center gap-2 overflow-hidden">
@@ -1482,7 +1550,7 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
                   </p>
                 ) : (
                   <div className="space-y-2">
-                    {editorPausaRows.map((row, index) => (
+                    {sortedEditorPausaRows.map((row, index) => (
                       <div className="grid grid-cols-1 gap-2 rounded-lg border border-slate-200 bg-white p-2 md:grid-cols-[1fr_1fr_1fr_1fr_auto]" key={row.id}>
                         <select
                           className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
