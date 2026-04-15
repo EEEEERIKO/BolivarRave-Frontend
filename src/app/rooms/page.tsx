@@ -52,7 +52,7 @@ type RoomsCachePayload = {
   rooms: RoomData[];
 };
 
-const ROOMS_CACHE_KEY = "rooms-page-cache-v4";
+const ROOMS_CACHE_KEY = "rooms-page-cache-v5";
 const ROOMS_CACHE_TTL_MS = 2 * 60 * 1000;
 let roomsMemoryCache: RoomsCachePayload | null = null;
 
@@ -195,8 +195,37 @@ function hasSessionName(value: string | null | undefined): value is string {
 }
 
 function getFacultyFromSalon(salon: ApiSalon): string {
-  const facultyName = salon.facultad?.trim() || salon.horarios.find((horario) => horario.evento.facultad?.trim())?.evento.facultad;
+  const facultyName = salon.horarios.find((horario) => horario.evento.facultad?.trim())?.evento.facultad;
   return facultyName?.trim() || "Sin facultad";
+}
+
+function getFacultyForDisplaySchedule(
+  salon: ApiSalon,
+  displaySchedule: ApiSalon["horarios"][number] | null,
+): string {
+  if (!displaySchedule) {
+    return getFacultyFromSalon(salon);
+  }
+
+  const directFaculty = displaySchedule.evento.facultad?.trim();
+  if (directFaculty) {
+    return directFaculty;
+  }
+
+  const sameScheduleFaculty = salon.horarios.find((horario) => {
+    const sameSlot =
+      horario.diaSemana === displaySchedule.diaSemana &&
+      horario.horaInicio === displaySchedule.horaInicio &&
+      horario.horaFin === displaySchedule.horaFin;
+    const sameEvent =
+      (horario.evento.nombrePrincipal ?? "") === (displaySchedule.evento.nombrePrincipal ?? "") &&
+      (horario.evento.responsable ?? "") === (displaySchedule.evento.responsable ?? "") &&
+      (horario.evento.codigoMateria ?? "") === (displaySchedule.evento.codigoMateria ?? "");
+
+    return sameSlot && sameEvent && Boolean(horario.evento.facultad?.trim());
+  })?.evento.facultad;
+
+  return sameScheduleFaculty?.trim() || "Sin facultad";
 }
 
 function readRoomsCache(): RoomsCachePayload | null {
@@ -374,7 +403,7 @@ export default function RoomsPage() {
             const professor = displaySchedule && displaySchedule.evento.responsable
               ? displaySchedule.evento.responsable.trim() || "N/A"
               : "N/A";
-            const faculty = salon.facultad?.trim() || displaySchedule?.evento.facultad?.trim() || getFacultyFromSalon(salon);
+            const faculty = getFacultyForDisplaySchedule(salon, displaySchedule);
             const schedule = displaySchedule
               ? `${formatTimeLabel(displaySchedule.horaInicio)} - ${formatTimeLabel(displaySchedule.horaFin)}`
               : "Disponible ahora";

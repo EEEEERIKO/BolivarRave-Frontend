@@ -3,6 +3,7 @@
 
 import { fetchApiJson } from "@/lib/api-client";
 import { getCachedData, setCachedData } from "@/lib/cache-storage";
+import { readAuthSession } from "@/lib/auth-session";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 type StaffView = "directory" | "schedule";
@@ -442,7 +443,7 @@ const getCurrentWorkWeekDay = (): WorkWeekDay => {
   return dayMap[currentDay] ?? "Lunes";
 };
 
-function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi[]; isLoadingStaff: boolean }) {
+function StaffScheduleBoard({ staffList, isLoadingStaff, canManageStaff }: { staffList: StaffApi[]; isLoadingStaff: boolean; canManageStaff: boolean }) {
   const [jornadaByStaffId, setJornadaByStaffId] = useState<Record<string, StaffJornadaItem[]>>({});
   const [pausaByStaffId, setPausaByStaffId] = useState<Record<string, StaffPausaItem[]>>({});
   const [isLoadingJornadas, setIsLoadingJornadas] = useState(false);
@@ -733,6 +734,11 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
   };
 
   const openEditor = async (staff: StaffApi) => {
+    if (!canManageStaff) {
+      setScheduleError("Solo el perfil Administrador puede modificar jornadas y pausas.");
+      return;
+    }
+
     const current = jornadaByStaffId[staff.id] ?? [];
     const mappedRows: EditableJornadaItem[] = current.length > 0
       ? [...current]
@@ -967,6 +973,11 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
 
   const saveJornada = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+
+    if (!canManageStaff) {
+      alert("Solo el perfil Administrador puede modificar jornadas y pausas.");
+      return;
+    }
 
     if (!editingStaff) {
       return;
@@ -1300,15 +1311,17 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
                         </p>
                         <p className="truncate text-[10px] text-[#566166]">{staff.rol}</p>
                       </div>
-                      <button
-                        aria-label={hasJornada ? "Editar horario" : "Asignar horario"}
-                        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-white text-[#3a5f94] transition hover:bg-[#3a5f94] hover:text-white"
-                        onClick={() => void openEditor(staff)}
-                        type="button"
-                        title={hasJornada ? "Editar horario" : "Asignar horario"}
-                      >
-                        <span className="material-symbols-outlined text-[17px]">edit_calendar</span>
-                      </button>
+                      {canManageStaff ? (
+                        <button
+                          aria-label={hasJornada ? "Editar horario" : "Asignar horario"}
+                          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-white text-[#3a5f94] transition hover:bg-[#3a5f94] hover:text-white"
+                          onClick={() => void openEditor(staff)}
+                          type="button"
+                          title={hasJornada ? "Editar horario" : "Asignar horario"}
+                        >
+                          <span className="material-symbols-outlined text-[17px]">edit_calendar</span>
+                        </button>
+                      ) : null}
                     </div>
                   );
                 })
@@ -1655,6 +1668,7 @@ function StaffScheduleBoard({ staffList, isLoadingStaff }: { staffList: StaffApi
 }
 
 export default function StaffPage() {
+  const canManageStaff = useMemo(() => readAuthSession()?.role === "admin", []);
   const [view, setView] = useState<StaffView>("directory");
   const [showAddStaffForm, setShowAddStaffForm] = useState(false);
   const [showEditStaffForm, setShowEditStaffForm] = useState(false);
@@ -2199,6 +2213,11 @@ export default function StaffPage() {
   }
 
   function openAddStaffForm() {
+    if (!canManageStaff) {
+      setFormFeedback("Solo el perfil Administrador puede agregar personal.");
+      return;
+    }
+
     const initialNumber = getFirstAvailableStaffNumber(staffList);
     resetNewStaffForm(initialNumber);
     setShowAddStaffForm(true);
@@ -2267,6 +2286,12 @@ export default function StaffPage() {
 
   async function handleAddStaffSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
+    if (!canManageStaff) {
+      alert("Solo el perfil Administrador puede agregar personal.");
+      return;
+    }
+
     try {
       setIsSavingNewStaff(true);
       const parsedNumber = Number(newStaff.staffNumber);
@@ -2363,6 +2388,11 @@ export default function StaffPage() {
   }
 
   function openEditStaffForm() {
+    if (!canManageStaff) {
+      setFormFeedback("Solo el perfil Administrador puede editar perfiles.");
+      return;
+    }
+
     if (!selectedStaff) {
       setFormFeedback("Selecciona un staff para editar.");
       return;
@@ -2402,6 +2432,11 @@ export default function StaffPage() {
 
   async function handleEditStaffSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
+    if (!canManageStaff) {
+      alert("Solo el perfil Administrador puede editar perfiles.");
+      return;
+    }
 
     if (!selectedStaff) {
       alert("Por favor selecciona un staff para editar.");
@@ -2621,6 +2656,11 @@ export default function StaffPage() {
   }
 
   async function handleDeleteStaff() {
+    if (!canManageStaff) {
+      alert("Solo el perfil Administrador puede eliminar personal.");
+      return;
+    }
+
     if (!selectedStaff) {
       alert("Por favor selecciona un staff para eliminar.");
       return;
@@ -3370,7 +3410,7 @@ export default function StaffPage() {
       </div>
 
       {view === "schedule" ? (
-        <StaffScheduleBoard isLoadingStaff={isLoadingStaff} staffList={staffList} />
+        <StaffScheduleBoard canManageStaff={canManageStaff} isLoadingStaff={isLoadingStaff} staffList={staffList} />
       ) : (
         <main className="flex min-h-[calc(100vh-7rem)] flex-col gap-4 overflow-visible xl:flex-row xl:gap-6 xl:overflow-hidden">
         <div className="flex min-w-0 flex-1 flex-col gap-4 sm:gap-5">
@@ -3386,14 +3426,16 @@ export default function StaffPage() {
                 <span className="material-symbols-outlined text-sm">filter_list</span>
                 Filtrar
               </button>
-              <button
-                className="flex items-center justify-center gap-2 rounded-lg bg-[#3a5f94] px-4 py-2 text-xs font-bold text-white shadow-sm"
-                onClick={openAddStaffForm}
-                type="button"
-              >
-                <span className="material-symbols-outlined text-sm">person_add</span>
-                Agregar personal
-              </button>
+              {canManageStaff ? (
+                <button
+                  className="flex items-center justify-center gap-2 rounded-lg bg-[#3a5f94] px-4 py-2 text-xs font-bold text-white shadow-sm"
+                  onClick={openAddStaffForm}
+                  type="button"
+                >
+                  <span className="material-symbols-outlined text-sm">person_add</span>
+                  Agregar personal
+                </button>
+              ) : null}
             </div>
           </div>
 
@@ -3778,27 +3820,29 @@ export default function StaffPage() {
 
           </div>
 
-          <div className="flex gap-2.5 bg-slate-50 p-4 sm:p-5 lg:gap-3 lg:p-6">
-            <button
-              className="flex-1 rounded-xl bg-[#3a5f94] py-3 text-xs font-bold text-white shadow-lg shadow-[#3a5f94]/20 disabled:opacity-60"
-              disabled={!selectedStaff}
-              onClick={openEditStaffForm}
-              type="button"
-            >
-              Editar perfil
-            </button>
-            <button 
-              className="rounded-xl bg-[#9f403d] p-3 text-white transition-colors hover:bg-[#8a3631] disabled:opacity-60"
-              disabled={!selectedStaff}
-              onClick={handleDeleteStaff}
-              type="button"
-            >
-              <span className="material-symbols-outlined text-lg">delete</span>
-            </button>
-            <button className="rounded-xl border border-slate-200 bg-white p-3 text-[#9f403d] transition-colors hover:bg-red-50">
-              <span className="material-symbols-outlined text-lg">flag</span>
-            </button>
-          </div>
+          {canManageStaff ? (
+            <div className="flex gap-2.5 bg-slate-50 p-4 sm:p-5 lg:gap-3 lg:p-6">
+              <button
+                className="flex-1 rounded-xl bg-[#3a5f94] py-3 text-xs font-bold text-white shadow-lg shadow-[#3a5f94]/20 disabled:opacity-60"
+                disabled={!selectedStaff}
+                onClick={openEditStaffForm}
+                type="button"
+              >
+                Editar perfil
+              </button>
+              <button 
+                className="rounded-xl bg-[#9f403d] p-3 text-white transition-colors hover:bg-[#8a3631] disabled:opacity-60"
+                disabled={!selectedStaff}
+                onClick={handleDeleteStaff}
+                type="button"
+              >
+                <span className="material-symbols-outlined text-lg">delete</span>
+              </button>
+              <button className="rounded-xl border border-slate-200 bg-white p-3 text-[#9f403d] transition-colors hover:bg-red-50">
+                <span className="material-symbols-outlined text-lg">flag</span>
+              </button>
+            </div>
+          ) : null}
         </div>
         ) : (
           <div className="hidden w-full items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white p-6 text-center text-sm text-[#566166] xl:flex xl:w-[320px]">
@@ -4072,7 +4116,7 @@ export default function StaffPage() {
                     </section>
                   ) : null}
 
-                  {mobileDetailTab === "profile" ? (
+                  {mobileDetailTab === "profile" && canManageStaff ? (
                     <div className="flex gap-2.5 pt-2">
                       <button
                         className="flex-1 rounded-xl bg-[#3a5f94] py-3 text-xs font-bold text-white shadow-lg shadow-[#3a5f94]/20 disabled:opacity-60"

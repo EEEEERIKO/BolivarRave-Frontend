@@ -12,6 +12,7 @@ type NavItem = {
   icon: string;
   href: string;
   isRoute?: boolean;
+  allowedRoles?: Array<AuthSession["role"]>;
 };
 
 const navItems: NavItem[] = [
@@ -22,7 +23,7 @@ const navItems: NavItem[] = [
   { label: "Personal", icon: "groups", href: "/staff", isRoute: true },
   { label: "Tareas", icon: "assignment_turned_in", href: "/tasks", isRoute: true },
   { label: "Inventario", icon: "inventory_2", href: "/inventory", isRoute: true },
-  { label: "Importar Excel", icon: "upload_file", href: "/excel-import", isRoute: true },
+  { label: "Importar Excel", icon: "upload_file", href: "/excel-import", isRoute: true, allowedRoles: ["admin"] },
   { label: "Configuración", icon: "settings", href: "/settings", isRoute: true },
 ];
 
@@ -62,8 +63,18 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
 
     if (!session) {
       router.replace("/login");
+      return;
+    }
+
+    if (pathname.startsWith("/excel-import") && session.role !== "admin") {
+      router.replace("/");
     }
   }, [isLoginRoute, pathname, router]);
+
+  const visibleNavItems = useMemo(
+    () => navItems.filter((item) => !item.allowedRoles || item.allowedRoles.includes(authSession?.role ?? "colaborador")),
+    [authSession]
+  );
 
   if (isLoginRoute) {
     return <>{children}</>;
@@ -100,7 +111,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
         </div>
 
         <nav className="mt-4 flex-1 space-y-1 px-4">
-          {navItems.map((item) => {
+          {visibleNavItems.map((item) => {
             const isActive = item.isRoute ? pathname === item.href : false;
             if (item.isRoute) {
               return (
