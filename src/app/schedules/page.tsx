@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { Rnd, RndDragCallback, RndResizeCallback } from "react-rnd";
 import { fetchApiJson } from "@/lib/api-client";
 import { readAuthSession } from "@/lib/auth-session";
@@ -23,6 +24,7 @@ const toAmPmLabel = (value: string) => {
 type ScheduleEvent = {
   id: string;
   classId?: string;
+  requestId?: string;
   day: string;
   room: string;
   start: string;
@@ -42,6 +44,26 @@ type ScheduleEvent = {
   }>;
   reservationType?: ReservationType;
   color: "blue" | "emerald" | "amber" | "violet" | "red";
+  requestStatus?: "pendiente" | "aprobada" | "rechazada";
+};
+
+type ScheduleRequest = {
+  id: string;
+  eventId: string;
+  status: "pendiente" | "aprobada" | "rechazada";
+  requestedByName: string;
+  requestedByRole: string;
+  faculty: string;
+  code: string;
+  subject: string;
+  teacher: string;
+  room: string;
+  day: string;
+  start: string;
+  end: string;
+  startDate: string;
+  endDate: string;
+  createdAt: string;
 };
 
 type UpdateScope = "week" | "always";
@@ -452,6 +474,14 @@ const inferReservationType = (event: ScheduleEvent): ReservationType => {
 };
 
 const getEventVisualClass = (event: ScheduleEvent) => {
+  if (event.requestStatus === "pendiente") {
+    return "bg-slate-100 border-slate-400 text-slate-700 border-2 border-dashed";
+  }
+
+  if (event.requestStatus === "rechazada") {
+    return "bg-white border-rose-300 text-rose-700 border-2 border-dashed opacity-75";
+  }
+
   const reservationType = inferReservationType(event);
 
   if (reservationType === "momentanea") {
@@ -647,9 +677,11 @@ const writeSchedulesCache = (events: ScheduleEvent[], cachedRooms: string[]) => 
 };
 
 export default function SchedulesPage() {
+  const searchParams = useSearchParams();
   const weekPickerRef = useRef<HTMLDivElement>(null);
   const gridScrollRef = useRef<HTMLDivElement>(null);
   const pendingCenterEventIdRef = useRef<string | null>(null);
+  const handledSearchEventIdRef = useRef<string | null>(null);
   const fastInitialSnapshot = getFastInitialSnapshot();
 
   const colombiaToday = useMemo(() => getColombiaToday(), []);
@@ -671,13 +703,16 @@ export default function SchedulesPage() {
   });
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [events, setEvents] = useState<ScheduleEvent[]>(fastInitialSnapshot?.events ?? []);
+  const [pendingRequests, setPendingRequests] = useState<ScheduleRequest[]>([]);
   const [roomCatalog, setRoomCatalog] = useState<string[]>(
     fastInitialSnapshot?.rooms?.length ? fastInitialSnapshot.rooms : rooms
   );
   const [remoteLoadError, setRemoteLoadError] = useState<string | null>(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [isRequestMode, setIsRequestMode] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [isCreatingEvent, setIsCreatingEvent] = useState(false);
+  const [requestActionState, setRequestActionState] = useState<{ requestId: string; status: "aprobada" | "rechazada" } | null>(null);
   const [isEditMode, setIsEditMode] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
@@ -693,9 +728,10 @@ export default function SchedulesPage() {
   const [isApplyingScopedUpdate, setIsApplyingScopedUpdate] = useState(false);
   const pendingScopedUpdateRef = useRef<PendingScopedUpdate | null>(null);
   const isApplyingScopedUpdateRef = useRef(false);
-  const isSchedulesWsEnabled = (process.env.NEXT_PUBLIC_ENABLE_SCHEDULES_WS ?? "").trim().toLowerCase() === "true";
+  const isSchedulesWsEnabled = (process.env.NEXT_PUBLIC_ENABLE_SCHEDULES_WS ?? "true").trim().toLowerCase() !== "false";
   const authSession = useMemo(() => readAuthSession(), []);
   const canManageSchedules = authSession?.role === "admin";
+  const canRequestSchedule = authSession?.role === "monitor";
 
   useEffect(() => {
     pendingScopedUpdateRef.current = pendingScopedUpdate;
@@ -714,9 +750,10 @@ export default function SchedulesPage() {
   };
 
   const syncSchedulesFromApi = async () => {
-    const [eventsBody, roomsBody] = await Promise.all([
+    const [eventsBody, roomsBody, requestsBody] = await Promise.all([
       fetchApiJson<{ events?: ScheduleEvent[] }>("/api/schedules/events", { cache: "no-store" }),
       fetchApiJson<{ rooms?: string[] }>("/api/schedules/rooms", { cache: "no-store" }),
+      canManageSchedules ? fetchApiJson<{ requests?: ScheduleRequest[] }>("/api/schedules/requests", { cache: "no-store" }) : Promise.resolve({ requests: [] as ScheduleRequest[] }),
     ]);
 
     const loadedEvents = normalizeLoadedEvents(eventsBody.events ?? [], normalizeColor);
@@ -726,10 +763,15 @@ export default function SchedulesPage() {
     if (loadedRooms.length > 0) {
       setRoomCatalog(loadedRooms);
       writeSchedulesCache(loadedEvents, loadedRooms);
-      return;
+    } else {
+      writeSchedulesCache(loadedEvents, roomCatalog);
     }
 
-    writeSchedulesCache(loadedEvents, roomCatalog);
+    if (canManageSchedules) {
+      setPendingRequests(requestsBody.requests ?? []);
+    } else {
+      setPendingRequests([]);
+    }
   };
 
   // Close week picker when clicking outside
@@ -852,10 +894,19 @@ export default function SchedulesPage() {
     },
   });
 
-  const resetCreateForm = () => {
+  const resetCreateForm = (requestMode = false) => {
     setCreateError(null);
     setIsCreatingEvent(false);
-    setNewEvent(getInitialNewEvent());
+    setIsRequestMode(requestMode);
+    setNewEvent(
+      requestMode
+        ? {
+            ...getInitialNewEvent(),
+            reservationType: "momentanea",
+            slots: [getInitialSlot()],
+          }
+        : getInitialNewEvent()
+    );
   };
 
   const centerEventInGrid = (eventId: string) => {
@@ -907,6 +958,22 @@ export default function SchedulesPage() {
 
     return () => window.clearTimeout(timer);
   }, [selectedEventId, selectedDay, currentWeekStart, events]);
+
+    const requestedEventId = searchParams.get("eventId")?.trim() || null;
+
+  useEffect(() => {
+    if (!requestedEventId) return;
+    if (handledSearchEventIdRef.current === requestedEventId) return;
+
+    const targetEvent = events.find((event) => event.classId === requestedEventId);
+    if (!targetEvent) return;
+
+    handledSearchEventIdRef.current = requestedEventId;
+    setSelectedEventId(targetEvent.id);
+    setSelectedDay(targetEvent.day);
+    setCurrentWeekStart(startOfWeekMonday(parseIsoDateToLocal(targetEvent.startDate)));
+    pendingCenterEventIdRef.current = targetEvent.id;
+  }, [events, requestedEventId]);
 
   const filteredRooms = useMemo(() => {
     const query = roomQuery.trim().toLowerCase();
@@ -1157,9 +1224,12 @@ export default function SchedulesPage() {
   const pickerMonthDays = useMemo(() => buildMonthGrid(pickerMonthCursor), [pickerMonthCursor]);
   const isTodayInVisibleWeek = dateValue(colombiaToday) >= dateValue(currentWeekStart) && dateValue(colombiaToday) <= dateValue(currentWeekEnd);
   const showCurrentTimeMarker = normalizeDayKey(selectedDay) === normalizeDayKey(getWeekdayName(colombiaToday)) && isTodayInVisibleWeek;
-
   const selectedEvent = events.find((event) => event.id === selectedEventId) ?? null;
   const selectedReservationType = selectedEvent ? inferReservationType(selectedEvent) : null;
+  const selectedRequestActionStatus =
+    selectedEvent?.requestId && requestActionState?.requestId === selectedEvent.requestId ? requestActionState.status : null;
+  const isRequestActionActive = (requestId: string) => requestActionState?.requestId === requestId;
+  const getRequestActionStatus = (requestId: string) => (isRequestActionActive(requestId) ? requestActionState?.status ?? null : null);
 
   const timeColWidth = gridViewportWidth > 0 && gridViewportWidth < 640 ? 78 : 96;
   const roomColWidth = useMemo(() => {
@@ -1480,7 +1550,8 @@ export default function SchedulesPage() {
     setIsCreatingEvent(true);
 
     try {
-      const createResponse = await fetchApiJson<{ message: string; eventId: string }>("/api/schedules/events", {
+      const createEndpoint = isRequestMode ? "/api/schedules/requests" : "/api/schedules/events";
+      const createResponse = await fetchApiJson<{ message: string; eventId: string }>(createEndpoint, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1505,9 +1576,10 @@ export default function SchedulesPage() {
         return "blue";
       };
 
-      const [eventsBody, roomsBody] = await Promise.all([
+      const [eventsBody, roomsBody, requestsBody] = await Promise.all([
         fetchApiJson<{ events?: ScheduleEvent[] }>("/api/schedules/events", { cache: "no-store" }),
         fetchApiJson<{ rooms?: string[] }>("/api/schedules/rooms", { cache: "no-store" }),
+        canManageSchedules ? fetchApiJson<{ requests?: ScheduleRequest[] }>("/api/schedules/requests", { cache: "no-store" }) : Promise.resolve({ requests: [] as ScheduleRequest[] }),
       ]);
 
       const loadedEvents = (eventsBody.events ?? []).map((eventItem) => ({
@@ -1520,6 +1592,10 @@ export default function SchedulesPage() {
       const loadedRooms = (roomsBody.rooms ?? []).filter((room) => typeof room === "string" && room.trim().length > 0);
       if (loadedRooms.length > 0) {
         setRoomCatalog(loadedRooms);
+      }
+
+      if (canManageSchedules) {
+        setPendingRequests(requestsBody.requests ?? []);
       }
 
       const createdEventByAnchor =
@@ -1557,7 +1633,7 @@ export default function SchedulesPage() {
       resetCreateForm();
       setIsCreateOpen(false);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "No se pudo crear la clase en base de datos";
+      const message = error instanceof Error ? error.message : isRequestMode ? "No se pudo enviar la solicitud en base de datos" : "No se pudo crear la clase en base de datos";
       setCreateError(message);
     } finally {
       setIsCreatingEvent(false);
@@ -1764,6 +1840,28 @@ export default function SchedulesPage() {
     })();
   };
 
+  const changeRequestStatus = (requestId: string, status: "aprobada" | "rechazada") => {
+    void (async () => {
+      setRequestActionState({ requestId, status });
+      try {
+        await fetchApiJson<{ message: string }>(`/api/schedules/requests/${requestId}/status`, {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ status }),
+        });
+
+        await syncSchedulesFromApi();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "No se pudo actualizar la solicitud";
+        window.alert(message);
+      } finally {
+        setRequestActionState((current) => (current?.requestId === requestId ? null : current));
+      }
+    })();
+  };
+
   const canConfirmDeleteAll = deleteAllConfirmText.trim().toLowerCase() === "confirmar";
 
   const searchAvailableRooms = async (event: FormEvent<HTMLFormElement>) => {
@@ -1847,11 +1945,11 @@ export default function SchedulesPage() {
             </div>
           </div>
         ) : null}
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-col gap-4 2xl:flex-row 2xl:items-center 2xl:justify-between">
       <h1 className="text-base font-bold sm:text-lg">Horario Edificio Bolivar Rave</h1>
           
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:flex-1 lg:justify-center lg:gap-2">
-            <div className="flex items-center gap-2">
+          <div className="flex w-full min-w-0 flex-col gap-3 2xl:flex-row 2xl:flex-1 2xl:items-center 2xl:justify-center 2xl:gap-2">
+            <div className="flex min-w-0 items-center gap-2">
               <span className="rounded-full bg-[#295786]/10 px-3 py-1 text-xs font-semibold text-[#295786] whitespace-nowrap">
                 {weekRangeLabel}
               </span>
@@ -1938,7 +2036,7 @@ export default function SchedulesPage() {
               </div>
             </div>
             
-            <div className="flex gap-1 rounded-lg bg-slate-100 p-1 flex-nowrap overflow-x-auto">
+            <div className="flex min-w-0 gap-1 rounded-lg bg-slate-100 p-1 flex-nowrap overflow-x-auto">
               {weekDays.map((day, index) => {
                 const thisDayDate = addDays(currentWeekStart, index);
                 const isToday = dateValue(thisDayDate) === dateValue(colombiaToday);
@@ -1961,7 +2059,7 @@ export default function SchedulesPage() {
             </div>
           </div>
 
-          <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center lg:w-auto">
+          <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center 2xl:w-auto 2xl:justify-end">
             <input
               type="text"
               value={roomQuery}
@@ -2055,9 +2153,12 @@ export default function SchedulesPage() {
 
                 const isEventSelected = selectedEventId === event.id;
                 const hasEnoughSpace = geom.span >= 4;
+                const isPendingRequest = event.requestStatus === "pendiente";
                 const reservationType = inferReservationType(event);
                 const reservationBadge =
-                  reservationType === "momentanea"
+                  isPendingRequest
+                    ? "PENDIENTE"
+                    : reservationType === "momentanea"
                     ? "RESERVA DIA"
                     : reservationType === "iglesia"
                       ? "RESERVA IGLESIA"
@@ -2069,11 +2170,11 @@ export default function SchedulesPage() {
                     bounds="parent"
                     dragGrid={[roomColWidth, slotHeight]}
                     resizeGrid={[roomColWidth, slotHeight]}
-                    disableDragging={!isEventSelected || !canManageSchedules}
+                    disableDragging={!isEventSelected || !canManageSchedules || isPendingRequest}
                     size={{ width: geom.width, height: geom.height }}
                     position={{ x: geom.x, y: geom.y }}
                     enableResizing={
-                      isEventSelected && canManageSchedules
+                      isEventSelected && canManageSchedules && !isPendingRequest
                         ? {
                             top: true,
                             right: false,
@@ -2103,7 +2204,7 @@ export default function SchedulesPage() {
                       setEditError(null);
                     }}
                     className={`z-10 overflow-hidden rounded-lg border-l-4 p-2 text-left shadow-sm transition hover:shadow-md ${getEventVisualClass(event)} ${
-                      isEventSelected && canManageSchedules ? "ring-2 ring-[#295786] cursor-grab active:cursor-grabbing" : "cursor-pointer"
+                      isEventSelected && canManageSchedules && !isPendingRequest ? "ring-2 ring-[#295786] cursor-grab active:cursor-grabbing" : "cursor-pointer"
                     }`}
                     minHeight={slotHeight - 8}
                     minWidth={roomColWidth - 8}
@@ -2139,12 +2240,23 @@ export default function SchedulesPage() {
             <button
               type="button"
               onClick={() => {
-                resetCreateForm();
+                resetCreateForm(false);
                 setIsCreateOpen(true);
               }}
               className="mb-3 w-full rounded-lg bg-[#295786] px-4 py-3 text-sm font-semibold text-white"
             >
               Agregar nueva clase
+            </button>
+          ) : canRequestSchedule ? (
+            <button
+              type="button"
+              onClick={() => {
+                resetCreateForm(true);
+                setIsCreateOpen(true);
+              }}
+              className="mb-3 w-full rounded-lg bg-[#295786] px-4 py-3 text-sm font-semibold text-white"
+            >
+              Solicitar salón
             </button>
           ) : null}
 
@@ -2175,8 +2287,37 @@ export default function SchedulesPage() {
                     <p className="text-sm text-slate-600">Salón: {selectedEvent.room}</p>
                     <p className="text-sm text-slate-600">Horario: {selectedEvent.start} - {selectedEvent.end}</p>
                     <p className="text-sm text-slate-600">Rango: {selectedEvent.startDate} a {selectedEvent.endDate}</p>
+                    <p className="text-sm text-slate-600">
+                      Estado: {selectedEvent.requestStatus === "pendiente" ? "Pendiente" : selectedEvent.requestStatus === "rechazada" ? "Rechazada" : "Aprobada"}
+                    </p>
 
-                    {canManageSchedules ? (
+                    {selectedRequestActionStatus ? (
+                      <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700">
+                        <span className="mr-2 inline-block h-4 w-4 animate-spin rounded-full border-2 border-blue-300 border-t-blue-700 align-[-3px]" />
+                        {selectedRequestActionStatus === "aprobada" ? "Aprobando solicitud..." : "Rechazando solicitud..."}
+                      </div>
+                    ) : null}
+
+                    {canManageSchedules && selectedEvent.requestStatus === "pendiente" ? (
+                      <div className="mt-4 grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => selectedEvent.requestId ? changeRequestStatus(selectedEvent.requestId, "aprobada") : null}
+                          disabled={Boolean(selectedEvent.requestId && isRequestActionActive(selectedEvent.requestId))}
+                          className="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                          {selectedEvent.requestId && isRequestActionActive(selectedEvent.requestId) && selectedRequestActionStatus === "aprobada" ? "Aprobando..." : "Aprobar solicitud"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => selectedEvent.requestId ? changeRequestStatus(selectedEvent.requestId, "rechazada") : null}
+                          disabled={Boolean(selectedEvent.requestId && isRequestActionActive(selectedEvent.requestId))}
+                          className="rounded-lg bg-red-600 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                          {selectedEvent.requestId && isRequestActionActive(selectedEvent.requestId) && selectedRequestActionStatus === "rechazada" ? "Rechazando..." : "Rechazar solicitud"}
+                        </button>
+                      </div>
+                    ) : canManageSchedules ? (
                       <div className="mt-4 grid grid-cols-2 gap-2">
                         <button
                           type="button"
@@ -2367,6 +2508,50 @@ export default function SchedulesPage() {
             )}
           </aside>
 
+          {canManageSchedules ? (
+            <aside className="mt-3 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="text-sm font-bold tracking-wide text-slate-500 uppercase">Solicitudes pendientes</h2>
+                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">
+                  {pendingRequests.length}
+                </span>
+              </div>
+
+              <div className="mt-4 space-y-3">
+                {pendingRequests.length > 0 ? (
+                  pendingRequests.map((request) => (
+                    <div key={request.id} className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+                      <p className="text-xs font-semibold text-slate-500">{request.requestedByName} · {request.requestedByRole}</p>
+                      <p className="mt-1 font-semibold text-slate-900">{request.code} | {request.subject}</p>
+                      <p className="text-xs text-slate-600">{request.faculty}</p>
+                      <p className="text-xs text-slate-600">{request.day} · {request.room} · {request.start} - {request.end}</p>
+                      <div className="mt-3 flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => changeRequestStatus(request.id, "aprobada")}
+                          disabled={Boolean(isRequestActionActive(request.id))}
+                          className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white"
+                        >
+                          {getRequestActionStatus(request.id) === "aprobada" ? "Aprobando..." : "Aprobar"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => changeRequestStatus(request.id, "rechazada")}
+                          disabled={Boolean(isRequestActionActive(request.id))}
+                          className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-semibold text-white"
+                        >
+                          {getRequestActionStatus(request.id) === "rechazada" ? "Rechazando..." : "Rechazar"}
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-sm text-slate-500">No hay solicitudes pendientes.</p>
+                )}
+              </div>
+            </aside>
+          ) : null}
+
           <aside className="mt-3 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
             <h2 className="text-sm font-bold tracking-wide text-slate-500 uppercase">Leyenda de colores</h2>
 
@@ -2394,6 +2579,11 @@ export default function SchedulesPage() {
                   <div className="flex items-center gap-2">
                     <div className="h-5 w-8 rounded border-2 border-dashed border-amber-700 bg-white" />
                     <span className="text-xs text-slate-600">Reserva por día</span>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <div className="h-5 w-8 rounded border-2 border-dashed border-slate-400 bg-slate-100" />
+                    <span className="text-xs text-slate-600">Solicitud pendiente</span>
                   </div>
 
                   <div className="flex items-center gap-2">
@@ -2425,9 +2615,11 @@ export default function SchedulesPage() {
       {isCreateOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
           <form onSubmit={createEvent} aria-busy={isCreatingEvent} className="w-full max-w-2xl rounded-xl bg-white p-5 shadow-2xl">
-            <h3 className="text-lg font-bold text-slate-900">Agregar nueva clase</h3>
+            <h3 className="text-lg font-bold text-slate-900">{isRequestMode ? "Solicitar salón" : "Agregar nueva clase"}</h3>
             <p className="mt-1 text-sm text-slate-500">
-              Formato antiguo: Facultad : CODIGO | MATERIA | DOCENTE | FECHA INICIO | FECHA FIN
+              {isRequestMode
+                ? "La solicitud quedará pendiente hasta que un administrador la apruebe o rechace."
+                : "Formato antiguo: Facultad : CODIGO | MATERIA | DOCENTE | FECHA INICIO | FECHA FIN"}
             </p>
 
             {isCreatingEvent && (
@@ -2444,23 +2636,25 @@ export default function SchedulesPage() {
             )}
 
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              <div className="sm:col-span-2">
-                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Tipo de reserva</label>
-                <select
-                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-                  value={newEvent.reservationType}
-                  onChange={(e) =>
-                    setNewEvent((s) => ({
-                      ...s,
-                      reservationType: e.target.value as ReservationType,
-                    }))
-                  }
-                >
-                  <option value="normal">Reserva normal (semestre)</option>
-                  <option value="momentanea">Reserva por dia (momentanea)</option>
-                  <option value="iglesia">Reserva fuera del ambito academico (iglesia)</option>
-                </select>
-              </div>
+              {!isRequestMode ? (
+                <div className="sm:col-span-2">
+                  <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Tipo de reserva</label>
+                  <select
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                    value={newEvent.reservationType}
+                    onChange={(e) =>
+                      setNewEvent((s) => ({
+                        ...s,
+                        reservationType: e.target.value as ReservationType,
+                      }))
+                    }
+                  >
+                    <option value="normal">Reserva normal (semestre)</option>
+                    <option value="momentanea">Reserva por dia (momentanea)</option>
+                    <option value="iglesia">Reserva fuera del ambito academico (iglesia)</option>
+                  </select>
+                </div>
+              ) : null}
 
               {newEvent.reservationType === "normal" ? (
                 <>
@@ -2505,18 +2699,20 @@ export default function SchedulesPage() {
               <div className="sm:col-span-2 mt-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
                 <div className="mb-2 flex items-center justify-between">
                   <p className="text-sm font-semibold text-slate-700">Horarios de esta clase</p>
-                  <button
-                    type="button"
-                    className="rounded-md border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-700"
-                    onClick={() =>
-                      setNewEvent((s) => ({
-                        ...s,
-                        slots: [...s.slots, getInitialSlot()],
-                      }))
-                    }
-                  >
-                    + Agregar horario
-                  </button>
+                  {!isRequestMode ? (
+                    <button
+                      type="button"
+                      className="rounded-md border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-700"
+                      onClick={() =>
+                        setNewEvent((s) => ({
+                          ...s,
+                          slots: [...s.slots, getInitialSlot()],
+                        }))
+                      }
+                    >
+                      + Agregar horario
+                    </button>
+                  ) : null}
                 </div>
 
                 <div className="space-y-3">
@@ -2524,7 +2720,7 @@ export default function SchedulesPage() {
                     <div key={`new-slot-${index}`} className="rounded-lg border border-slate-200 bg-white p-3">
                       <div className="mb-2 flex items-center justify-between">
                         <p className="text-xs font-semibold text-slate-500">Horario {index + 1}</p>
-                        {newEvent.slots.length > 1 ? (
+                        {!isRequestMode && newEvent.slots.length > 1 ? (
                           <button
                             type="button"
                             className="rounded-md border border-red-200 px-2 py-1 text-xs font-semibold text-red-700"
@@ -2647,7 +2843,7 @@ export default function SchedulesPage() {
                 {isCreatingEvent ? (
                   <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/60 border-t-white" aria-hidden="true" />
                 ) : null}
-                {isCreatingEvent ? "Guardando..." : "Guardar clase"}
+                {isCreatingEvent ? "Guardando..." : isRequestMode ? "Enviar solicitud" : "Guardar clase"}
               </button>
             </div>
           </form>

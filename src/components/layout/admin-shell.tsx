@@ -4,8 +4,29 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { readAuthSession, type AuthSession } from "@/lib/auth-session";
+import { fetchApiJson } from "@/lib/api-client";
+import { useWebSocketSchedules } from "@/lib/use-websocket-schedules";
+
+type PendingScheduleRequest = {
+  id: string;
+  eventId: string;
+  status: "pendiente" | "aprobada" | "rechazada";
+  requestedByName: string;
+  requestedByRole: string;
+  faculty: string;
+  code: string;
+  subject: string;
+  teacher: string;
+  room: string;
+  day: string;
+  start: string;
+  end: string;
+  startDate: string;
+  endDate: string;
+  createdAt: string;
+};
 
 type NavItem = {
   label: string;
@@ -36,7 +57,7 @@ function navClasses(isActive: boolean) {
 }
 
 function getStaffPhotoUrl(cedula: string): string {
-  return `https://svga.unac.edu.co/svga/files/pics/${encodeURIComponent(cedula)}.jpg`;
+  return `/api/staff-photo/${encodeURIComponent(cedula)}`;
 }
 
 export function AdminShell({ children }: { children: React.ReactNode }) {
@@ -44,12 +65,28 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const isLoginRoute = pathname.startsWith("/login");
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+  const [pendingRequests, setPendingRequests] = useState<PendingScheduleRequest[]>([]);
   const [authSession, setAuthSession] = useState<AuthSession | null>(null);
   const [isSessionReady, setIsSessionReady] = useState(false);
+  const notificationsPanelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setIsMobileMenuOpen(false);
   }, [pathname]);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (notificationsPanelRef.current && !notificationsPanelRef.current.contains(event.target as Node)) {
+        setIsNotificationsOpen(false);
+      }
+    };
+
+    if (isNotificationsOpen) {
+      document.addEventListener("click", handleClickOutside);
+      return () => document.removeEventListener("click", handleClickOutside);
+    }
+  }, [isNotificationsOpen]);
 
   useEffect(() => {
     if (isLoginRoute) {
@@ -78,6 +115,33 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
       router.replace("/");
     }
   }, [isLoginRoute, pathname, router]);
+
+  const syncPendingRequests = async () => {
+    if (!authSession || authSession.role !== "admin") {
+      setPendingRequests([]);
+      return;
+    }
+
+    try {
+      const response = await fetchApiJson<{ requests?: PendingScheduleRequest[] }>("/api/schedules/requests", {
+        cache: "no-store",
+      });
+      setPendingRequests(response.requests ?? []);
+    } catch {
+      setPendingRequests([]);
+    }
+  };
+
+  useEffect(() => {
+    void syncPendingRequests();
+  }, [authSession]);
+
+  useWebSocketSchedules({
+    enabled: Boolean(authSession && authSession.role === "admin"),
+    onScheduleRefresh: () => {
+      void syncPendingRequests();
+    },
+  });
 
   const visibleNavItems = useMemo(
     () => navItems.filter((item) => !item.allowedRoles || item.allowedRoles.includes(authSession?.role ?? "colaborador")),
@@ -110,7 +174,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
       <aside className={`fixed inset-y-0 left-0 z-50 flex h-full w-72 max-w-[85vw] flex-col border-r border-slate-200 bg-white transition-transform duration-200 dark:border-slate-800 dark:bg-slate-900 lg:w-64 ${isMobileMenuOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`}>
         <div className="flex items-center gap-3 p-6">
           <div className="flex size-10 items-center justify-center overflow-hidden rounded-lg bg-white">
-            <Image src="/logo.png" alt="UNAC" width={40} height={40} className="h-10 w-10 object-contain" />
+            <Image src="/logo.png" alt="UNAC" width={40} height={40} className="object-contain" />
           </div>
           <div>
             <h1 className="text-sm font-bold uppercase tracking-wider text-[#295786] dark:text-slate-100">UNAC</h1>
@@ -191,7 +255,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
             </button>
             <div className="flex min-w-0 shrink items-center gap-2.5">
               <div className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-md bg-white sm:hidden">
-                <Image src="/logo.png" alt="UNAC" width={32} height={32} className="h-8 w-8 object-contain" />
+                <Image src="/logo.png" alt="UNAC" width={32} height={32} className="object-contain" />
               </div>
               <div className="flex min-w-0 flex-col">
                 <h2 className="truncate text-base leading-tight font-black text-[#295786] sm:hidden">UNAC</h2>
@@ -210,10 +274,75 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
               />
             </div>
           </div>
-          <button className="relative flex size-10 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">
-            <span className="material-symbols-outlined">notifications</span>
-            <span className="absolute top-2 right-2.5 size-2 rounded-full border-2 border-white bg-red-500 dark:border-slate-900" />
-          </button>
+          <div className="relative" ref={notificationsPanelRef}>
+            <button
+              type="button"
+              onClick={() => setIsNotificationsOpen((open) => !open)}
+              aria-label="Abrir notificaciones"
+              className="relative flex size-10 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-600 transition hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700"
+            >
+              <span className="material-symbols-outlined">notifications</span>
+              {authSession.role === "admin" && pendingRequests.length > 0 ? (
+                <span className="absolute top-1.5 right-1.5 flex min-h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold leading-none text-white">
+                  {pendingRequests.length > 9 ? "9+" : pendingRequests.length}
+                </span>
+              ) : null}
+            </button>
+
+            {isNotificationsOpen ? (
+              <div className="absolute right-0 top-12 z-50 w-80 rounded-xl border border-slate-200 bg-white p-4 shadow-xl dark:border-slate-700 dark:bg-slate-900">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-bold text-slate-900 dark:text-white">Notificaciones</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">{authSession.roleLabel}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsNotificationsOpen(false)}
+                    className="rounded-md px-2 py-1 text-xs font-semibold text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
+                  >
+                    Cerrar
+                  </button>
+                </div>
+
+                {authSession.role === "admin" ? (
+                  <div className="mt-4 space-y-3">
+                    {pendingRequests.length > 0 ? (
+                      pendingRequests.map((request) => (
+                        <button
+                          key={request.id}
+                          type="button"
+                          onClick={() => {
+                            setIsNotificationsOpen(false);
+                            router.push(`/schedules?eventId=${encodeURIComponent(request.eventId)}&requestId=${encodeURIComponent(request.id)}`);
+                          }}
+                          className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-left text-sm text-slate-700 transition hover:border-[#295786]/30 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                        >
+                          <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">Solicitud de {request.requestedByName}</p>
+                          <p className="mt-1 font-semibold text-slate-900 dark:text-white">{request.code} | {request.subject}</p>
+                          <p className="text-xs text-slate-600 dark:text-slate-400">{request.day} · {request.room}</p>
+                          <p className="text-xs text-slate-600 dark:text-slate-400">{request.start} - {request.end}</p>
+                          <p className="mt-2 text-xs font-semibold text-[#295786]">Ir a la reserva</p>
+                        </button>
+                      ))
+                    ) : (
+                      <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-4 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                        Sin notificaciones por ahora. Las solicitudes pendientes aparecerán aquí cuando estén disponibles.
+                      </div>
+                    )}
+                  </div>
+                ) : authSession.role === "monitor" ? (
+                  <div className="mt-4 rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-4 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                    Sin notificaciones por ahora. Aquí verás el estado de tus solicitudes cuando se activen.
+                  </div>
+                ) : (
+                  <div className="mt-4 rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-4 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                    Sin notificaciones por ahora.
+                  </div>
+                )}
+              </div>
+            ) : null}
+          </div>
         </header>
 
         {children}
