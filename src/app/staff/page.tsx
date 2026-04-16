@@ -4,7 +4,7 @@
 import { fetchApiJson } from "@/lib/api-client";
 import { getCachedData, setCachedData } from "@/lib/cache-storage";
 import { readAuthSession } from "@/lib/auth-session";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type SyntheticEvent } from "react";
 
 type StaffView = "directory" | "schedule";
 type StaffMobileDetailTab = "profile" | "tasks" | "daily" | "academic" | "activity";
@@ -341,7 +341,39 @@ function isAdultBirthDate(isoDate: string): boolean {
 }
 
 function getStaffPhotoUrl(cedula: string): string {
-  return `https://svga.unac.edu.co/svga/files/pics/${encodeURIComponent(cedula)}.jpg`;
+  return `/api/staff-photo/${encodeURIComponent(cedula)}`;
+}
+
+function getDirectStaffPhotoUrl(cedula: string): string {
+  const normalizedCedula = (cedula ?? "").replace(/\D/g, "").trim();
+  const photoId = normalizedCedula || (cedula ?? "").trim();
+  return `https://svga.unac.edu.co/svga/files/pics/${encodeURIComponent(photoId)}.jpg`;
+}
+
+function handleStaffPhotoLoad(event: SyntheticEvent<HTMLImageElement>) {
+  const image = event.currentTarget;
+  image.style.display = "block";
+  image.dataset.photoRetried = "";
+  const fallback = image.parentElement?.querySelector<HTMLElement>("[data-staff-photo-fallback='true']");
+  if (fallback) {
+    fallback.style.display = "none";
+  }
+}
+
+function handleStaffPhotoError(event: SyntheticEvent<HTMLImageElement>, cedula: string) {
+  const image = event.currentTarget;
+  const fallback = image.parentElement?.querySelector<HTMLElement>("[data-staff-photo-fallback='true']");
+
+  if (image.dataset.photoRetried !== "1") {
+    image.dataset.photoRetried = "1";
+    image.src = getDirectStaffPhotoUrl(cedula);
+    return;
+  }
+
+  image.style.display = "none";
+  if (fallback) {
+    fallback.style.display = "flex";
+  }
 }
 
 function getFirstAvailableStaffNumber(staffList: StaffApi[]): number {
@@ -1396,21 +1428,8 @@ function StaffScheduleBoard({
                           src={getStaffPhotoUrl(staff.cedula)}
                           alt={`${staff.nombres} ${staff.apellidos}`}
                           className="absolute inset-0 h-full w-full object-cover"
-                          onError={(event) => {
-                            const image = event.currentTarget;
-                            image.style.display = "none";
-                            const fallback = image.parentElement?.querySelector<HTMLElement>("[data-staff-photo-fallback='true']");
-                            if (fallback) {
-                              fallback.style.display = "flex";
-                            }
-                          }}
-                          onLoad={(event) => {
-                            const image = event.currentTarget;
-                            const fallback = image.parentElement?.querySelector<HTMLElement>("[data-staff-photo-fallback='true']");
-                            if (fallback) {
-                              fallback.style.display = "none";
-                            }
-                          }}
+                          onError={(event) => handleStaffPhotoError(event, staff.cedula)}
+                          onLoad={handleStaffPhotoLoad}
                         />
                         <div
                           data-staff-photo-fallback="true"
@@ -1813,6 +1832,8 @@ export default function StaffPage() {
   const [selectedStaffPausas, setSelectedStaffPausas] = useState<StaffPausaItem[]>([]);
   const [isLoadingDailySchedule, setIsLoadingDailySchedule] = useState(false);
   const [dailyScheduleDay, setDailyScheduleDay] = useState<WorkWeekDay>("Lunes");
+  const selectedStaffContentRef = useRef<HTMLDivElement>(null);
+  const staffDetailPanelRef = useRef<HTMLDivElement>(null);
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showNewPasswordConfirm, setShowNewPasswordConfirm] = useState(false);
   const [showEditPassword, setShowEditPassword] = useState(false);
@@ -1868,13 +1889,12 @@ export default function StaffPage() {
   }, [selectedStaffId, staffList, isCollaborador, collaboratorStaffId]);
 
   useEffect(() => {
+    if (isCollaborador) return;
     if (staffList.length === 0) return;
-    if (selectedStaffId && staffList.some((staff) => staff.id === selectedStaffId)) return;
-    const firstStaffId = staffList[0]?.id ?? null;
-    if (firstStaffId) {
-      setSelectedStaffId(firstStaffId);
-    }
-  }, [staffList, selectedStaffId]);
+    if (!selectedStaffId) return;
+    if (staffList.some((staff) => staff.id === selectedStaffId)) return;
+    setSelectedStaffId(null);
+  }, [staffList, selectedStaffId, isCollaborador]);
 
   useEffect(() => {
     if (!isCollaborador) return;
@@ -3584,8 +3604,8 @@ export default function StaffPage() {
           staffList={staffList}
         />
       ) : (
-        <main className="flex min-h-[calc(100vh-7rem)] flex-col gap-4 overflow-visible xl:flex-row xl:gap-6 xl:overflow-hidden">
-        <div className="flex min-w-0 flex-1 flex-col gap-4 sm:gap-5">
+        <main className="flex min-h-[calc(100vh-7rem)] flex-col gap-4 overflow-visible xl:flex-row xl:items-start xl:gap-6 xl:overflow-visible">
+        <div className={`flex min-w-0 flex-1 flex-col gap-4 sm:gap-5 ${selectedStaff && !isCollaborador ? "xl:pr-[344px]" : ""}`}>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <h2 className="tracking-tight text-2xl font-extrabold text-[#2a3439]">
@@ -3621,7 +3641,7 @@ export default function StaffPage() {
 
           {staffError ? <p className="text-sm font-medium text-[#9f403d]">{staffError}</p> : null}
 
-          <div className="space-y-4 overflow-y-auto pr-0.5 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+          <div className="space-y-4 pr-0.5">
             {staffList.length > 0 ? (
               [
                 ...(isCollaborador
@@ -3660,6 +3680,11 @@ export default function StaffPage() {
                             key={staff.id}
                             onClick={() => {
                               setSelectedStaffId(staff.id);
+                              if (typeof window !== "undefined" && window.innerWidth >= 1280) {
+                                window.requestAnimationFrame(() => {
+                                  selectedStaffContentRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+                                });
+                              }
                               if (!isCollaborador) {
                                 setMobileDetailTab("profile");
                                 setIsStaffDetailModalOpen(true);
@@ -3672,21 +3697,8 @@ export default function StaffPage() {
                                 src={getStaffPhotoUrl(staff.cedula)}
                                 alt={`${staff.nombres} ${staff.apellidos}`}
                                 className="absolute inset-0 h-full w-full object-cover"
-                                onError={(event) => {
-                                  const image = event.currentTarget;
-                                  image.style.display = "none";
-                                  const fallback = image.parentElement?.querySelector<HTMLElement>("[data-staff-photo-fallback='true']");
-                                  if (fallback) {
-                                    fallback.style.display = "flex";
-                                  }
-                                }}
-                                onLoad={(event) => {
-                                  const image = event.currentTarget;
-                                  const fallback = image.parentElement?.querySelector<HTMLElement>("[data-staff-photo-fallback='true']");
-                                  if (fallback) {
-                                    fallback.style.display = "none";
-                                  }
-                                }}
+                                onError={(event) => handleStaffPhotoError(event, staff.cedula)}
+                                onLoad={handleStaffPhotoLoad}
                               />
                               <div
                                 data-staff-photo-fallback="true"
@@ -3733,7 +3745,7 @@ export default function StaffPage() {
 
           {selectedStaff && !isCollaborador ? (
           <>
-          <div className="hidden grid-cols-1 gap-4 xl:grid xl:grid-cols-[1.55fr_1fr] xl:gap-6">
+          <div ref={selectedStaffContentRef} className="hidden grid-cols-1 gap-4 xl:grid xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,1fr)] xl:gap-6">
             <section className="rounded-2xl bg-[#e8eff3] p-4 sm:p-5">
               <div className="mb-3 flex items-center justify-between">
                 <h3 className="flex items-center gap-2 text-sm font-black text-[#153f73]">
@@ -3800,8 +3812,8 @@ export default function StaffPage() {
                 No disponibilidad académica
               </h4>
               <div className="overflow-x-auto">
-                <div className="min-w-[640px] space-y-1">
-                <div className="grid grid-cols-[112px_repeat(7,minmax(0,1fr))] gap-1">
+                <div className="min-w-[560px] space-y-1">
+                <div className="grid grid-cols-[96px_repeat(7,minmax(0,1fr))] gap-1">
                   <div />
                   {ACADEMIC_DAY_COLUMNS.map((column) => (
                     <div className="h-4 text-center text-[8px] font-black text-slate-400 uppercase" key={column.dayName}>
@@ -3811,7 +3823,7 @@ export default function StaffPage() {
                 </div>
 
                 {ACADEMIC_TIME_SEGMENTS.map((segment, segmentIndex) => (
-                  <div className="grid grid-cols-[112px_repeat(7,minmax(0,1fr))] gap-1" key={segment.key}>
+                  <div className="grid grid-cols-[96px_repeat(7,minmax(0,1fr))] gap-1" key={segment.key}>
                     <div className="flex items-center justify-end gap-1 pr-1 text-[9px] whitespace-nowrap">
                       <span className="font-bold text-[#566166]">{ACADEMIC_SEGMENT_ROWS[segmentIndex].label}</span>
                       <span className="text-slate-400">{ACADEMIC_SEGMENT_ROWS[segmentIndex].range}</span>
@@ -3867,7 +3879,7 @@ export default function StaffPage() {
                 <span className="h-1.5 w-1.5 rounded-full bg-[#3a5f94]" />
                 Actividades recientes e informes
               </h4>
-              <div className="relative space-y-6 pl-6 before:absolute before:top-2 before:bottom-2 before:left-[7px] before:w-[2px] before:bg-[#cfdce3] before:content-['']">
+              <div className="relative space-y-6 pl-6 pr-1 before:absolute before:top-2 before:bottom-2 before:left-[7px] before:w-[2px] before:bg-[#cfdce3] before:content-['']">
                 <div className="relative">
                   <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-green-500" />
                   <p className="text-[10px] font-bold text-slate-400">HOY, 10:45</p>
@@ -3949,15 +3961,15 @@ export default function StaffPage() {
                 )}
               </section>
 
-              <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.55fr_1fr] xl:gap-6">
+              <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,1fr)] xl:gap-6">
                 <section className="min-h-[340px] rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5 lg:min-h-[370px] lg:p-6">
                   <h4 className="mb-4 flex items-center gap-2 text-[11px] font-black tracking-widest text-[#566166] uppercase">
                     <span className="h-1.5 w-1.5 rounded-full bg-[#3a5f94]" />
                     No disponibilidad académica
                   </h4>
                   <div className="overflow-x-auto">
-                    <div className="min-w-[640px] space-y-1">
-                      <div className="grid grid-cols-[112px_repeat(7,minmax(0,1fr))] gap-1">
+                    <div className="min-w-[560px] space-y-1">
+                      <div className="grid grid-cols-[96px_repeat(7,minmax(0,1fr))] gap-1">
                         <div />
                         {ACADEMIC_DAY_COLUMNS.map((column) => (
                           <div className="h-4 text-center text-[8px] font-black text-slate-400 uppercase" key={`collaborator-main-${column.dayName}`}>
@@ -3967,7 +3979,7 @@ export default function StaffPage() {
                       </div>
 
                       {ACADEMIC_TIME_SEGMENTS.map((segment, segmentIndex) => (
-                        <div className="grid grid-cols-[112px_repeat(7,minmax(0,1fr))] gap-1" key={`collaborator-main-${segment.key}`}>
+                        <div className="grid grid-cols-[96px_repeat(7,minmax(0,1fr))] gap-1" key={`collaborator-main-${segment.key}`}>
                           <div className="flex items-center justify-end gap-1 pr-1 text-[9px] whitespace-nowrap">
                             <span className="font-bold text-[#566166]">{ACADEMIC_SEGMENT_ROWS[segmentIndex].label}</span>
                             <span className="text-slate-400">{ACADEMIC_SEGMENT_ROWS[segmentIndex].range}</span>
@@ -4024,7 +4036,7 @@ export default function StaffPage() {
                     <span className="h-1.5 w-1.5 rounded-full bg-[#3a5f94]" />
                     Actividades recientes e informes
                   </h4>
-                  <div className="relative space-y-6 pl-6 before:absolute before:top-2 before:bottom-2 before:left-[7px] before:w-[2px] before:bg-[#cfdce3] before:content-['']">
+                  <div className="relative space-y-6 pl-6 pr-1 before:absolute before:top-2 before:bottom-2 before:left-[7px] before:w-[2px] before:bg-[#cfdce3] before:content-['']">
                     <div className="relative">
                       <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-green-500" />
                       <p className="text-[10px] font-bold text-slate-400">HOY, 10:45</p>
@@ -4055,7 +4067,7 @@ export default function StaffPage() {
         </div>
 
         {selectedStaff ? (
-        <div className={`${isCollaborador ? "flex" : "hidden xl:flex"} h-auto w-full flex-col overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-2xl xl:h-full xl:w-[320px]`}>
+        <div ref={staffDetailPanelRef} className={`${isCollaborador ? "flex" : "hidden xl:flex"} h-auto w-full flex-col overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-2xl xl:z-20 xl:h-[calc(100vh-7rem)] xl:w-[320px] xl:overflow-y-auto ${isCollaborador ? "" : "xl:fixed xl:top-24 xl:right-7"}`}>
           <div className="flex flex-col items-center gap-2.5 border-b border-slate-200 bg-[#f0f4f7] p-4 sm:p-5 lg:p-6">
             <div className="relative">
               <div className="relative flex h-20 w-20 items-center justify-center overflow-hidden rounded-full border-4 border-white bg-[#d5e3ff] text-xl font-black text-[#153f73] shadow-lg sm:h-24 sm:w-24 sm:text-2xl">
@@ -4063,21 +4075,8 @@ export default function StaffPage() {
                   src={getStaffPhotoUrl(selectedStaff.cedula)}
                   alt={`${selectedStaff.nombres} ${selectedStaff.apellidos}`}
                   className="absolute inset-0 h-full w-full object-cover"
-                  onError={(event) => {
-                    const image = event.currentTarget;
-                    image.style.display = "none";
-                    const fallback = image.parentElement?.querySelector<HTMLElement>("[data-staff-photo-fallback='true']");
-                    if (fallback) {
-                      fallback.style.display = "flex";
-                    }
-                  }}
-                  onLoad={(event) => {
-                    const image = event.currentTarget;
-                    const fallback = image.parentElement?.querySelector<HTMLElement>("[data-staff-photo-fallback='true']");
-                    if (fallback) {
-                      fallback.style.display = "none";
-                    }
-                  }}
+                  onError={(event) => handleStaffPhotoError(event, selectedStaff.cedula)}
+                  onLoad={handleStaffPhotoLoad}
                 />
                 <div
                   data-staff-photo-fallback="true"
@@ -4246,21 +4245,8 @@ export default function StaffPage() {
                         src={getStaffPhotoUrl(selectedStaff.cedula)}
                         alt={`${selectedStaff.nombres} ${selectedStaff.apellidos}`}
                         className="absolute inset-0 h-full w-full object-cover"
-                        onError={(event) => {
-                          const image = event.currentTarget;
-                          image.style.display = "none";
-                          const fallback = image.parentElement?.querySelector<HTMLElement>("[data-staff-photo-fallback='true']");
-                          if (fallback) {
-                            fallback.style.display = "flex";
-                          }
-                        }}
-                        onLoad={(event) => {
-                          const image = event.currentTarget;
-                          const fallback = image.parentElement?.querySelector<HTMLElement>("[data-staff-photo-fallback='true']");
-                          if (fallback) {
-                            fallback.style.display = "none";
-                          }
-                        }}
+                        onError={(event) => handleStaffPhotoError(event, selectedStaff.cedula)}
+                        onLoad={handleStaffPhotoLoad}
                       />
                       <div
                         data-staff-photo-fallback="true"

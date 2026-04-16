@@ -78,7 +78,7 @@ export default function LoginPage() {
         <div className="mx-auto flex w-full max-w-screen-2xl items-center justify-between px-6 py-4 lg:px-8">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-lg bg-white">
-              <Image src="/logo.png" alt="UNAC" width={40} height={40} className="h-10 w-10 object-contain" />
+              <Image src="/logo.png" alt="UNAC" width={40} height={40} className="object-contain" />
             </div>
             <span className="text-lg font-semibold tracking-tight sm:text-xl">Administración Bolivar Rave</span>
           </div>

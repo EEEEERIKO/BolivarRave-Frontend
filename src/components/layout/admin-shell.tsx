@@ -36,7 +36,7 @@ function navClasses(isActive: boolean) {
 }
 
 function getStaffPhotoUrl(cedula: string): string {
-  return `https://svga.unac.edu.co/svga/files/pics/${encodeURIComponent(cedula)}.jpg`;
+  return `/api/staff-photo/${encodeURIComponent(cedula)}`;
 }
 
 export function AdminShell({ children }: { children: React.ReactNode }) {
@@ -110,7 +110,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
       <aside className={`fixed inset-y-0 left-0 z-50 flex h-full w-72 max-w-[85vw] flex-col border-r border-slate-200 bg-white transition-transform duration-200 dark:border-slate-800 dark:bg-slate-900 lg:w-64 ${isMobileMenuOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`}>
         <div className="flex items-center gap-3 p-6">
           <div className="flex size-10 items-center justify-center overflow-hidden rounded-lg bg-white">
-            <Image src="/logo.png" alt="UNAC" width={40} height={40} className="h-10 w-10 object-contain" />
+            <Image src="/logo.png" alt="UNAC" width={40} height={40} className="object-contain" />
           </div>
           <div>
             <h1 className="text-sm font-bold uppercase tracking-wider text-[#295786] dark:text-slate-100">UNAC</h1>
@@ -191,7 +191,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
             </button>
             <div className="flex min-w-0 shrink items-center gap-2.5">
               <div className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-md bg-white sm:hidden">
-                <Image src="/logo.png" alt="UNAC" width={32} height={32} className="h-8 w-8 object-contain" />
+                <Image src="/logo.png" alt="UNAC" width={32} height={32} className="object-contain" />
               </div>
               <div className="flex min-w-0 flex-col">
                 <h2 className="truncate text-base leading-tight font-black text-[#295786] sm:hidden">UNAC</h2>

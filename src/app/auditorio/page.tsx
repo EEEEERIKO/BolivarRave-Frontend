@@ -2,6 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fetchApiJson } from "@/lib/api-client";
+import { readAuthSession } from "@/lib/auth-session";
 import { useWebSocketSchedules } from "@/lib/use-websocket-schedules";
 
 type AuditorioEstado = "Pendiente" | "Aprobada" | "Cancelada";
@@ -188,14 +189,6 @@ function getEventBounds(event: AuditoriumEvent) {
   return { start: new Date(minTime), end: new Date(maxTime) };
 }
 
-function getEventScheduleSummary(event: AuditoriumEvent) {
-  return event.scheduleBlocks
-    .slice()
-    .sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime))
-    .map((block) => `${block.date} ${block.startTime}-${block.endTime}`)
-    .join(" | ");
-}
-
 function getEventResourcesLabel(event: AuditoriumEvent) {
   const resources = [
     event.needsScreen ? "Pantalla" : null,
@@ -380,6 +373,8 @@ function createEmptyFormState(defaultDate: string): NewEventFormState {
 
 export default function AuditorioPage() {
   const monthPickerRef = useRef<HTMLDivElement>(null);
+  const session = readAuthSession();
+  const canManageAuditorio = session?.role === "admin";
 
   const colombiaToday = useMemo(() => getColombiaToday(), []);
   const defaultDateKey = useMemo(() => toDateKey(colombiaToday), [colombiaToday]);
@@ -414,7 +409,7 @@ export default function AuditorioPage() {
       if (current && loaded.some((event) => event.id === current)) {
         return current;
       }
-      return loaded[0]?.id ?? null;
+      return null;
     });
   }, []);
 
@@ -594,6 +589,7 @@ export default function AuditorioPage() {
   };
 
   const openEditModal = () => {
+    if (!canManageAuditorio) return;
     if (!selectedEvent) return;
 
     setEditingEventId(selectedEvent.id);
@@ -621,6 +617,7 @@ export default function AuditorioPage() {
   };
 
   function openCreateModal() {
+    if (!canManageAuditorio) return;
     setEditingEventId(null);
     setFormError(null);
     setFieldErrors({});
@@ -642,6 +639,7 @@ export default function AuditorioPage() {
   }
 
   function moveEventToDate(eventId: string, newStartDate: Date) {
+    if (!canManageAuditorio) return;
     const sourceEvent = events.find((event) => event.id === eventId);
     if (!sourceEvent) return;
 
@@ -770,6 +768,10 @@ export default function AuditorioPage() {
 
   async function handleCreateEventSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!canManageAuditorio) {
+      setFormError("Solo el perfil Administrador puede crear o editar eventos del auditorio.");
+      return;
+    }
     if (isSaving) return;
 
     setFormError(null);
@@ -890,6 +892,7 @@ export default function AuditorioPage() {
   }
 
   const deleteSelectedEvent = async () => {
+    if (!canManageAuditorio) return;
     if (!selectedEvent || isDeleting) return;
 
     const accepted = window.confirm(`Eliminar la reserva "${selectedEvent.title}"?`);
@@ -1122,22 +1125,28 @@ export default function AuditorioPage() {
                                       isDragTarget ? "ring-2 ring-inset ring-[#295786]/60" : ""
                                     } ${isToday ? "ring-2 ring-[#295786]" : ""}`}
                                     style={{ minHeight: 74 + laneAreaHeight }}
-                                    onDragOver={(event) => {
-                                      event.preventDefault();
-                                      setDragOverDateKey(key);
-                                    }}
-                                    onDragLeave={() => {
-                                      if (dragOverDateKey === key) setDragOverDateKey(null);
-                                    }}
-                                    onDrop={(event) => {
-                                      event.preventDefault();
-                                      const eventId = event.dataTransfer.getData("text/aud-event-id");
-                                      if (eventId) {
-                                        moveEventToDate(eventId, parseISODate(key));
-                                        setSelectedEventId(eventId);
-                                      }
-                                      setDragOverDateKey(null);
-                                    }}
+                                    onDragOver={canManageAuditorio
+                                      ? (event) => {
+                                          event.preventDefault();
+                                          setDragOverDateKey(key);
+                                        }
+                                      : undefined}
+                                    onDragLeave={canManageAuditorio
+                                      ? () => {
+                                          if (dragOverDateKey === key) setDragOverDateKey(null);
+                                        }
+                                      : undefined}
+                                    onDrop={canManageAuditorio
+                                      ? (event) => {
+                                          event.preventDefault();
+                                          const eventId = event.dataTransfer.getData("text/aud-event-id");
+                                          if (eventId) {
+                                            moveEventToDate(eventId, parseISODate(key));
+                                            setSelectedEventId(eventId);
+                                          }
+                                          setDragOverDateKey(null);
+                                        }
+                                      : undefined}
                                   >
                                     {isToday ? (
                                       <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[#295786] text-[11px] font-semibold text-white">
@@ -1165,8 +1174,9 @@ export default function AuditorioPage() {
                                     <button
                                       key={`${segment.event.id}-${weekIndex}-${segment.startCol}`}
                                       type="button"
-                                      draggable
+                                      draggable={canManageAuditorio}
                                       onDragStart={(event) => {
+                                        if (!canManageAuditorio) return;
                                         event.dataTransfer.setData("text/aud-event-id", segment.event.id);
                                         event.dataTransfer.effectAllowed = "move";
                                       }}
@@ -1197,13 +1207,15 @@ export default function AuditorioPage() {
         </section>
 
         <div className="h-fit xl:sticky xl:top-24">
-          <button
-            type="button"
-            onClick={openCreateModal}
-            className="mb-3 w-full rounded-lg bg-[#295786] px-4 py-3 text-base font-bold text-white transition hover:bg-[#1f466d]"
-          >
-            Agregar evento
-          </button>
+          {canManageAuditorio ? (
+            <button
+              type="button"
+              onClick={openCreateModal}
+              className="mb-3 w-full rounded-lg bg-[#295786] px-4 py-3 text-base font-bold text-white transition hover:bg-[#1f466d]"
+            >
+              Agregar evento
+            </button>
+          ) : null}
 
           <aside className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
             <h3 className="text-sm font-bold uppercase text-slate-500">Detalle del evento</h3>
@@ -1219,9 +1231,6 @@ export default function AuditorioPage() {
                   <span className="font-semibold">Organiza:</span> {selectedEvent.organizer}
                 </p>
                 <p>
-                  <span className="font-semibold">Fechas:</span> {formatDateLabel(getEventBounds(selectedEvent).start)} - {formatDateLabel(getEventBounds(selectedEvent).end)}
-                </p>
-                <p>
                   <span className="font-semibold">Duracion:</span> {diffDays(getEventBounds(selectedEvent).end, getEventBounds(selectedEvent).start) + 1} dia(s)
                 </p>
                 <p>
@@ -1230,31 +1239,55 @@ export default function AuditorioPage() {
                 <p>
                   <span className="font-semibold">Recursos:</span> {getEventResourcesLabel(selectedEvent)}
                 </p>
-                <p>
-                  <span className="font-semibold">Horarios:</span> {getEventScheduleSummary(selectedEvent)}
-                </p>
+                <div className="space-y-1">
+                  <p className="font-semibold">Horarios:</p>
+                  <div className="space-y-2">
+                    {selectedEvent.scheduleBlocks
+                      .slice()
+                      .sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime))
+                      .map((block) => (
+                        <div
+                          key={`detalle-horario-${block.id}`}
+                          className="rounded-md border border-slate-200 bg-slate-50 px-2.5 py-2 text-xs text-slate-700 space-y-1"
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className="material-symbols-outlined text-[14px] text-[#295786]">calendar_month</span>
+                            <span className="font-semibold">{formatDateLabel(parseISODate(block.date))}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="material-symbols-outlined text-[14px] text-[#295786]">schedule</span>
+                            <span>{formatTimeAmPm(block.startTime)} - {formatTimeAmPm(block.endTime)}</span>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                </div>
                 <p>
                   <span className="font-semibold">Observaciones:</span> {selectedEvent.observations || "Sin observaciones"}
                 </p>
-                <p className="text-xs text-slate-500">Tip: arrastra la barra del evento y sueltala en otro dia para moverla.</p>
+                {canManageAuditorio ? (
+                  <p className="text-xs text-slate-500">Tip: arrastra la barra del evento y sueltala en otro dia para moverla.</p>
+                ) : null}
 
-                <div className="grid grid-cols-2 gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={openEditModal}
-                    className="rounded-lg bg-[#295786] px-3 py-2 text-sm font-semibold text-white"
-                  >
-                    Editar
-                  </button>
-                  <button
-                    type="button"
-                    disabled={isDeleting}
-                    onClick={() => void deleteSelectedEvent()}
-                    className="rounded-lg bg-red-600 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70"
-                  >
-                    {isDeleting ? "Eliminando..." : "Eliminar"}
-                  </button>
-                </div>
+                {canManageAuditorio ? (
+                  <div className="grid grid-cols-2 gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={openEditModal}
+                      className="rounded-lg bg-[#295786] px-3 py-2 text-sm font-semibold text-white"
+                    >
+                      Editar
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isDeleting}
+                      onClick={() => void deleteSelectedEvent()}
+                      className="rounded-lg bg-red-600 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70"
+                    >
+                      {isDeleting ? "Eliminando..." : "Eliminar"}
+                    </button>
+                  </div>
+                ) : null}
               </div>
             ) : (
               <p className="mt-3 text-sm text-slate-500">Selecciona un evento para ver sus detalles.</p>
@@ -1263,7 +1296,7 @@ export default function AuditorioPage() {
         </div>
       </div>
 
-      {isCreateOpen ? (
+      {isCreateOpen && canManageAuditorio ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
           <div className="max-h-[90vh] w-full max-w-3xl overflow-auto rounded-xl border border-slate-200 bg-white p-5 shadow-xl">
             <div className="mb-4 flex items-center justify-between">

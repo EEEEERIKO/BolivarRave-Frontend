@@ -11,7 +11,7 @@ type LoginResponse = {
 };
 
 function getStaffPhotoUrl(cedula: string): string {
-  return `https://svga.unac.edu.co/svga/files/pics/${encodeURIComponent(cedula)}.jpg`;
+  return `/api/staff-photo/${encodeURIComponent(cedula)}`;
 }
 
 export default function LoginColaboradorPage() {
