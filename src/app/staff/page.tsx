@@ -3605,7 +3605,7 @@ export default function StaffPage() {
         />
       ) : (
         <main className="flex min-h-[calc(100vh-7rem)] flex-col gap-4 overflow-visible xl:flex-row xl:items-start xl:gap-6 xl:overflow-visible">
-        <div className={`flex min-w-0 flex-1 flex-col gap-4 sm:gap-5 ${selectedStaff && !isCollaborador ? "xl:pr-[344px]" : ""}`}>
+        <div className={`flex min-w-0 flex-1 flex-col gap-4 sm:gap-5 ${selectedStaff && !isCollaborador ? "xl:pr-[368px]" : ""}`}>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <h2 className="tracking-tight text-2xl font-extrabold text-[#2a3439]">
@@ -3745,7 +3745,7 @@ export default function StaffPage() {
 
           {selectedStaff && !isCollaborador ? (
           <>
-          <div ref={selectedStaffContentRef} className="hidden grid-cols-1 gap-4 xl:grid xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,1fr)] xl:gap-6">
+          <div ref={selectedStaffContentRef} className="hidden grid-cols-1 gap-4 xl:grid xl:grid-cols-1 xl:gap-6 2xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,1fr)]">
             <section className="rounded-2xl bg-[#e8eff3] p-4 sm:p-5">
               <div className="mb-3 flex items-center justify-between">
                 <h3 className="flex items-center gap-2 text-sm font-black text-[#153f73]">
@@ -3805,7 +3805,7 @@ export default function StaffPage() {
             </section>
           </div>
 
-          <div className="hidden grid-cols-1 gap-4 xl:grid xl:grid-cols-[1.55fr_1fr] xl:gap-6">
+          <div className="hidden grid-cols-1 gap-4 xl:grid xl:grid-cols-1 xl:gap-6 2xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,1fr)]">
             <section className="min-h-[340px] rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5 lg:min-h-[370px] lg:p-6">
               <h4 className="mb-4 flex items-center gap-2 text-[11px] font-black tracking-widest text-[#566166] uppercase">
                 <span className="h-1.5 w-1.5 rounded-full bg-[#3a5f94]" />

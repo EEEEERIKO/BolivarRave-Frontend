@@ -1847,11 +1847,11 @@ export default function SchedulesPage() {
             </div>
           </div>
         ) : null}
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-col gap-4 2xl:flex-row 2xl:items-center 2xl:justify-between">
       <h1 className="text-base font-bold sm:text-lg">Horario Edificio Bolivar Rave</h1>
           
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:flex-1 lg:justify-center lg:gap-2">
-            <div className="flex items-center gap-2">
+          <div className="flex w-full min-w-0 flex-col gap-3 2xl:flex-row 2xl:flex-1 2xl:items-center 2xl:justify-center 2xl:gap-2">
+            <div className="flex min-w-0 items-center gap-2">
               <span className="rounded-full bg-[#295786]/10 px-3 py-1 text-xs font-semibold text-[#295786] whitespace-nowrap">
                 {weekRangeLabel}
               </span>
@@ -1938,7 +1938,7 @@ export default function SchedulesPage() {
               </div>
             </div>
             
-            <div className="flex gap-1 rounded-lg bg-slate-100 p-1 flex-nowrap overflow-x-auto">
+            <div className="flex min-w-0 gap-1 rounded-lg bg-slate-100 p-1 flex-nowrap overflow-x-auto">
               {weekDays.map((day, index) => {
                 const thisDayDate = addDays(currentWeekStart, index);
                 const isToday = dateValue(thisDayDate) === dateValue(colombiaToday);
@@ -1961,7 +1961,7 @@ export default function SchedulesPage() {
             </div>
           </div>
 
-          <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center lg:w-auto">
+          <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center 2xl:w-auto 2xl:justify-end">
             <input
               type="text"
               value={roomQuery}

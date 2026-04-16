@@ -10,6 +10,8 @@ type LoginResponse = {
   session: AuthSession;
 };
 
+type LegalModalType = "privacy" | "terms" | "security";
+
 export default function LoginPage() {
   const router = useRouter();
   const [cedula, setCedula] = useState("");
@@ -17,8 +19,34 @@ export default function LoginPage() {
   const [isPasswordVisible, setIsPasswordVisible] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [legalModal, setLegalModal] = useState<LegalModalType | null>(null);
 
   const cleanCedula = useMemo(() => cedula.replace(/\D/g, ""), [cedula]);
+
+  const legalModalContent = useMemo(() => {
+    if (legalModal === "privacy") {
+      return {
+        title: "Política de privacidad",
+        body: "Tus datos se usan solo para autenticación, control operativo y trazabilidad institucional. No se comparten con terceros fuera de los procesos internos autorizados.",
+      };
+    }
+
+    if (legalModal === "terms") {
+      return {
+        title: "Términos",
+        body: "El acceso a esta plataforma es exclusivo para personal autorizado. Toda acción puede ser registrada para auditoría, seguridad y cumplimiento institucional.",
+      };
+    }
+
+    if (legalModal === "security") {
+      return {
+        title: "Seguridad",
+        body: "La sesión está protegida con autenticación por credenciales y controles de acceso por rol. Reporta inmediatamente cualquier actividad sospechosa al equipo administrador.",
+      };
+    }
+
+    return null;
+  }, [legalModal]);
 
   const renderError = (message: string) => {
     const normalizedMessage = message.toLowerCase();
@@ -73,30 +101,21 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#f7f9fb] text-[#2a3439] selection:bg-[#bfd5ff] selection:text-[#153f73]">
+    <div className="flex min-h-screen flex-col bg-[#f7f9fb] text-[#2a3439] selection:bg-[#bfd5ff] selection:text-[#153f73]">
       <header className="sticky top-0 z-30 w-full border-b border-slate-200/60 bg-[#f7f9fb]/95 backdrop-blur">
-        <div className="mx-auto flex w-full max-w-screen-2xl items-center justify-between px-6 py-4 lg:px-8">
+        <div className="mx-auto flex w-full max-w-screen-2xl items-center px-6 py-4 lg:px-8">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-lg bg-white">
               <Image src="/logo.png" alt="UNAC" width={40} height={40} className="object-contain" />
             </div>
             <span className="text-lg font-semibold tracking-tight sm:text-xl">Administración Bolivar Rave</span>
           </div>
-          <div className="flex items-center gap-5">
-            <button type="button" className="inline-flex items-center gap-2 rounded px-2 py-1 text-sm font-medium text-[#566166] hover:bg-slate-200/60 hover:text-[#3a5f94]">
-              <span className="material-symbols-outlined text-[18px]">language</span>
-              Español
-            </button>
-            <a href="#" className="text-sm font-semibold text-[#3a5f94] hover:opacity-80">
-              Soporte
-            </a>
-          </div>
         </div>
       </header>
 
-      <main className="flex items-center justify-center px-5 py-10 sm:px-6 md:py-14">
-        <div className="mx-auto flex w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-[#a9b4b9]/20 bg-[#f0f4f7] shadow-[0_10px_40px_rgba(42,52,57,0.06)] md:flex-row">
-          <div className="relative hidden w-1/2 overflow-hidden bg-[#e8eff3] md:flex md:flex-col md:justify-end">
+      <main className="relative flex min-h-[calc(100vh-150px)] flex-grow items-center justify-center overflow-hidden px-6 py-8">
+        <div className="mx-auto flex w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-[#a9b4b9]/20 bg-[#f0f4f7] shadow-[0_10px_40px_rgba(42,52,57,0.06)] md:min-h-[680px] md:flex-row">
+          <div className="relative hidden w-1/2 overflow-hidden bg-[#e8eff3] md:flex md:min-h-[680px] md:flex-col md:justify-end">
             <div className="absolute inset-0 z-10 bg-gradient-to-br from-[#3a5f94]/20 via-transparent to-transparent" />
             <div className="absolute inset-0 z-10 bg-gradient-to-t from-[#0b0f10]/72 via-[#0b0f10]/28 to-transparent" />
             <Image
@@ -105,7 +124,7 @@ export default function LoginPage() {
               fill
               priority
               sizes="(min-width: 768px) 50vw, 100vw"
-              quality={90}
+              quality={100}
               className="absolute inset-0 h-full w-full object-cover object-center"
             />
             <div className="relative z-20 p-10 text-white">
@@ -118,7 +137,7 @@ export default function LoginPage() {
             </div>
           </div>
 
-          <div className="flex w-full flex-col bg-white p-7 sm:p-10 md:w-1/2 md:p-14">
+          <div className="flex w-full flex-col bg-white p-7 sm:p-10 md:w-1/2 md:justify-center md:p-12">
             <div className="mb-8">
               <span className="mb-2 block text-xs font-bold tracking-[0.2em] text-[#3a5f94] uppercase">Acceso seguro</span>
               <h1 className="text-2xl font-bold tracking-tight text-[#2a3439]">Login Admin/Monitor</h1>
@@ -187,8 +206,8 @@ export default function LoginPage() {
               </div>
             </form>
 
-            <div className="mt-auto border-t border-dashed border-[#d9e4ea] pt-8">
-              <div className="mb-4 flex items-center gap-3 text-[#566166]">
+            <div className="mt-8 border-t border-dashed border-[#d9e4ea] pt-6">
+              <div className="flex items-center gap-3 text-[#566166]">
                 <div className="rounded-lg bg-[#e8eff3] p-2">
                   <span className="material-symbols-outlined text-[18px]">verified_user</span>
                 </div>
@@ -197,37 +216,60 @@ export default function LoginPage() {
                   <p>Sesión cifrada de extremo a extremo</p>
                 </div>
               </div>
-              <div className="rounded-md border border-dashed border-slate-300 bg-slate-50 p-3">
-                <p className="text-[11px] font-bold tracking-wider text-[#566166] uppercase">Acceso institucional</p>
-                <ul className="mt-2 space-y-1 text-xs text-[#566166]">
-                  <li>Admin y Monitor: ingreso con cédula y contraseña.</li>
-                  <li>Colaborador: usa el portal separado con cédula.</li>
-                  <li>Si olvidaste tu contraseña, solicita soporte institucional.</li>
-                </ul>
-              </div>
             </div>
+
           </div>
         </div>
       </main>
 
-      <footer className="w-full border-t border-slate-200/50 bg-[#f7f9fb]">
-        <div className="mx-auto flex w-full max-w-screen-2xl flex-col items-center justify-between gap-4 px-6 py-10 md:flex-row lg:px-8">
-          <div className="text-sm leading-relaxed text-[#566166]">
-            © 2024 Administración Bolivar Rave. Todos los derechos reservados.
+      <footer className="mt-auto w-full border-t border-slate-200/50 bg-[#f7f9fb]">
+        <div className="mx-auto flex w-full max-w-screen-2xl flex-col items-center justify-between gap-1 px-6 py-3 md:flex-row md:py-4 lg:px-8">
+          <div className="text-xs leading-snug text-[#566166]">
+            © 2026 Administración Bolivar Rave. Todos los derechos reservados.
           </div>
-          <div className="flex gap-7">
-            <a className="text-sm text-[#566166] transition-colors hover:text-[#3a5f94]" href="#">
+          <div className="flex items-center gap-4">
+            <button
+              type="button"
+              onClick={() => setLegalModal("privacy")}
+              className="text-xs text-[#566166] transition-colors hover:text-[#3a5f94]"
+            >
               Política de privacidad
-            </a>
-            <a className="text-sm text-[#566166] transition-colors hover:text-[#3a5f94]" href="#">
+            </button>
+            <button
+              type="button"
+              onClick={() => setLegalModal("terms")}
+              className="text-xs text-[#566166] transition-colors hover:text-[#3a5f94]"
+            >
               Términos
-            </a>
-            <a className="text-sm text-[#566166] transition-colors hover:text-[#3a5f94]" href="#">
+            </button>
+            <button
+              type="button"
+              onClick={() => setLegalModal("security")}
+              className="text-xs text-[#566166] transition-colors hover:text-[#3a5f94]"
+            >
               Seguridad
-            </a>
+            </button>
           </div>
         </div>
       </footer>
+
+      {legalModal && legalModalContent ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4" role="dialog" aria-modal="true">
+          <div className="w-full max-w-lg rounded-xl bg-white p-5 shadow-2xl">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-base font-bold text-[#2a3439]">{legalModalContent.title}</h2>
+              <button
+                type="button"
+                onClick={() => setLegalModal(null)}
+                className="rounded-md border border-slate-200 px-2 py-1 text-xs text-[#566166] hover:bg-slate-50"
+              >
+                Cerrar
+              </button>
+            </div>
+            <p className="text-sm leading-relaxed text-[#566166]">{legalModalContent.body}</p>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
