@@ -34,7 +34,7 @@ export const useWebSocketSchedules = ({
       (window.location.hostname === "localhost" ||
         window.location.hostname === "127.0.0.1" ||
         window.location.hostname.startsWith("192.168"));
-    const enableLocalWs = (process.env.NEXT_PUBLIC_ENABLE_WS_LOCAL ?? "").trim().toLowerCase() === "true";
+    const enableLocalWs = (process.env.NEXT_PUBLIC_ENABLE_WS_LOCAL ?? "true").trim().toLowerCase() !== "false";
 
     if (isLocalDev && !enableLocalWs) {
       return;
