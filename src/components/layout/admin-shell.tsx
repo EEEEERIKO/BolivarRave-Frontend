@@ -146,6 +146,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [pendingRequests, setPendingRequests] = useState<PendingScheduleRequest[]>([]);
   const [upcomingAuditorioEvents, setUpcomingAuditorioEvents] = useState<UpcomingAuditorioNotification[]>([]);
+  const [expandedCollaboratorNotificationId, setExpandedCollaboratorNotificationId] = useState<string | null>(null);
   const [authSession, setAuthSession] = useState<AuthSession | null>(null);
   const [isSessionReady, setIsSessionReady] = useState(false);
   const notificationsPanelRef = useRef<HTMLDivElement>(null);
@@ -164,6 +165,12 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
     if (isNotificationsOpen) {
       document.addEventListener("click", handleClickOutside);
       return () => document.removeEventListener("click", handleClickOutside);
+    }
+  }, [isNotificationsOpen]);
+
+  useEffect(() => {
+    if (!isNotificationsOpen) {
+      setExpandedCollaboratorNotificationId(null);
     }
   }, [isNotificationsOpen]);
 
@@ -198,7 +205,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   const syncNotifications = async () => {
     const role = authSession?.role;
     const canManageSchedules = role === "admin";
-    const canReadAuditorioNotifications = role === "admin" || role === "monitor";
+    const canReadAuditorioNotifications = role === "admin" || role === "monitor" || role === "colaborador";
 
     if (!role) {
       setPendingRequests([]);
@@ -231,7 +238,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   }, [authSession]);
 
   useWebSocketSchedules({
-    enabled: Boolean(authSession && (authSession.role === "admin" || authSession.role === "monitor")),
+    enabled: Boolean(authSession && (authSession.role === "admin" || authSession.role === "monitor" || authSession.role === "colaborador")),
     onScheduleRefresh: () => {
       void syncNotifications();
     },
@@ -247,6 +254,10 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
     }
 
     if (authSession.role === "monitor") {
+      return upcomingAuditorioEvents.length;
+    }
+
+    if (authSession.role === "colaborador") {
       return upcomingAuditorioEvents.length;
     }
 
@@ -406,7 +417,6 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
               onClick={() => setIsMobileMenuOpen(true)}
               className="inline-flex size-10 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-700 lg:hidden dark:bg-slate-800 dark:text-slate-300"
             >
-                          );
               <span className="material-symbols-outlined">menu</span>
             </button>
             <div className="flex min-w-0 shrink items-center gap-2.5">
@@ -438,7 +448,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
               className="relative flex size-10 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-600 transition hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700"
             >
               <span className="material-symbols-outlined">notifications</span>
-              {(authSession.role === "admin" || authSession.role === "monitor") && totalNotifications > 0 ? (
+              {(authSession.role === "admin" || authSession.role === "monitor" || authSession.role === "colaborador") && totalNotifications > 0 ? (
                 <span className="absolute top-1.5 right-1.5 flex min-h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold leading-none text-white">
                   {totalNotifications > 9 ? "9+" : totalNotifications}
                 </span>
@@ -696,6 +706,76 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
                     ) : (
                       <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-4 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
                         Sin notificaciones por ahora. Aquí verás los eventos de auditorio de las próximas horas.
+                      </div>
+                    )}
+                  </div>
+                ) : authSession.role === "colaborador" ? (
+                  <div className="mt-4 space-y-3">
+                    {upcomingAuditorioEvents.length > 0 ? (
+                      upcomingAuditorioEvents.map((event) => {
+                        const notifStatus = getNotificationStatus(event);
+                        const isExpanded = expandedCollaboratorNotificationId === event.id;
+
+                        return (
+                          <button
+                            key={event.id}
+                            type="button"
+                            onClick={() => {
+                              setExpandedCollaboratorNotificationId((current) => (current === event.id ? null : event.id));
+                            }}
+                            className={`w-full rounded-lg border bg-[#295786]/5 px-3 py-3 text-left text-sm text-slate-700 transition dark:text-slate-100 ${
+                              notifStatus === "en_curso"
+                                ? "evento-en-curso border-red-500 dark:border-red-500"
+                                : notifStatus === "proximo_inmediato"
+                                  ? "evento-proximo-inmediato border-amber-600 dark:border-amber-500"
+                                  : "border-[#295786]/20 hover:border-[#295786]/40 hover:bg-[#295786]/10 dark:border-[#295786]/40 dark:bg-[#295786]/20 dark:hover:bg-[#295786]/30"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="text-xs font-semibold text-[#295786] dark:text-slate-200">Evento asignado</p>
+                              <span className="material-symbols-outlined text-sm text-slate-500 dark:text-slate-300">
+                                {isExpanded ? "expand_less" : "expand_more"}
+                              </span>
+                            </div>
+
+                            <p className="mt-1 font-semibold text-slate-900 dark:text-white">{event.nombreEvento}</p>
+                            <p className="text-xs text-slate-600 dark:text-slate-300">{formatDateLong(event.fechaEspecifica)}</p>
+                            <p className="text-xs text-slate-600 dark:text-slate-300">{formatTimeAmPm(event.horaInicio)} - {formatTimeAmPm(event.horaFin)}</p>
+
+                            <div className="mt-2 flex items-center gap-2">
+                              {notifStatus === "en_curso" ? (
+                                <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-700 dark:bg-red-900/30 dark:text-red-300">
+                                  <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-red-500"></span>
+                                  EN CURSO
+                                </span>
+                              ) : notifStatus === "proximo_inmediato" ? (
+                                <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
+                                  <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500"></span>
+                                  INICIA PRONTO
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                                  PROGRAMADO
+                                </span>
+                              )}
+                            </div>
+
+                            {isExpanded ? (
+                              <div className="mt-3 space-y-2 rounded-lg border border-slate-200 bg-white p-3 text-xs dark:border-slate-700 dark:bg-slate-900/60">
+                                <p className="text-slate-700 dark:text-slate-200"><span className="font-semibold">Organiza:</span> {event.organizador}</p>
+                                <p className="text-slate-700 dark:text-slate-200"><span className="font-semibold">Estado:</span> {event.estado}</p>
+                                <p className="text-slate-700 dark:text-slate-200"><span className="font-semibold">Encargados:</span> {(event.assignedWorkers ?? []).map((worker) => worker.nombreCompleto).join(", ") || "No asignado"}</p>
+                                <p className="pt-1 text-[11px] font-medium text-[#295786] dark:text-slate-300">
+                                  Esta es la informacion del evento asignado para ti.
+                                </p>
+                              </div>
+                            ) : null}
+                          </button>
+                        );
+                      })
+                    ) : (
+                      <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-4 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                        Sin notificaciones por ahora. Aqui veras eventos de auditorio que te asignen.
                       </div>
                     )}
                   </div>
