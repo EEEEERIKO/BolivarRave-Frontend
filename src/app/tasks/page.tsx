@@ -856,6 +856,25 @@ export default function TasksPage() {
             ? `Tareas de catalogo creadas correctamente (${createdCount}).`
             : "Tarea de catalogo creada correctamente.",
       });
+
+        // Preparar mensaje con información de la tarea
+        const taskSummary = [
+          `📋 ${nombre}`,
+          `📁 Tipo: ${catalogForm.tipo}`,
+          `📍 Lugar(es): ${selectedCatalogLocations.join(", ")}`,
+          `👥 Cantidad de personal: ${cantidadPersonal}`,
+          `⏱️ Tiempo estimado: ${tiempoEstimadoMin} min`,
+          catalogForm.tipo === "Recurrente"
+            ? `🔄 Recurrencia: ${catalogForm.programacionRecurrente === "programada" ? "Programada" : "Diaria en cualquier momento"}`
+            : `📅 Fecha/Hora: ${catalogForm.fechaEsporadica} ${catalogForm.horaEsporadica}`,
+        ].join("\n");
+
+        setNotice({
+          kind: "success",
+          text: isEditing
+            ? `✅ Tarea actualizada\n\n${taskSummary}`
+            : `✅ Tarea creada\n\n${taskSummary}`,
+        });
       await refresh();
     } catch (error) {
       setNotice({ kind: "error", text: error instanceof Error ? error.message : "No se pudo guardar la tarea de catalogo." });
@@ -1258,8 +1277,8 @@ export default function TasksPage() {
               </div>
             </div>
 
-            <div className="mt-2 grid gap-2 sm:grid-cols-2">
-              <label className="block space-y-0.5 sm:col-span-2">
+            <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-6">
+              <label className="block space-y-0.5 sm:col-span-2 lg:col-span-4">
                 <span className="text-xs font-bold text-slate-500">Nombre</span>
                 <input
                   value={catalogForm.nombre}
@@ -1269,7 +1288,7 @@ export default function TasksPage() {
                 />
               </label>
 
-              <label className="block space-y-0.5">
+              <label className="block space-y-0.5 sm:col-span-2 lg:col-span-2">
                 <span className="text-xs font-bold text-slate-500">Tipo de tarea</span>
                 <select
                   style={selectChevronStyle}
@@ -1294,7 +1313,7 @@ export default function TasksPage() {
               </label>
 
               {editingCatalogId ? (
-                <label className="block space-y-1">
+                <label className="block space-y-1 sm:col-span-2 lg:col-span-6">
                   <span className="text-xs font-bold text-slate-500">Lugar de la tarea</span>
                   <select
                     style={selectChevronStyle}
@@ -1311,7 +1330,7 @@ export default function TasksPage() {
                   </select>
                 </label>
               ) : (
-                <div className="space-y-2 rounded-md border border-[#d9e4ea] bg-[#f3f7fa] px-3 py-2 sm:col-span-2">
+                <div className="space-y-2 rounded-md border border-[#d9e4ea] bg-[#f3f7fa] px-3 py-2 sm:col-span-2 lg:col-span-6">
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-xs font-bold text-slate-500">Lugares de la tarea</span>
                     <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-bold text-slate-500">
@@ -1362,7 +1381,7 @@ export default function TasksPage() {
                 </div>
               )}
 
-              <label className="block space-y-1">
+              <label className="block space-y-1 lg:col-span-2">
                 <span className="text-xs font-bold text-slate-500">Tiempo estimado (min)</span>
                 <input
                   type="number"
@@ -1373,7 +1392,7 @@ export default function TasksPage() {
                 />
               </label>
 
-              <label className="block space-y-1">
+              <label className="block space-y-1 lg:col-span-2">
                 <span className="inline-flex items-center gap-1 text-xs font-bold text-slate-500">
                   Modo de asignación de la tarea
                   <span
@@ -1395,7 +1414,7 @@ export default function TasksPage() {
                 </select>
               </label>
 
-              <label className="block space-y-1">
+              <label className="block space-y-1 lg:col-span-2">
                 <span className="text-xs font-bold text-slate-500">Cantidad de personal</span>
                 <input
                   type="number"
@@ -1407,7 +1426,7 @@ export default function TasksPage() {
                 />
               </label>
 
-              <div className="space-y-2 rounded-md border border-[#d9e4ea] bg-[#f3f7fa] px-3 py-2 sm:col-span-2">
+              <div className="space-y-2 rounded-md border border-[#d9e4ea] bg-[#f3f7fa] px-3 py-2 sm:col-span-2 lg:col-span-6">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-xs font-bold text-slate-500">Habilidades requeridas</span>
                   <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-bold text-slate-500">Filtro de personal</span>
@@ -1438,7 +1457,7 @@ export default function TasksPage() {
                 </div>
               </div>
 
-              <div className="space-y-3 rounded-md border border-[#d9e4ea] bg-[#f3f7fa] px-3 py-2 sm:col-span-2">
+              <div className="space-y-3 rounded-md border border-[#d9e4ea] bg-[#f3f7fa] px-3 py-2 sm:col-span-2 lg:col-span-6">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="inline-flex items-center gap-1 text-sm font-black tracking-[0.08em] text-[#274a83] uppercase">
                     <span className="material-symbols-outlined text-[16px] leading-none">checklist</span>
@@ -1501,7 +1520,7 @@ export default function TasksPage() {
               </div>
 
               {catalogForm.modoAsignacion === "manual" ? (
-                <div className="space-y-2 rounded-md border border-[#d9e4ea] bg-[#f3f7fa] px-3 py-2 sm:col-span-2">
+                <div className="space-y-2 rounded-md border border-[#d9e4ea] bg-[#f3f7fa] px-3 py-2 sm:col-span-2 lg:col-span-6">
                   <span className="text-xs font-bold text-slate-500">Personal sugerido para asignación</span>
                   <div className="grid gap-2 sm:grid-cols-2">
                     {staff
@@ -1536,50 +1555,31 @@ export default function TasksPage() {
               ) : null}
 
               {catalogForm.tipo === "Recurrente" && !catalogForm.programacionRecurrente ? (
-                <div className="rounded-lg border-l-4 border-sky-400 bg-sky-50 p-4 dark:bg-sky-900/20 sm:col-span-2">
-                  <div className="flex items-start gap-3">
-                    <span className="material-symbols-outlined mt-0.5 flex-shrink-0 text-sky-600 dark:text-sky-400">info</span>
-                    <div className="flex-1">
-                      <p className="text-sm font-semibold text-sky-900 dark:text-sky-200">
-                        Selecciona el tipo de recurrencia
-                      </p>
-                      <p className="mt-2 text-xs text-sky-800 dark:text-sky-300">
-                        Define cómo se ejecutará esta tarea recurrente. Puedes elegir entre dos opciones:
-                      </p>
-                      <div className="mt-3 space-y-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setCatalogForm((current) => ({ ...current, programacionRecurrente: "programada" }));
-                            setShowRecurrenceAlertModal(false);
-                          }}
-                          className="w-full rounded-md bg-sky-100 px-3 py-2.5 text-left text-xs font-semibold text-sky-900 transition hover:bg-sky-200 dark:bg-sky-800 dark:text-sky-100 dark:hover:bg-sky-700"
-                        >
-                          <span className="block font-bold">Programada por días y hora</span>
-                          <span className="block text-[10px] font-normal opacity-90">
-                            Ejecutar en días específicos (ej: lunes y miércoles) a una hora definida
-                          </span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setCatalogForm((current) => ({ ...current, programacionRecurrente: "diaria_libre" }));
-                            setShowRecurrenceAlertModal(false);
-                          }}
-                          className="w-full rounded-md bg-sky-100 px-3 py-2.5 text-left text-xs font-semibold text-sky-900 transition hover:bg-sky-200 dark:bg-sky-800 dark:text-sky-100 dark:hover:bg-sky-700"
-                        >
-                          <span className="block font-bold">Diaria en cualquier momento</span>
-                          <span className="block text-[10px] font-normal opacity-90">
-                            Ejecutar todos los días sin requerir una hora específica
-                          </span>
-                        </button>
-                      </div>
-                    </div>
-                  </div>
+                <div className="space-y-2 sm:col-span-2 lg:col-span-6">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCatalogForm((current) => ({ ...current, programacionRecurrente: "programada" }));
+                      setShowRecurrenceAlertModal(false);
+                    }}
+                    className="w-full rounded-md bg-sky-100 px-3 py-2.5 text-left text-xs font-semibold text-sky-900 transition hover:bg-sky-200 dark:bg-sky-800 dark:text-sky-100 dark:hover:bg-sky-700"
+                  >
+                    Programada por días y hora
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCatalogForm((current) => ({ ...current, programacionRecurrente: "diaria_libre" }));
+                      setShowRecurrenceAlertModal(false);
+                    }}
+                    className="w-full rounded-md bg-sky-100 px-3 py-2.5 text-left text-xs font-semibold text-sky-900 transition hover:bg-sky-200 dark:bg-sky-800 dark:text-sky-100 dark:hover:bg-sky-700"
+                  >
+                    Diaria en cualquier momento
+                  </button>
                 </div>
               ) : catalogForm.tipo === "Recurrente" ? (
                 <>
-                  <div className="space-y-2 rounded-md border border-[#d9e4ea] bg-[#f3f7fa] px-3 py-2 sm:col-span-2">
+                  <div className="space-y-2 rounded-md border border-[#d9e4ea] bg-[#f3f7fa] px-3 py-2 sm:col-span-2 lg:col-span-6">
                     <span className="text-xs font-bold text-slate-500">Tipo de recurrencia</span>
                     <div className="grid gap-2 sm:grid-cols-2">
                       <label className="flex items-center gap-2 rounded-md bg-white px-2 py-1 text-xs font-semibold text-slate-700">
@@ -1623,7 +1623,7 @@ export default function TasksPage() {
 
                   {catalogForm.programacionRecurrente === "programada" ? (
                     <>
-                  <div className="space-y-2 rounded-md border border-[#d9e4ea] bg-[#f3f7fa] px-3 py-2 sm:col-span-2">
+                  <div className="space-y-2 rounded-md border border-[#d9e4ea] bg-[#f3f7fa] px-3 py-2 sm:col-span-2 lg:col-span-6">
                     <span className="text-xs font-bold text-slate-500">Dias recurrentes</span>
                     <div className="grid grid-cols-4 gap-2 sm:grid-cols-7">
                       {dayLabels.map((label, dayIndex) => (
@@ -1647,7 +1647,7 @@ export default function TasksPage() {
                       ))}
                     </div>
                   </div>
-                  <label className="block space-y-1 sm:col-span-2">
+                  <label className="block max-w-[240px] space-y-1 sm:col-span-2 lg:col-span-2">
                     <span className="text-xs font-bold text-slate-500">Hora recurrente</span>
                     <select
                       value={catalogForm.horaProgramada}
@@ -1666,7 +1666,7 @@ export default function TasksPage() {
                 </>
               ) : catalogForm.tipo === "Esporadica" ? (
                 <>
-                  <label className="block space-y-1">
+                  <label className="block max-w-[240px] space-y-1 lg:col-span-1">
                     <span className="text-xs font-bold text-slate-500">Fecha esporádica</span>
                     <input
                       type="date"
@@ -1675,7 +1675,7 @@ export default function TasksPage() {
                       className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                     />
                   </label>
-                  <label className="block space-y-1">
+                  <label className="block max-w-[220px] space-y-1 lg:col-span-1">
                     <span className="text-xs font-bold text-slate-500">Hora esporádica</span>
                     <input
                       type="time"
@@ -1686,7 +1686,7 @@ export default function TasksPage() {
                     />
                   </label>
 
-                  <div className="space-y-2 rounded-md border border-[#d9e4ea] bg-[#f3f7fa] px-3 py-2 sm:col-span-2">
+                  <div className="space-y-2 rounded-md border border-[#d9e4ea] bg-[#f3f7fa] px-3 py-2 sm:col-span-2 lg:col-span-6">
                     <label className="flex items-center gap-2 text-xs font-semibold text-slate-700">
                       <input
                         type="checkbox"
@@ -1733,7 +1733,7 @@ export default function TasksPage() {
                 </>
               ) : null}
 
-              <div className="flex gap-2 sm:col-span-2">
+              <div className="flex gap-2 sm:col-span-2 lg:col-span-6">
                 <button
                   type="submit"
                   disabled={busyAction === "catalog-create" || busyAction === "catalog-update"}
