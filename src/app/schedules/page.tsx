@@ -119,6 +119,16 @@ type EditEventForm = {
   end: string;
 };
 
+type EditEventModalForm = {
+  faculty: string;
+  code: string;
+  subject: string;
+  teacher: string;
+  startDate: string;
+  endDate: string;
+  slots: ScheduleSlotForm[];
+};
+
 type AvailableRoomResult = {
   room: string;
   capacity: number;
@@ -279,6 +289,16 @@ const getInitialEditEvent = (): EditEventForm => ({
   room: rooms[0],
   start: "08:00",
   end: "10:00",
+});
+
+const getInitialEditEventModal = (): EditEventModalForm => ({
+  faculty: faculties[0],
+  code: "",
+  subject: "",
+  teacher: "",
+  startDate: getColombiaTodayIsoDate(),
+  endDate: getColombiaTodayIsoDate(),
+  slots: [getInitialSlot()],
 });
 
 const weekDays = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"];
@@ -714,6 +734,8 @@ export default function SchedulesPage() {
   const [isCreatingEvent, setIsCreatingEvent] = useState(false);
   const [requestActionState, setRequestActionState] = useState<{ requestId: string; status: "aprobada" | "rechazada" } | null>(null);
   const [isEditMode, setIsEditMode] = useState(false);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [editModalForm, setEditModalForm] = useState<EditEventModalForm>(getInitialEditEventModal);
   const [editError, setEditError] = useState<string | null>(null);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [isDeletingEvent, setIsDeletingEvent] = useState(false);
@@ -1645,6 +1667,7 @@ export default function SchedulesPage() {
 
     const resolvedRoom = resolveRoomFromCatalog(selectedEvent.room, roomCatalog);
 
+    // Mantener el formulario simplificado para backward compatibility
     setEditEvent({
       faculty: selectedEvent.faculty,
       code: selectedEvent.code,
@@ -1657,9 +1680,29 @@ export default function SchedulesPage() {
       start: selectedEvent.start,
       end: selectedEvent.end,
     });
+
+    // Cargar el modal de edición completo con slots
+    setEditModalForm({
+      faculty: selectedEvent.faculty,
+      code: selectedEvent.code,
+      subject: selectedEvent.subject,
+      teacher: selectedEvent.teacher,
+      startDate: selectedEvent.startDate,
+      endDate: selectedEvent.endDate,
+      slots: [
+        {
+          day: selectedEvent.day,
+          room: resolvedRoom,
+          start: selectedEvent.start,
+          end: selectedEvent.end,
+        },
+      ],
+    });
+
     setEditError(null);
     setIsSavingEdit(false);
-    setIsEditMode(true);
+    setIsEditMode(false);
+    setIsEditModalOpen(true);
   };
 
   const saveEditEvent = (event: FormEvent<HTMLFormElement>) => {
@@ -1780,6 +1823,170 @@ export default function SchedulesPage() {
         setIsSavingEdit(false);
       }
     })();
+  };
+
+  const saveEditEventModal = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!selectedEvent) return;
+    if (isSavingEdit) return;
+
+    setEditError(null);
+
+    // Validar que haya al menos un slot
+    if (editModalForm.slots.length === 0) {
+      const message = "Debe haber al menos un horario.";
+      setEditError(message);
+      window.alert(message);
+      return;
+    }
+
+    // Validar todos los slots
+    for (const slot of editModalForm.slots) {
+      if (!slot.day || !slot.room || !slot.start || !slot.end) {
+        const message = "Todos los horarios deben tener día, salón, hora inicio y hora fin.";
+        setEditError(message);
+        window.alert(message);
+        return;
+      }
+
+      const resolvedSlotRoom = resolveRoomFromCatalog(slot.room, roomCatalog);
+      if (!roomCatalog.includes(resolvedSlotRoom)) {
+        const message = `Salón inválido en horario: ${slot.room}`;
+        setEditError(message);
+        window.alert(message);
+        return;
+      }
+
+      const startIndex = startToIndex[slot.start] ?? -1;
+      const endExclusive = endToExclusiveIndex[slot.end] ?? -1;
+      if (startIndex < 0 || endExclusive < 0 || endExclusive <= startIndex) {
+        const message = "Hora fin debe ser mayor que hora inicio en todos los horarios.";
+        setEditError(message);
+        window.alert(message);
+        return;
+      }
+
+      // Validar conflictos
+      const conflict = events.find((existing) => {
+        if (existing.id === selectedEvent.id) return false;
+        if (existing.day !== slot.day || existing.room !== resolvedSlotRoom) return false;
+
+        if (!dateRangesOverlap(editModalForm.startDate, editModalForm.endDate, existing.startDate, existing.endDate)) {
+          return false;
+        }
+
+        const existingStart = startToIndex[existing.start] ?? -1;
+        const existingEnd = endToExclusiveIndex[existing.end] ?? -1;
+        if (existingStart < 0 || existingEnd < 0) return false;
+        return startIndex < existingEnd && existingStart < endExclusive;
+      });
+
+      if (conflict) {
+        const message = `Conflicto detectado: ya existe "${conflict.code} | ${conflict.subject}" en ${resolvedSlotRoom} para ese horario.`;
+        setEditError(message);
+        window.alert(message);
+        return;
+      }
+    }
+
+    const [eventIdFromComposite, slotId] = selectedEvent.id.split(":");
+    const eventId = selectedEvent.classId || eventIdFromComposite;
+
+    if (!eventId || !slotId) {
+      const message = "No se pudo identificar la clase a modificar.";
+      setEditError(message);
+      window.alert(message);
+      return;
+    }
+
+    setIsSavingEdit(true);
+
+    try {
+      // Actualizar el primer slot
+      const firstSlot = editModalForm.slots[0];
+      const resolvedRoom = resolveRoomFromCatalog(firstSlot.room, roomCatalog);
+
+      await fetchApiJson<{ message: string }>(`/api/schedules/events/${eventId}/${slotId}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          faculty: editModalForm.faculty,
+          code: editModalForm.code,
+          subject: editModalForm.subject,
+          teacher: editModalForm.teacher,
+          startDate: editModalForm.startDate,
+          endDate: editModalForm.endDate,
+          day: firstSlot.day,
+          room: resolvedRoom,
+          start: firstSlot.start,
+          end: firstSlot.end,
+        }),
+      });
+
+      // Si hay más slots, crear clases adicionales con los mismos datos
+      for (let i = 1; i < editModalForm.slots.length; i++) {
+        const slot = editModalForm.slots[i];
+        const slotRoom = resolveRoomFromCatalog(slot.room, roomCatalog);
+
+        await fetchApiJson<{ message: string; id?: string }>("/api/schedules/events", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            faculty: editModalForm.faculty,
+            code: editModalForm.code,
+            subject: editModalForm.subject,
+            teacher: editModalForm.teacher,
+            startDate: editModalForm.startDate,
+            endDate: editModalForm.endDate,
+            day: slot.day,
+            room: slotRoom,
+            start: slot.start,
+            end: slot.end,
+          }),
+        });
+      }
+
+      // Recargar eventos
+      const normalizeColor = (value: string): ScheduleEvent["color"] => {
+        if (value === "blue" || value === "emerald" || value === "amber" || value === "violet" || value === "red") {
+          return value;
+        }
+        return "blue";
+      };
+
+      const [eventsBody, roomsBody] = await Promise.all([
+        fetchApiJson<{ events?: ScheduleEvent[] }>("/api/schedules/events", { cache: "no-store" }),
+        fetchApiJson<{ rooms?: string[] }>("/api/schedules/rooms", { cache: "no-store" }),
+      ]);
+
+      const loadedEvents = (eventsBody.events ?? []).map((item) => ({
+        ...item,
+        color: normalizeColor(item.color),
+      }));
+      setEvents(loadedEvents);
+
+      const loadedRooms = normalizeLoadedRooms(
+        (roomsBody.rooms ?? []).filter((room) => typeof room === "string" && room.trim().length > 0)
+      );
+      if (loadedRooms.length > 0) {
+        setRoomCatalog(loadedRooms);
+      }
+
+      setSelectedEventId(null);
+      setEditError(null);
+      setIsSavingEdit(false);
+      setIsEditModalOpen(false);
+      setEditModalForm(getInitialEditEventModal());
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "No se pudo modificar la clase en base de datos";
+      setEditError(message);
+      window.alert(message);
+      setIsSavingEdit(false);
+    }
   };
 
   const deleteSelectedEvent = () => {
@@ -2614,7 +2821,7 @@ export default function SchedulesPage() {
 
       {isCreateOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
-          <form onSubmit={createEvent} aria-busy={isCreatingEvent} className="w-full max-w-2xl rounded-xl bg-white p-5 shadow-2xl">
+          <form onSubmit={createEvent} aria-busy={isCreatingEvent} className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl bg-white p-5 shadow-2xl">
             <h3 className="text-lg font-bold text-slate-900">{isRequestMode ? "Solicitar salón" : "Agregar nueva clase"}</h3>
             <p className="mt-1 text-sm text-slate-500">
               {isRequestMode
@@ -2635,7 +2842,8 @@ export default function SchedulesPage() {
               </div>
             )}
 
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <div className="mt-4 flex-1 min-h-0 overflow-hidden">
+              <div className="grid h-full gap-3 sm:grid-cols-2">
               {!isRequestMode ? (
                 <div className="sm:col-span-2">
                   <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Tipo de reserva</label>
@@ -2696,7 +2904,7 @@ export default function SchedulesPage() {
                 </>
               ) : null}
 
-              <div className="sm:col-span-2 mt-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+              <div className="sm:col-span-2 mt-2 flex min-h-0 flex-col rounded-lg border border-slate-200 bg-slate-50 p-3">
                 <div className="mb-2 flex items-center justify-between">
                   <p className="text-sm font-semibold text-slate-700">Horarios de esta clase</p>
                   {!isRequestMode ? (
@@ -2715,7 +2923,7 @@ export default function SchedulesPage() {
                   ) : null}
                 </div>
 
-                <div className="space-y-3">
+                <div className="max-h-[30vh] space-y-3 overflow-y-auto pr-1">
                   {newEvent.slots.map((slot, index) => (
                     <div key={`new-slot-${index}`} className="rounded-lg border border-slate-200 bg-white p-3">
                       <div className="mb-2 flex items-center justify-between">
@@ -2821,9 +3029,10 @@ export default function SchedulesPage() {
                   ))}
                 </div>
               </div>
+              </div>
             </div>
 
-            <div className="mt-5 flex justify-end gap-2">
+            <div className="mt-5 flex shrink-0 justify-end gap-2 border-t border-slate-100 pt-4">
               <button
                 type="button"
                 disabled={isCreatingEvent}
@@ -2844,6 +3053,242 @@ export default function SchedulesPage() {
                   <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/60 border-t-white" aria-hidden="true" />
                 ) : null}
                 {isCreatingEvent ? "Guardando..." : isRequestMode ? "Enviar solicitud" : "Guardar clase"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {isEditModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+          <form onSubmit={saveEditEventModal} className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl bg-white p-5 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-bold text-slate-900">Editar clase</h3>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsEditModalOpen(false);
+                  setEditModalForm(getInitialEditEventModal());
+                  setEditError(null);
+                }}
+                disabled={isSavingEdit}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-60"
+              >
+                Cerrar
+              </button>
+            </div>
+
+            {isSavingEdit && (
+              <div className="mt-3 flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-700">
+                <span className="h-4 w-4 animate-spin rounded-full border-2 border-blue-300 border-t-blue-700" aria-hidden="true" />
+                Guardando cambios, por favor espera...
+              </div>
+            )}
+
+            {editError && (
+              <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                {editError}
+              </div>
+            )}
+
+            <div className="mt-4 flex-1 min-h-0 overflow-hidden">
+              <div className="grid h-full gap-3 sm:grid-cols-2">
+                <select
+                  required
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                  value={editModalForm.faculty}
+                  onChange={(e) => setEditModalForm((s) => ({ ...s, faculty: e.target.value }))}
+                >
+                  {faculties.map((faculty) => (
+                    <option key={`edit-faculty-${faculty}`} value={faculty}>
+                      {faculty}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  required
+                  placeholder="Código"
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                  value={editModalForm.code}
+                  onChange={(e) => setEditModalForm((s) => ({ ...s, code: e.target.value }))}
+                />
+                <input
+                  required
+                  placeholder="Materia"
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm sm:col-span-2"
+                  value={editModalForm.subject}
+                  onChange={(e) => setEditModalForm((s) => ({ ...s, subject: e.target.value }))}
+                />
+                <input
+                  required
+                  placeholder="Docente"
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm sm:col-span-2"
+                  value={editModalForm.teacher}
+                  onChange={(e) => setEditModalForm((s) => ({ ...s, teacher: e.target.value }))}
+                />
+                <input
+                  required
+                  type="date"
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                  value={editModalForm.startDate}
+                  onChange={(e) => setEditModalForm((s) => ({ ...s, startDate: e.target.value }))}
+                />
+                <input
+                  required
+                  type="date"
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                  value={editModalForm.endDate}
+                  onChange={(e) => setEditModalForm((s) => ({ ...s, endDate: e.target.value }))}
+                />
+
+                <div className="sm:col-span-2 mt-2 flex min-h-0 flex-col rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <div className="mb-2 flex items-center justify-between">
+                    <p className="text-sm font-semibold text-slate-700">Horarios de esta clase</p>
+                    <button
+                      type="button"
+                      className="rounded-md border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-700"
+                      onClick={() =>
+                        setEditModalForm((s) => ({
+                          ...s,
+                          slots: [...s.slots, getInitialSlot()],
+                        }))
+                      }
+                    >
+                      + Agregar horario
+                    </button>
+                  </div>
+
+                  <div className="max-h-[30vh] space-y-3 overflow-y-auto pr-1">
+                    {editModalForm.slots.map((slot, index) => (
+                      <div key={`edit-slot-${index}`} className="rounded-lg border border-slate-200 bg-white p-3">
+                        <div className="mb-2 flex items-center justify-between">
+                          <p className="text-xs font-semibold text-slate-500">Horario {index + 1}</p>
+                          {editModalForm.slots.length > 1 ? (
+                            <button
+                              type="button"
+                              className="rounded-md border border-red-200 px-2 py-1 text-xs font-semibold text-red-700"
+                              onClick={() =>
+                                setEditModalForm((s) => ({
+                                  ...s,
+                                  slots: s.slots.filter((_, slotIndex) => slotIndex !== index),
+                                }))
+                              }
+                            >
+                              Quitar
+                            </button>
+                          ) : null}
+                        </div>
+
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <select
+                            className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                            value={slot.day}
+                            onChange={(e) =>
+                              setEditModalForm((s) => ({
+                                ...s,
+                                slots: s.slots.map((currentSlot, slotIndex) =>
+                                  slotIndex === index ? { ...currentSlot, day: e.target.value } : currentSlot
+                                ),
+                              }))
+                            }
+                          >
+                            <option value="">Selecciona dia</option>
+                            {weekDays.map((day) => (
+                              <option key={`edit-day-${index}-${day}`} value={day}>
+                                {day}
+                              </option>
+                            ))}
+                          </select>
+
+                          <select
+                            className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                            value={slot.room}
+                            onChange={(e) =>
+                              setEditModalForm((s) => ({
+                                ...s,
+                                slots: s.slots.map((currentSlot, slotIndex) =>
+                                  slotIndex === index ? { ...currentSlot, room: e.target.value } : currentSlot
+                                ),
+                              }))
+                            }
+                          >
+                            <option value="">Selecciona salon</option>
+                            {roomCatalog.map((room, roomIndex) => (
+                              <option key={`edit-room-${index}-${roomIndex}`} value={room}>
+                                {room}
+                              </option>
+                            ))}
+                          </select>
+
+                          <select
+                            className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                            value={slot.start}
+                            onChange={(e) =>
+                              setEditModalForm((s) => ({
+                                ...s,
+                                slots: s.slots.map((currentSlot, slotIndex) =>
+                                  slotIndex === index ? { ...currentSlot, start: e.target.value } : currentSlot
+                                ),
+                              }))
+                            }
+                          >
+                            <option value="">Selecciona hora inicio</option>
+                            {slotStarts.map((slotStart) => (
+                              <option key={`edit-slot-start-${index}-${slotStart}`} value={slotStart}>
+                                {toAmPmLabel(slotStart)}
+                              </option>
+                            ))}
+                          </select>
+
+                          <select
+                            className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                            value={slot.end}
+                            onChange={(e) =>
+                              setEditModalForm((s) => ({
+                                ...s,
+                                slots: s.slots.map((currentSlot, slotIndex) =>
+                                  slotIndex === index ? { ...currentSlot, end: e.target.value } : currentSlot
+                                ),
+                              }))
+                            }
+                          >
+                            <option value="">Selecciona hora fin</option>
+                            {slotEnds.map((slotEnd) => (
+                              <option key={`edit-slot-end-${index}-${slotEnd}`} value={slotEnd}>
+                                {toAmPmLabel(slotEnd)}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-5 flex shrink-0 justify-end gap-2 border-t border-slate-100 pt-4">
+              <button
+                type="button"
+                disabled={isSavingEdit}
+                className="rounded-lg border border-slate-200 px-4 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={() => {
+                  setIsEditModalOpen(false);
+                  setEditModalForm(getInitialEditEventModal());
+                  setEditError(null);
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                disabled={isSavingEdit}
+                className="inline-flex items-center gap-2 rounded-lg bg-[#295786] px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                {isSavingEdit ? (
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/60 border-t-white" aria-hidden="true" />
+                ) : null}
+                {isSavingEdit ? "Guardando..." : "Guardar cambios"}
               </button>
             </div>
           </form>

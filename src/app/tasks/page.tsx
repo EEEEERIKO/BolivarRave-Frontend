@@ -168,7 +168,7 @@ type ReviewFormState = {
   observacionesRevision: string;
 };
 
-type TasksSubtab = "gestion" | "tareas-creadas";
+type TasksSubtab = "gestion" | "tareas-creadas" | "habilidades" | "lugares";
 
 const priorityStyles: Record<TaskPriority, string> = {
   Baja: "bg-slate-100 text-slate-600",
@@ -334,6 +334,8 @@ export default function TasksPage() {
     rechazoEstado: "Corregir",
     observacionesRevision: "",
   });
+  const [showRecurrenceAlertModal, setShowRecurrenceAlertModal] = useState(false);
+  const [showCatalogValidationModal, setShowCatalogValidationModal] = useState(false);
 
   const catalogById = useMemo(() => new Map(catalog.map((item) => [item.id, item])), [catalog]);
   const skillById = useMemo(() => new Map(skills.map((item) => [item.id, item])), [skills]);
@@ -347,6 +349,41 @@ export default function TasksPage() {
 
     return [catalogForm.horaProgramada, ...TASK_RECURRENT_TIME_OPTIONS];
   }, [catalogForm.horaProgramada]);
+
+  // Validación de campos faltantes en el catálogo
+  const missingCatalogFields = useMemo(() => {
+    const missing: string[] = [];
+
+    if (!catalogForm.nombre.trim()) missing.push("Nombre de la tarea");
+    if (!catalogForm.tipo) missing.push("Tipo de tarea");
+    if (!catalogForm.modoAsignacion) missing.push("Modo de asignación");
+    if (!editingCatalogId && selectedCatalogLocations.length === 0) missing.push("Lugares de la tarea");
+    if (editingCatalogId && !catalogForm.sector.trim()) missing.push("Lugar de la tarea");
+    if (!catalogForm.tiempoEstimadoMin || Number(catalogForm.tiempoEstimadoMin) < 1) missing.push("Tiempo estimado válido");
+    if (!catalogForm.cantidadPersonal || Number(catalogForm.cantidadPersonal) < 1) missing.push("Cantidad de personal válida");
+
+    if (catalogForm.tipo === "Recurrente") {
+      if (!catalogForm.programacionRecurrente) missing.push("Tipo de recurrencia");
+      if (catalogForm.programacionRecurrente === "programada") {
+        if (catalogForm.diasSemana.length === 0) missing.push("Días de semana para la tarea");
+        if (!catalogForm.horaProgramada) missing.push("Hora programada");
+      }
+    } else if (catalogForm.tipo === "Esporadica") {
+      if (!catalogForm.fechaEsporadica) missing.push("Fecha esporádica");
+      if (!catalogForm.horaEsporadica) missing.push("Hora esporádica");
+      if (catalogForm.requiereFinalizacion) {
+        if (!catalogForm.tareaFinalizacion.trim()) missing.push("Descripción de la tarea de finalización");
+        if (!catalogForm.fechaFinalizacion) missing.push("Fecha de finalización");
+        if (!catalogForm.horaFinalizacion) missing.push("Hora de finalización");
+      }
+    }
+
+    if (catalogForm.modoAsignacion === "manual" && catalogForm.staffAsignadosIds.length === 0) {
+      missing.push("Personal para asignación manual");
+    }
+
+    return missing;
+  }, [catalogForm, selectedCatalogLocations.length, editingCatalogId]);
 
   const eligibleStaffIds = useMemo(() => {
     return new Set(staff.filter((person) => staffMatchesAllSkills(person.id, selectedCatalogSkillIds, staffSkills)).map((person) => person.id));
@@ -364,7 +401,6 @@ export default function TasksPage() {
     [instances],
   );
 
-  const customTaskSpaces = useMemo(() => taskSpaces.filter((space) => space.editable), [taskSpaces]);
   const taskLocationOptions = useMemo(() => {
     const options = new Map<string, { id: string; nombre: string; source: "espacio" | "salon" }>();
 
@@ -688,85 +724,14 @@ export default function TasksPage() {
   const submitCatalog = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
+    if (missingCatalogFields.length > 0) {
+      setShowCatalogValidationModal(true);
+      return;
+    }
+
     const nombre = catalogForm.nombre.trim();
-    if (!nombre) {
-      setNotice({ kind: "error", text: "Escribe un nombre para la tarea de catalogo." });
-      return;
-    }
-
-    if (!catalogForm.tipo) {
-      setNotice({ kind: "error", text: "Selecciona el tipo de tarea (Recurrente o Esporádica)." });
-      return;
-    }
-
-    if (!editingCatalogId && selectedCatalogLocations.length === 0) {
-      setNotice({ kind: "error", text: "Selecciona al menos un lugar." });
-      return;
-    }
-
-    if (editingCatalogId && !catalogForm.sector.trim()) {
-      setNotice({ kind: "error", text: "Selecciona un sector." });
-      return;
-    }
-
-    if (!catalogForm.modoAsignacion) {
-      setNotice({ kind: "error", text: "Selecciona el modo de asignación." });
-      return;
-    }
-
     const tiempoEstimadoMin = Number(catalogForm.tiempoEstimadoMin);
     const cantidadPersonal = Number(catalogForm.cantidadPersonal);
-
-    if (!Number.isFinite(tiempoEstimadoMin) || tiempoEstimadoMin < 1) {
-      setNotice({ kind: "error", text: "El tiempo estimado debe ser mayor a 0." });
-      return;
-    }
-
-    if (!Number.isFinite(cantidadPersonal) || cantidadPersonal < 1) {
-      setNotice({ kind: "error", text: "La cantidad de personal debe ser mayor a 0." });
-      return;
-    }
-
-    if (catalogForm.tipo === "Recurrente" && !catalogForm.programacionRecurrente) {
-      setNotice({ kind: "error", text: "Selecciona el tipo de recurrencia (programada o diaria)." });
-      return;
-    }
-
-    if (catalogForm.tipo === "Recurrente" && catalogForm.programacionRecurrente === "programada" && catalogForm.diasSemana.length === 0) {
-      setNotice({ kind: "error", text: "Selecciona al menos un dia para tareas recurrentes." });
-      return;
-    }
-
-    if (catalogForm.tipo === "Recurrente" && catalogForm.programacionRecurrente === "programada" && !catalogForm.horaProgramada) {
-      setNotice({ kind: "error", text: "Define una hora para la tarea recurrente." });
-      return;
-    }
-
-    if (catalogForm.tipo === "Esporadica" && !catalogForm.fechaEsporadica) {
-      setNotice({ kind: "error", text: "Define una fecha para la tarea esporadica." });
-      return;
-    }
-
-    if (catalogForm.tipo === "Esporadica" && !catalogForm.horaEsporadica) {
-      setNotice({ kind: "error", text: "Define una hora para la tarea esporadica." });
-      return;
-    }
-
-    if (catalogForm.requiereFinalizacion && !catalogForm.tareaFinalizacion.trim()) {
-      setNotice({ kind: "error", text: "Describe la tarea de finalizacion." });
-      return;
-    }
-
-    if (catalogForm.requiereFinalizacion && (!catalogForm.fechaFinalizacion || !catalogForm.horaFinalizacion)) {
-      setNotice({ kind: "error", text: "Completa fecha y hora de finalizacion." });
-      return;
-    }
-
-    if (catalogForm.modoAsignacion === "manual" && catalogForm.staffAsignadosIds.length === 0) {
-      alert("Debes seleccionar al menos un trabajador para asignación manual.");
-      setNotice({ kind: "error", text: "Selecciona al menos un trabajador para asignación manual." });
-      return;
-    }
 
     try {
       const isEditing = Boolean(editingCatalogId);
@@ -891,6 +856,25 @@ export default function TasksPage() {
             ? `Tareas de catalogo creadas correctamente (${createdCount}).`
             : "Tarea de catalogo creada correctamente.",
       });
+
+        // Preparar mensaje con información de la tarea
+        const taskSummary = [
+          `📋 ${nombre}`,
+          `📁 Tipo: ${catalogForm.tipo}`,
+          `📍 Lugar(es): ${selectedCatalogLocations.join(", ")}`,
+          `👥 Cantidad de personal: ${cantidadPersonal}`,
+          `⏱️ Tiempo estimado: ${tiempoEstimadoMin} min`,
+          catalogForm.tipo === "Recurrente"
+            ? `🔄 Recurrencia: ${catalogForm.programacionRecurrente === "programada" ? "Programada" : "Diaria en cualquier momento"}`
+            : `📅 Fecha/Hora: ${catalogForm.fechaEsporadica} ${catalogForm.horaEsporadica}`,
+        ].join("\n");
+
+        setNotice({
+          kind: "success",
+          text: isEditing
+            ? `✅ Tarea actualizada\n\n${taskSummary}`
+            : `✅ Tarea creada\n\n${taskSummary}`,
+        });
       await refresh();
     } catch (error) {
       setNotice({ kind: "error", text: error instanceof Error ? error.message : "No se pudo guardar la tarea de catalogo." });
@@ -1253,6 +1237,28 @@ export default function TasksPage() {
             >
               Tareas Creadas
             </button>
+            <button
+              type="button"
+              onClick={() => setTasksSubtab("habilidades")}
+              className={`rounded-md px-4 py-2 text-[11px] font-bold tracking-[0.18em] uppercase transition ${
+                tasksSubtab === "habilidades"
+                  ? "bg-[#3a5f94] text-white shadow-sm"
+                  : "border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100"
+              }`}
+            >
+              Habilidades
+            </button>
+            <button
+              type="button"
+              onClick={() => setTasksSubtab("lugares")}
+              className={`rounded-md px-4 py-2 text-[11px] font-bold tracking-[0.18em] uppercase transition ${
+                tasksSubtab === "lugares"
+                  ? "bg-[#3a5f94] text-white shadow-sm"
+                  : "border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100"
+              }`}
+            >
+              Lugares
+            </button>
             <span className="ml-auto rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-600">
               {filteredCatalog.length} visibles de {catalog.length}
             </span>
@@ -1260,216 +1266,7 @@ export default function TasksPage() {
         </section>
 
         {tasksSubtab === "gestion" ? (
-        <section className="grid gap-5 xl:grid-cols-[0.9fr_1.2fr_0.9fr]">
-          <div className="space-y-3">
-            <form onSubmit={submitSkill} className="rounded-xl border border-[#d3e4fe] bg-white p-4 shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
-              <div className="flex items-start gap-2">
-                <span className="material-symbols-outlined rounded-2xl bg-[#d5e3ff]/50 p-1.5 text-[#3a5f94] text-xl">psychology</span>
-                <div>
-                  <p className="text-[9px] font-bold tracking-[0.26em] text-slate-500 uppercase">Habilidades</p>
-                  <h2 className="text-base font-black text-slate-900">Matriz</h2>
-                </div>
-              </div>
-              <div className="mt-2 space-y-1.5">
-                <label className="block space-y-1">
-                  <span className="text-xs font-bold text-slate-500">Nombre</span>
-                  <input
-                    value={skillName}
-                    onChange={(event) => setSkillName(event.target.value)}
-                    className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-2 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
-                    placeholder="Electricidad, Limpieza, Soporte, etc."
-                  />
-                </label>
-                <button
-                  type="submit"
-                  disabled={busyAction === "skill-create"}
-                  className="w-full rounded-md bg-[#3a5f94] px-3 py-1.5 text-[10px] font-bold text-white uppercase transition-transform hover:brightness-110 disabled:opacity-60"
-                >
-                  <span className="material-symbols-outlined text-[16px]">add</span>
-                  {busyAction === "skill-create" ? "Guardando..." : "Crear habilidad"}
-                </button>
-              </div>
-            </form>
-
-            <section className="rounded-xl border border-[#d3e4fe] bg-white p-4 shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
-              <div className="flex items-start gap-2">
-                <span className="material-symbols-outlined rounded-2xl bg-[#d5e3ff]/50 p-1.5 text-[#3a5f94] text-xl">list</span>
-                <div>
-                  <p className="text-[10px] font-bold tracking-[0.26em] text-slate-500 uppercase">Listado</p>
-                  <h2 className="mt-1 text-lg font-black text-slate-900">Ver y editar habilidades</h2>
-                </div>
-              </div>
-
-              <div className="mt-5 max-h-48 space-y-2 overflow-y-auto pr-1">
-                {skills.length === 0 ? (
-                  <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
-                    Aun no hay habilidades registradas.
-                  </div>
-                ) : (
-                  skills.map((skill) => (
-                    <div key={skill.id} className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                      <div>
-                        <p className="text-sm font-bold text-slate-900">{skill.nombre}</p>
-                        <p className="text-[11px] text-slate-500">{staffSkills.filter((link) => link.habilidadId === skill.id).length} staff vinculados</p>
-                      </div>
-                      <div className="flex gap-2">
-                        <button
-                          type="button"
-                          onClick={() => beginEditSkill(skill)}
-                          className="rounded-md bg-[#3a5f94] px-3 py-2 text-[11px] font-bold tracking-[0.18em] text-white uppercase transition hover:brightness-110"
-                        >
-                          Editar
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => deleteSkill(skill.id)}
-                          disabled={deletingSkillId === skill.id || busyAction?.startsWith("skill-delete-")}
-                          className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-[11px] font-bold tracking-[0.18em] text-red-600 uppercase transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          {deletingSkillId === skill.id ? "Eliminando..." : "Eliminar"}
-                        </button>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-
-              <form onSubmit={submitSkillEdit} className="mt-5 rounded-2xl border border-slate-200 bg-white p-4">
-                <p className="text-[10px] font-bold tracking-[0.24em] text-slate-500 uppercase">Edición</p>
-                <div className="mt-2 space-y-1.5">
-                  <label className="block space-y-0.5">
-                    <span className="text-xs font-bold text-slate-500">Nombre</span>
-                    <input
-                      value={editingSkillName}
-                      onChange={(event) => setEditingSkillName(event.target.value)}
-                      disabled={!editingSkillId}
-                      className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20 disabled:cursor-not-allowed disabled:opacity-60"
-                      placeholder={editingSkillId ? "Escribe el nuevo nombre" : "Selecciona una habilidad para editar"}
-                    />
-                  </label>
-                  <div className="flex gap-2">
-                    <button
-                      type="submit"
-                      disabled={!editingSkillId || busyAction?.startsWith("skill-edit-")}
-                      className={`${primaryButtonClass} flex-1 justify-center`}
-                    >
-                      <span className="material-symbols-outlined text-[18px]">save</span>
-                      {editingSkillId && busyAction === `skill-edit-${editingSkillId}` ? "Guardando..." : "Guardar cambios"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={cancelEditSkill}
-                      disabled={!editingSkillId}
-                      className="rounded-md border border-slate-200 px-4 py-2 text-[11px] font-bold tracking-[0.18em] text-slate-600 uppercase transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      Cancelar
-                    </button>
-                  </div>
-                </div>
-              </form>
-            </section>
-
-            <section className="rounded-xl border border-[#d3e4fe] bg-white p-4 shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
-              <div className="flex items-start gap-2">
-                <span className="material-symbols-outlined rounded-2xl bg-[#d5e3ff]/50 p-1.5 text-[#3a5f94] text-xl">meeting_room</span>
-                <div>
-                  <p className="text-[10px] font-bold tracking-[0.26em] text-slate-500 uppercase">Espacios</p>
-                  <h2 className="mt-1 text-lg font-black text-slate-900">Lugares de tareas</h2>
-                </div>
-              </div>
-
-              <form onSubmit={submitTaskSpace} className="mt-4 space-y-2">
-                <label className="block space-y-1">
-                  <span className="text-xs font-bold text-slate-500">Nuevo espacio personalizado</span>
-                  <input
-                    value={spaceName}
-                    onChange={(event) => setSpaceName(event.target.value)}
-                    className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
-                    placeholder="Ej: Zona de audio temporal"
-                  />
-                </label>
-                <button
-                  type="submit"
-                  disabled={busyAction === "space-create"}
-                  className="w-full rounded-md bg-[#3a5f94] px-3 py-1.5 text-[10px] font-bold text-white uppercase transition-transform hover:brightness-110 disabled:opacity-60"
-                >
-                  {busyAction === "space-create" ? "Creando..." : "Crear espacio"}
-                </button>
-              </form>
-
-              <div className="mt-4 max-h-48 space-y-2 overflow-y-auto pr-1">
-                {customTaskSpaces.length === 0 ? (
-                  <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
-                    Aun no hay espacios personalizados registrados.
-                  </div>
-                ) : (
-                  customTaskSpaces.map((space) => (
-                    <div key={space.id} className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-bold text-slate-900">{space.nombre}</p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => beginEditTaskSpace(space)}
-                          className="rounded-md bg-[#3a5f94] px-2 py-1 text-[10px] font-bold tracking-[0.14em] text-white uppercase transition hover:brightness-110"
-                        >
-                          Editar
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void deleteTaskSpace(space.id)}
-                          disabled={deletingSpaceId === space.id || busyAction === `space-delete-${space.id}`}
-                          className="rounded-md border border-red-200 bg-red-50 px-2 py-1 text-[10px] font-bold tracking-[0.14em] text-red-600 uppercase transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          {deletingSpaceId === space.id ? "Eliminando..." : "Eliminar"}
-                        </button>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-
-              <form onSubmit={submitTaskSpaceEdit} className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
-                <p className="text-[10px] font-bold tracking-[0.24em] text-slate-500 uppercase">Editar lugar</p>
-                <div className="mt-2 space-y-1.5">
-                  <label className="block space-y-0.5">
-                    <span className="text-xs font-bold text-slate-500">Nombre</span>
-                    <input
-                      value={editingSpaceName}
-                      onChange={(event) => setEditingSpaceName(event.target.value)}
-                      disabled={!editingSpaceId}
-                      className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20 disabled:cursor-not-allowed disabled:opacity-60"
-                      placeholder={editingSpaceId ? "Escribe el nuevo nombre" : "Selecciona un lugar para editar"}
-                    />
-                  </label>
-                  <div className="flex gap-2">
-                    <button
-                      type="submit"
-                      disabled={!editingSpaceId || busyAction?.startsWith("space-edit-")}
-                      className={`${primaryButtonClass} flex-1 justify-center`}
-                    >
-                      <span className="material-symbols-outlined text-[18px]">save</span>
-                      {editingSpaceId && busyAction === `space-edit-${editingSpaceId}` ? "Guardando..." : "Guardar cambios"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={cancelEditTaskSpace}
-                      disabled={!editingSpaceId}
-                      className="rounded-md border border-slate-200 px-4 py-2 text-[11px] font-bold tracking-[0.18em] text-slate-600 uppercase transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      Cancelar
-                    </button>
-                  </div>
-                </div>
-              </form>
-
-              <p className="mt-3 text-[11px] text-slate-500">
-                Solo se muestran los espacios personalizados creados desde Tasks.
-              </p>
-            </section>
-
-          </div>
+        <section className="grid gap-5">
 
             <form onSubmit={submitCatalog} className="rounded-xl border border-[#d5e3ff] bg-white p-4 shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
             <div className="flex items-start gap-2">
@@ -1480,8 +1277,8 @@ export default function TasksPage() {
               </div>
             </div>
 
-            <div className="mt-2 grid gap-2 sm:grid-cols-2">
-              <label className="block space-y-0.5 sm:col-span-2">
+            <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-6">
+              <label className="block space-y-0.5 sm:col-span-2 lg:col-span-4">
                 <span className="text-xs font-bold text-slate-500">Nombre</span>
                 <input
                   value={catalogForm.nombre}
@@ -1491,7 +1288,7 @@ export default function TasksPage() {
                 />
               </label>
 
-              <label className="block space-y-0.5">
+              <label className="block space-y-0.5 sm:col-span-2 lg:col-span-2">
                 <span className="text-xs font-bold text-slate-500">Tipo de tarea</span>
                 <select
                   style={selectChevronStyle}
@@ -1516,7 +1313,7 @@ export default function TasksPage() {
               </label>
 
               {editingCatalogId ? (
-                <label className="block space-y-1">
+                <label className="block space-y-1 sm:col-span-2 lg:col-span-6">
                   <span className="text-xs font-bold text-slate-500">Lugar de la tarea</span>
                   <select
                     style={selectChevronStyle}
@@ -1533,7 +1330,7 @@ export default function TasksPage() {
                   </select>
                 </label>
               ) : (
-                <div className="space-y-2 rounded-md border border-[#d9e4ea] bg-[#f3f7fa] px-3 py-2 sm:col-span-2">
+                <div className="space-y-2 rounded-md border border-[#d9e4ea] bg-[#f3f7fa] px-3 py-2 sm:col-span-2 lg:col-span-6">
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-xs font-bold text-slate-500">Lugares de la tarea</span>
                     <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-bold text-slate-500">
@@ -1584,7 +1381,7 @@ export default function TasksPage() {
                 </div>
               )}
 
-              <label className="block space-y-1">
+              <label className="block space-y-1 lg:col-span-2">
                 <span className="text-xs font-bold text-slate-500">Tiempo estimado (min)</span>
                 <input
                   type="number"
@@ -1595,7 +1392,7 @@ export default function TasksPage() {
                 />
               </label>
 
-              <label className="block space-y-1">
+              <label className="block space-y-1 lg:col-span-2">
                 <span className="inline-flex items-center gap-1 text-xs font-bold text-slate-500">
                   Modo de asignación de la tarea
                   <span
@@ -1617,7 +1414,7 @@ export default function TasksPage() {
                 </select>
               </label>
 
-              <label className="block space-y-1">
+              <label className="block space-y-1 lg:col-span-2">
                 <span className="text-xs font-bold text-slate-500">Cantidad de personal</span>
                 <input
                   type="number"
@@ -1629,7 +1426,7 @@ export default function TasksPage() {
                 />
               </label>
 
-              <div className="space-y-2 rounded-md border border-[#d9e4ea] bg-[#f3f7fa] px-3 py-2 sm:col-span-2">
+              <div className="space-y-2 rounded-md border border-[#d9e4ea] bg-[#f3f7fa] px-3 py-2 sm:col-span-2 lg:col-span-6">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-xs font-bold text-slate-500">Habilidades requeridas</span>
                   <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-bold text-slate-500">Filtro de personal</span>
@@ -1660,7 +1457,7 @@ export default function TasksPage() {
                 </div>
               </div>
 
-              <div className="space-y-3 rounded-md border border-[#d9e4ea] bg-[#f3f7fa] px-3 py-2 sm:col-span-2">
+              <div className="space-y-3 rounded-md border border-[#d9e4ea] bg-[#f3f7fa] px-3 py-2 sm:col-span-2 lg:col-span-6">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="inline-flex items-center gap-1 text-sm font-black tracking-[0.08em] text-[#274a83] uppercase">
                     <span className="material-symbols-outlined text-[16px] leading-none">checklist</span>
@@ -1723,7 +1520,7 @@ export default function TasksPage() {
               </div>
 
               {catalogForm.modoAsignacion === "manual" ? (
-                <div className="space-y-2 rounded-md border border-[#d9e4ea] bg-[#f3f7fa] px-3 py-2 sm:col-span-2">
+                <div className="space-y-2 rounded-md border border-[#d9e4ea] bg-[#f3f7fa] px-3 py-2 sm:col-span-2 lg:col-span-6">
                   <span className="text-xs font-bold text-slate-500">Personal sugerido para asignación</span>
                   <div className="grid gap-2 sm:grid-cols-2">
                     {staff
@@ -1757,9 +1554,32 @@ export default function TasksPage() {
                 </div>
               ) : null}
 
-              {catalogForm.tipo === "Recurrente" ? (
+              {catalogForm.tipo === "Recurrente" && !catalogForm.programacionRecurrente ? (
+                <div className="space-y-2 sm:col-span-2 lg:col-span-6">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCatalogForm((current) => ({ ...current, programacionRecurrente: "programada" }));
+                      setShowRecurrenceAlertModal(false);
+                    }}
+                    className="w-full rounded-md bg-sky-100 px-3 py-2.5 text-left text-xs font-semibold text-sky-900 transition hover:bg-sky-200 dark:bg-sky-800 dark:text-sky-100 dark:hover:bg-sky-700"
+                  >
+                    Programada por días y hora
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCatalogForm((current) => ({ ...current, programacionRecurrente: "diaria_libre" }));
+                      setShowRecurrenceAlertModal(false);
+                    }}
+                    className="w-full rounded-md bg-sky-100 px-3 py-2.5 text-left text-xs font-semibold text-sky-900 transition hover:bg-sky-200 dark:bg-sky-800 dark:text-sky-100 dark:hover:bg-sky-700"
+                  >
+                    Diaria en cualquier momento
+                  </button>
+                </div>
+              ) : catalogForm.tipo === "Recurrente" ? (
                 <>
-                  <div className="space-y-2 rounded-md border border-[#d9e4ea] bg-[#f3f7fa] px-3 py-2 sm:col-span-2">
+                  <div className="space-y-2 rounded-md border border-[#d9e4ea] bg-[#f3f7fa] px-3 py-2 sm:col-span-2 lg:col-span-6">
                     <span className="text-xs font-bold text-slate-500">Tipo de recurrencia</span>
                     <div className="grid gap-2 sm:grid-cols-2">
                       <label className="flex items-center gap-2 rounded-md bg-white px-2 py-1 text-xs font-semibold text-slate-700">
@@ -1799,14 +1619,11 @@ export default function TasksPage() {
                         </span>
                       </label>
                     </div>
-                    {!catalogForm.programacionRecurrente ? (
-                      <p className="text-[11px] text-amber-700">Aún no seleccionado.</p>
-                    ) : null}
                   </div>
 
                   {catalogForm.programacionRecurrente === "programada" ? (
                     <>
-                  <div className="space-y-2 rounded-md border border-[#d9e4ea] bg-[#f3f7fa] px-3 py-2 sm:col-span-2">
+                  <div className="space-y-2 rounded-md border border-[#d9e4ea] bg-[#f3f7fa] px-3 py-2 sm:col-span-2 lg:col-span-6">
                     <span className="text-xs font-bold text-slate-500">Dias recurrentes</span>
                     <div className="grid grid-cols-4 gap-2 sm:grid-cols-7">
                       {dayLabels.map((label, dayIndex) => (
@@ -1830,7 +1647,7 @@ export default function TasksPage() {
                       ))}
                     </div>
                   </div>
-                  <label className="block space-y-1 sm:col-span-2">
+                  <label className="block max-w-[240px] space-y-1 sm:col-span-2 lg:col-span-2">
                     <span className="text-xs font-bold text-slate-500">Hora recurrente</span>
                     <select
                       value={catalogForm.horaProgramada}
@@ -1849,7 +1666,7 @@ export default function TasksPage() {
                 </>
               ) : catalogForm.tipo === "Esporadica" ? (
                 <>
-                  <label className="block space-y-1">
+                  <label className="block max-w-[240px] space-y-1 lg:col-span-1">
                     <span className="text-xs font-bold text-slate-500">Fecha esporádica</span>
                     <input
                       type="date"
@@ -1858,7 +1675,7 @@ export default function TasksPage() {
                       className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
                     />
                   </label>
-                  <label className="block space-y-1">
+                  <label className="block max-w-[220px] space-y-1 lg:col-span-1">
                     <span className="text-xs font-bold text-slate-500">Hora esporádica</span>
                     <input
                       type="time"
@@ -1869,7 +1686,7 @@ export default function TasksPage() {
                     />
                   </label>
 
-                  <div className="space-y-2 rounded-md border border-[#d9e4ea] bg-[#f3f7fa] px-3 py-2 sm:col-span-2">
+                  <div className="space-y-2 rounded-md border border-[#d9e4ea] bg-[#f3f7fa] px-3 py-2 sm:col-span-2 lg:col-span-6">
                     <label className="flex items-center gap-2 text-xs font-semibold text-slate-700">
                       <input
                         type="checkbox"
@@ -1916,7 +1733,7 @@ export default function TasksPage() {
                 </>
               ) : null}
 
-              <div className="flex gap-2 sm:col-span-2">
+              <div className="flex gap-2 sm:col-span-2 lg:col-span-6">
                 <button
                   type="submit"
                   disabled={busyAction === "catalog-create" || busyAction === "catalog-update"}
@@ -1943,6 +1760,44 @@ export default function TasksPage() {
               </div>
             </div>
           </form>
+
+          {showCatalogValidationModal ? (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 px-4 py-6 backdrop-blur-sm">
+              <div className="w-full max-w-lg rounded-2xl border border-amber-200 bg-white p-5 shadow-[0_20px_60px_rgba(15,23,42,0.25)]">
+                <div className="flex items-start gap-3">
+                  <span className="material-symbols-outlined rounded-xl bg-amber-100 p-2 text-amber-700">warning</span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[10px] font-black tracking-[0.26em] text-amber-600 uppercase">Validación requerida</p>
+                    <h3 className="mt-1 text-lg font-black text-slate-900">Faltan campos por completar</h3>
+                    <p className="mt-1 text-sm text-slate-600">
+                      Antes de crear el catálogo revisa estos campos:
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-4 rounded-xl bg-amber-50 p-4">
+                  <ul className="space-y-2">
+                    {missingCatalogFields.map((field) => (
+                      <li key={field} className="flex items-start gap-2 text-sm text-amber-900">
+                        <span className="mt-1 text-amber-600">•</span>
+                        <span>{field}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+
+                <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setShowCatalogValidationModal(false)}
+                    className="rounded-md border border-slate-200 px-4 py-2 text-[11px] font-bold tracking-[0.18em] text-slate-600 uppercase transition hover:bg-slate-50"
+                  >
+                    Entendido
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
         </section>
         ) : null}
 
@@ -2045,6 +1900,215 @@ export default function TasksPage() {
             </div>
           </form>
           </div>
+        </section>
+        ) : null}
+
+        {tasksSubtab === "habilidades" ? (
+        <section className="grid gap-4 xl:grid-cols-2">
+          <form onSubmit={submitSkill} className="rounded-xl border border-[#d3e4fe] bg-white p-4 shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
+            <div className="flex items-start gap-2">
+              <span className="material-symbols-outlined rounded-2xl bg-[#d5e3ff]/50 p-1.5 text-[#3a5f94] text-xl">psychology</span>
+              <div>
+                <p className="text-[9px] font-bold tracking-[0.26em] text-slate-500 uppercase">Habilidades</p>
+                <h2 className="text-base font-black text-slate-900">Matriz</h2>
+              </div>
+            </div>
+            <div className="mt-2 space-y-1.5">
+              <label className="block space-y-1">
+                <span className="text-xs font-bold text-slate-500">Nombre</span>
+                <input
+                  value={skillName}
+                  onChange={(event) => setSkillName(event.target.value)}
+                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-2 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
+                />
+              </label>
+              <button
+                type="submit"
+                disabled={busyAction === "skill-create"}
+                className="w-full rounded-md bg-[#3a5f94] px-3 py-1.5 text-[10px] font-bold text-white uppercase transition-transform hover:brightness-110 disabled:opacity-60"
+              >
+                <span className="material-symbols-outlined text-[16px]">add</span>
+                {busyAction === "skill-create" ? "Guardando..." : "Crear habilidad"}
+              </button>
+            </div>
+          </form>
+
+          <section className="rounded-xl border border-[#d3e4fe] bg-white p-4 shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
+            <div className="flex items-start gap-2">
+              <span className="material-symbols-outlined rounded-2xl bg-[#d5e3ff]/50 p-1.5 text-[#3a5f94] text-xl">list</span>
+              <div>
+                <p className="text-[10px] font-bold tracking-[0.26em] text-slate-500 uppercase">Listado</p>
+                <h2 className="mt-1 text-lg font-black text-slate-900">Ver y editar habilidades</h2>
+              </div>
+            </div>
+
+            <div className="mt-5 max-h-64 space-y-2 overflow-y-auto pr-1">
+              {skills.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+                  Aun no hay habilidades registradas.
+                </div>
+              ) : (
+                skills.map((skill) => (
+                  <div key={skill.id} className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                    <div>
+                      <p className="text-sm font-bold text-slate-900">{skill.nombre}</p>
+                      <p className="text-[11px] text-slate-500">{staffSkills.filter((link) => link.habilidadId === skill.id).length} staff vinculados</p>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => beginEditSkill(skill)}
+                        className="rounded-md bg-[#3a5f94] px-3 py-2 text-[11px] font-bold tracking-[0.18em] text-white uppercase transition hover:brightness-110"
+                      >
+                        Editar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => deleteSkill(skill.id)}
+                        disabled={deletingSkillId === skill.id || busyAction?.startsWith("skill-delete-")}
+                        className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-[11px] font-bold tracking-[0.18em] text-red-600 uppercase transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {deletingSkillId === skill.id ? "Eliminando..." : "Eliminar"}
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <form onSubmit={submitSkillEdit} className="mt-5 rounded-2xl border border-slate-200 bg-white p-4">
+              <p className="text-[10px] font-bold tracking-[0.24em] text-slate-500 uppercase">Edición</p>
+              <div className="mt-2 space-y-1.5">
+                <label className="block space-y-0.5">
+                  <span className="text-xs font-bold text-slate-500">Nombre</span>
+                  <input
+                    value={editingSkillName}
+                    onChange={(event) => setEditingSkillName(event.target.value)}
+                    disabled={!editingSkillId}
+                    className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20 disabled:cursor-not-allowed disabled:opacity-60"
+                    placeholder={editingSkillId ? "Escribe el nuevo nombre" : "Selecciona una habilidad para editar"}
+                  />
+                </label>
+                <div className="flex gap-2">
+                  <button
+                    type="submit"
+                    disabled={!editingSkillId || busyAction?.startsWith("skill-edit-")}
+                    className={`${primaryButtonClass} flex-1 justify-center`}
+                  >
+                    <span className="material-symbols-outlined text-[18px]">save</span>
+                    {editingSkillId && busyAction === `skill-edit-${editingSkillId}` ? "Guardando..." : "Guardar cambios"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={cancelEditSkill}
+                    disabled={!editingSkillId}
+                    className="rounded-md border border-slate-200 px-4 py-2 text-[11px] font-bold tracking-[0.18em] text-slate-600 uppercase transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            </form>
+          </section>
+        </section>
+        ) : null}
+
+        {tasksSubtab === "lugares" ? (
+        <section>
+          <section className="rounded-xl border border-[#d3e4fe] bg-white p-4 shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
+            <div className="flex items-start gap-2">
+              <span className="material-symbols-outlined rounded-2xl bg-[#d5e3ff]/50 p-1.5 text-[#3a5f94] text-xl">meeting_room</span>
+              <div>
+                <p className="text-[10px] font-bold tracking-[0.26em] text-slate-500 uppercase">Espacios</p>
+                <h2 className="mt-1 text-lg font-black text-slate-900">Lugares de tareas</h2>
+              </div>
+            </div>
+
+            <form onSubmit={submitTaskSpace} className="mt-4 space-y-2">
+              <label className="block space-y-1">
+                <span className="text-xs font-bold text-slate-500">Nuevo espacio personalizado</span>
+                <input
+                  value={spaceName}
+                  onChange={(event) => setSpaceName(event.target.value)}
+                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
+                />
+              </label>
+              <button
+                type="submit"
+                disabled={busyAction === "space-create"}
+                className="w-full rounded-md bg-[#3a5f94] px-3 py-1.5 text-[10px] font-bold text-white uppercase transition-transform hover:brightness-110 disabled:opacity-60"
+              >
+                {busyAction === "space-create" ? "Creando..." : "Crear espacio"}
+              </button>
+            </form>
+
+            <div className="mt-4 max-h-72 space-y-2 overflow-y-auto pr-1">
+              {taskSpaces.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+                  Aun no hay lugares registrados.
+                </div>
+              ) : (
+                taskSpaces.map((space) => (
+                  <div key={space.id} className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-bold text-slate-900">{space.nombre}</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => beginEditTaskSpace(space)}
+                        className="rounded-md bg-[#3a5f94] px-2 py-1 text-[10px] font-bold tracking-[0.14em] text-white uppercase transition hover:brightness-110"
+                      >
+                        Editar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void deleteTaskSpace(space.id)}
+                        disabled={deletingSpaceId === space.id || busyAction === `space-delete-${space.id}`}
+                        className="rounded-md border border-red-200 bg-red-50 px-2 py-1 text-[10px] font-bold tracking-[0.14em] text-red-600 uppercase transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {deletingSpaceId === space.id ? "Eliminando..." : "Eliminar"}
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <form onSubmit={submitTaskSpaceEdit} className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
+              <p className="text-[10px] font-bold tracking-[0.24em] text-slate-500 uppercase">Editar lugar</p>
+              <div className="mt-2 space-y-1.5">
+                <label className="block space-y-0.5">
+                  <span className="text-xs font-bold text-slate-500">Nombre</span>
+                  <input
+                    value={editingSpaceName}
+                    onChange={(event) => setEditingSpaceName(event.target.value)}
+                    disabled={!editingSpaceId}
+                    className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20 disabled:cursor-not-allowed disabled:opacity-60"
+                    placeholder={editingSpaceId ? "Escribe el nuevo nombre" : "Selecciona un lugar para editar"}
+                  />
+                </label>
+                <div className="flex gap-2">
+                  <button
+                    type="submit"
+                    disabled={!editingSpaceId || busyAction?.startsWith("space-edit-")}
+                    className={`${primaryButtonClass} flex-1 justify-center`}
+                  >
+                    <span className="material-symbols-outlined text-[18px]">save</span>
+                    {editingSpaceId && busyAction === `space-edit-${editingSpaceId}` ? "Guardando..." : "Guardar cambios"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={cancelEditTaskSpace}
+                    disabled={!editingSpaceId}
+                    className="rounded-md border border-slate-200 px-4 py-2 text-[11px] font-bold tracking-[0.18em] text-slate-600 uppercase transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            </form>
+          </section>
         </section>
         ) : null}
 
