@@ -8,7 +8,7 @@ export default function LugaresPage() {
   const [authSession, setAuthSession] = useState<AuthSession | null>(null);
 
   useEffect(() => {
-    readAuthSession().then(setAuthSession);
+    setAuthSession(readAuthSession());
   }, []);
 
   if (!authSession) {
