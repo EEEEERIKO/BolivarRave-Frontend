@@ -168,6 +168,8 @@ type ReviewFormState = {
   observacionesRevision: string;
 };
 
+type TasksSubtab = "gestion" | "tareas-creadas";
+
 const priorityStyles: Record<TaskPriority, string> = {
   Baja: "bg-slate-100 text-slate-600",
   Media: "bg-amber-100 text-amber-700",
@@ -272,6 +274,9 @@ export default function TasksPage() {
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [notice, setNotice] = useState<NoticeState>(null);
   const [spaceName, setSpaceName] = useState("");
+  const [editingSpaceId, setEditingSpaceId] = useState<string | null>(null);
+  const [editingSpaceName, setEditingSpaceName] = useState("");
+  const [deletingSpaceId, setDeletingSpaceId] = useState<string | null>(null);
 
   const [skillName, setSkillName] = useState("");
   const [editingSkillId, setEditingSkillId] = useState<string | null>(null);
@@ -280,6 +285,11 @@ export default function TasksPage() {
   const [editingCatalogId, setEditingCatalogId] = useState<string | null>(null);
   const [deletingCatalogId, setDeletingCatalogId] = useState<string | null>(null);
   const [requirementDraft, setRequirementDraft] = useState("");
+  const [selectedCatalogLocations, setSelectedCatalogLocations] = useState<string[]>([]);
+  const [tasksSubtab, setTasksSubtab] = useState<TasksSubtab>("gestion");
+  const [catalogSearchQuery, setCatalogSearchQuery] = useState("");
+  const [catalogTypeFilter, setCatalogTypeFilter] = useState<TaskType | "todos">("todos");
+  const [catalogSectorFilter, setCatalogSectorFilter] = useState("todos");
   const [catalogForm, setCatalogForm] = useState<CatalogFormState>({
     nombre: "",
     tipo: "",
@@ -355,10 +365,40 @@ export default function TasksPage() {
   );
 
   const customTaskSpaces = useMemo(() => taskSpaces.filter((space) => space.editable), [taskSpaces]);
-  const selectedTaskSpace = useMemo(
-    () => taskSpaces.find((space) => space.nombre === catalogForm.sector),
-    [catalogForm.sector, taskSpaces],
-  );
+  const taskLocationOptions = useMemo(() => {
+    const options = new Map<string, { id: string; nombre: string; source: "espacio" | "salon" }>();
+
+    taskSpaces.forEach((space) => {
+      const normalizedKey = space.nombre.trim().toLowerCase();
+      if (!normalizedKey) return;
+      options.set(normalizedKey, {
+        id: `space-${space.id}`,
+        nombre: space.nombre,
+        source: "espacio",
+      });
+    });
+
+    rooms.forEach((room) => {
+      const roomName = roomLabel(room);
+      const normalizedKey = roomName.trim().toLowerCase();
+      if (!normalizedKey || options.has(normalizedKey)) return;
+      options.set(normalizedKey, {
+        id: `room-${room.id}`,
+        nombre: roomName,
+        source: "salon",
+      });
+    });
+
+    return Array.from(options.values()).sort((a, b) => a.nombre.localeCompare(b.nombre, "es"));
+  }, [taskSpaces, rooms]);
+
+  const toggleCatalogLocation = (locationName: string) => {
+    setSelectedCatalogLocations((current) =>
+      current.includes(locationName)
+        ? current.filter((item) => item !== locationName)
+        : [...current, locationName],
+    );
+  };
 
   const addCustomRequirement = () => {
     const normalizedName = requirementDraft.trim();
@@ -388,6 +428,25 @@ export default function TasksPage() {
   );
   const activeInstances = useMemo(() => instances.filter((task) => task.estado === "En Progreso"), [instances]);
   const completedInstances = useMemo(() => instances.filter((task) => task.estado === "Completada"), [instances]);
+  const catalogSectorOptions = useMemo(
+    () => Array.from(new Set(catalog.map((task) => task.sector).filter((sector) => sector.trim().length > 0))).sort((a, b) => a.localeCompare(b, "es")),
+    [catalog],
+  );
+  const filteredCatalog = useMemo(() => {
+    const normalizedQuery = catalogSearchQuery.trim().toLowerCase();
+
+    return catalog.filter((task) => {
+      const matchesQuery =
+        normalizedQuery.length === 0 ||
+        task.nombre.toLowerCase().includes(normalizedQuery) ||
+        task.id.toLowerCase().includes(normalizedQuery) ||
+        task.sector.toLowerCase().includes(normalizedQuery);
+      const matchesType = catalogTypeFilter === "todos" || task.tipo === catalogTypeFilter;
+      const matchesSector = catalogSectorFilter === "todos" || task.sector === catalogSectorFilter;
+
+      return matchesQuery && matchesType && matchesSector;
+    });
+  }, [catalog, catalogSearchQuery, catalogTypeFilter, catalogSectorFilter]);
 
   const loadData = async (options?: { preserveNotice?: boolean }) => {
     const preserveNotice = options?.preserveNotice ?? false;
@@ -493,6 +552,72 @@ export default function TasksPage() {
     }
   };
 
+  const beginEditTaskSpace = (space: TaskSpaceItem) => {
+    setEditingSpaceId(space.id);
+    setEditingSpaceName(space.nombre);
+    setNotice(null);
+  };
+
+  const cancelEditTaskSpace = () => {
+    setEditingSpaceId(null);
+    setEditingSpaceName("");
+  };
+
+  const submitTaskSpaceEdit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!editingSpaceId) {
+      setNotice({ kind: "error", text: "Selecciona un espacio para editar." });
+      return;
+    }
+
+    const trimmedName = editingSpaceName.trim();
+    if (!trimmedName) {
+      setNotice({ kind: "error", text: "Escribe un nombre para el espacio." });
+      return;
+    }
+
+    try {
+      setBusyAction(`space-edit-${editingSpaceId}`);
+      await fetchApiJson<{ message: string; id: string }>(`/api/tasks/spaces/${editingSpaceId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nombre: trimmedName }),
+      });
+      setNotice({ kind: "success", text: "Espacio actualizado correctamente." });
+      cancelEditTaskSpace();
+      await refresh();
+    } catch (error) {
+      setNotice({ kind: "error", text: error instanceof Error ? error.message : "No se pudo actualizar el espacio." });
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const deleteTaskSpace = async (id: string) => {
+    if (!confirm("¿Estás seguro de que deseas eliminar este espacio de tareas?")) {
+      return;
+    }
+
+    try {
+      setDeletingSpaceId(id);
+      setBusyAction(`space-delete-${id}`);
+      await fetchApiJson<{ message: string; id: string }>(`/api/tasks/spaces/${id}`, {
+        method: "DELETE",
+      });
+      setNotice({ kind: "success", text: "Espacio eliminado correctamente." });
+      if (editingSpaceId === id) {
+        cancelEditTaskSpace();
+      }
+      await refresh();
+    } catch (error) {
+      setNotice({ kind: "error", text: error instanceof Error ? error.message : "No se pudo eliminar el espacio." });
+    } finally {
+      setDeletingSpaceId(null);
+      setBusyAction(null);
+    }
+  };
+
   const beginEditSkill = (skill: SkillItem) => {
     setEditingSkillId(skill.id);
     setEditingSkillName(skill.nombre);
@@ -574,7 +699,12 @@ export default function TasksPage() {
       return;
     }
 
-    if (!catalogForm.sector.trim()) {
+    if (!editingCatalogId && selectedCatalogLocations.length === 0) {
+      setNotice({ kind: "error", text: "Selecciona al menos un lugar." });
+      return;
+    }
+
+    if (editingCatalogId && !catalogForm.sector.trim()) {
       setNotice({ kind: "error", text: "Selecciona un sector." });
       return;
     }
@@ -651,11 +781,12 @@ export default function TasksPage() {
           .map((id) => staff.find((person) => person.id === id))
           .filter((value): value is StaffItem => Boolean(value))
           .map((person) => staffLabel(person));
+        const selectedLocationLabels = editingCatalogId ? [catalogForm.sector] : selectedCatalogLocations;
 
         const resumen = [
           `Nombre: ${nombre}`,
           `Tipo: ${catalogForm.tipo}`,
-          `Sector: ${catalogForm.sector}`,
+          `Lugar(es): ${selectedLocationLabels.join(", ")}`,
           `Modo de asignación: ${assignmentModeLabels[catalogForm.modoAsignacion as AssignmentMode]}`,
           `Cantidad de personal: ${cantidadPersonal}`,
           `Personal sugerido: ${selectedStaff.length ? selectedStaff.join(", ") : "Sin personal predefinido"}`,
@@ -674,10 +805,9 @@ export default function TasksPage() {
         }
       }
 
-      const payload = {
+      const basePayload = {
         nombre,
         tipo: catalogForm.tipo as TaskType,
-        sector: catalogForm.sector.trim(),
         modoAsignacion: catalogForm.modoAsignacion as AssignmentMode,
         programacionRecurrente: catalogForm.programacionRecurrente,
         cantidadPersonal,
@@ -701,14 +831,34 @@ export default function TasksPage() {
         tiempoEstimadoMin,
       };
 
-      await fetchApiJson<{ message: string; id: string }>(
-        isEditing && editingCatalogId ? `/api/tasks/catalog/${editingCatalogId}` : "/api/tasks/catalog",
-        {
-          method: isEditing ? "PUT" : "POST",
+      let createdCount = 1;
+      if (isEditing && editingCatalogId) {
+        await fetchApiJson<{ message: string; id: string }>(`/api/tasks/catalog/${editingCatalogId}`, {
+          method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        },
-      );
+          body: JSON.stringify({
+            ...basePayload,
+            sector: catalogForm.sector.trim(),
+          }),
+        });
+      } else {
+        const sectorsToCreate = Array.from(
+          new Set(selectedCatalogLocations.map((sector) => sector.trim()).filter((sector) => sector.length > 0)),
+        );
+
+        for (const sector of sectorsToCreate) {
+          await fetchApiJson<{ message: string; id?: string; ids?: string[] }>("/api/tasks/catalog", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              ...basePayload,
+              sector,
+            }),
+          });
+        }
+
+        createdCount = sectorsToCreate.length;
+      }
       setCatalogForm((current) => ({
         ...current,
         nombre: "",
@@ -730,9 +880,17 @@ export default function TasksPage() {
         horaFinalizacion: "09:00",
         tiempoEstimadoMin: "25",
       }));
+      setSelectedCatalogLocations([]);
       setRequirementDraft("");
       setEditingCatalogId(null);
-      setNotice({ kind: "success", text: isEditing ? "Tarea de catalogo actualizada correctamente." : "Tarea de catalogo creada correctamente." });
+      setNotice({
+        kind: "success",
+        text: isEditing
+          ? "Tarea de catalogo actualizada correctamente."
+          : createdCount > 1
+            ? `Tareas de catalogo creadas correctamente (${createdCount}).`
+            : "Tarea de catalogo creada correctamente.",
+      });
       await refresh();
     } catch (error) {
       setNotice({ kind: "error", text: error instanceof Error ? error.message : "No se pudo guardar la tarea de catalogo." });
@@ -763,12 +921,14 @@ export default function TasksPage() {
       horaFinalizacion: task.horaFinalizacion ?? "09:00",
       tiempoEstimadoMin: String(task.tiempoEstimadoMin),
     });
+    setSelectedCatalogLocations([task.sector]);
     setRequirementDraft("");
     setNotice(null);
   };
 
   const cancelEditCatalog = () => {
     setEditingCatalogId(null);
+    setSelectedCatalogLocations([]);
     setCatalogForm((current) => ({
       ...current,
       nombre: "",
@@ -1069,6 +1229,37 @@ export default function TasksPage() {
           </div>
         </section>
 
+        <section className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-[0_10px_30px_rgba(42,52,57,0.06)] sm:px-5">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setTasksSubtab("gestion")}
+              className={`rounded-md px-4 py-2 text-[11px] font-bold tracking-[0.18em] uppercase transition ${
+                tasksSubtab === "gestion"
+                  ? "bg-[#3a5f94] text-white shadow-sm"
+                  : "border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100"
+              }`}
+            >
+              Gestión
+            </button>
+            <button
+              type="button"
+              onClick={() => setTasksSubtab("tareas-creadas")}
+              className={`rounded-md px-4 py-2 text-[11px] font-bold tracking-[0.18em] uppercase transition ${
+                tasksSubtab === "tareas-creadas"
+                  ? "bg-[#3a5f94] text-white shadow-sm"
+                  : "border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100"
+              }`}
+            >
+              Tareas Creadas
+            </button>
+            <span className="ml-auto rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-600">
+              {filteredCatalog.length} visibles de {catalog.length}
+            </span>
+          </div>
+        </section>
+
+        {tasksSubtab === "gestion" ? (
         <section className="grid gap-5 xl:grid-cols-[0.9fr_1.2fr_0.9fr]">
           <div className="space-y-3">
             <form onSubmit={submitSkill} className="rounded-xl border border-[#d3e4fe] bg-white p-4 shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
@@ -1214,12 +1405,64 @@ export default function TasksPage() {
                 ) : (
                   customTaskSpaces.map((space) => (
                     <div key={space.id} className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                      <p className="text-sm font-bold text-slate-900">{space.nombre}</p>
-                      <span className="rounded-full bg-emerald-100 px-2 py-1 text-[10px] font-bold text-emerald-700">Personalizado</span>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-bold text-slate-900">{space.nombre}</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => beginEditTaskSpace(space)}
+                          className="rounded-md bg-[#3a5f94] px-2 py-1 text-[10px] font-bold tracking-[0.14em] text-white uppercase transition hover:brightness-110"
+                        >
+                          Editar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void deleteTaskSpace(space.id)}
+                          disabled={deletingSpaceId === space.id || busyAction === `space-delete-${space.id}`}
+                          className="rounded-md border border-red-200 bg-red-50 px-2 py-1 text-[10px] font-bold tracking-[0.14em] text-red-600 uppercase transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {deletingSpaceId === space.id ? "Eliminando..." : "Eliminar"}
+                        </button>
+                      </div>
                     </div>
                   ))
                 )}
               </div>
+
+              <form onSubmit={submitTaskSpaceEdit} className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
+                <p className="text-[10px] font-bold tracking-[0.24em] text-slate-500 uppercase">Editar lugar</p>
+                <div className="mt-2 space-y-1.5">
+                  <label className="block space-y-0.5">
+                    <span className="text-xs font-bold text-slate-500">Nombre</span>
+                    <input
+                      value={editingSpaceName}
+                      onChange={(event) => setEditingSpaceName(event.target.value)}
+                      disabled={!editingSpaceId}
+                      className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20 disabled:cursor-not-allowed disabled:opacity-60"
+                      placeholder={editingSpaceId ? "Escribe el nuevo nombre" : "Selecciona un lugar para editar"}
+                    />
+                  </label>
+                  <div className="flex gap-2">
+                    <button
+                      type="submit"
+                      disabled={!editingSpaceId || busyAction?.startsWith("space-edit-")}
+                      className={`${primaryButtonClass} flex-1 justify-center`}
+                    >
+                      <span className="material-symbols-outlined text-[18px]">save</span>
+                      {editingSpaceId && busyAction === `space-edit-${editingSpaceId}` ? "Guardando..." : "Guardar cambios"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={cancelEditTaskSpace}
+                      disabled={!editingSpaceId}
+                      className="rounded-md border border-slate-200 px-4 py-2 text-[11px] font-bold tracking-[0.18em] text-slate-600 uppercase transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              </form>
 
               <p className="mt-3 text-[11px] text-slate-500">
                 Solo se muestran los espacios personalizados creados desde Tasks.
@@ -1233,7 +1476,7 @@ export default function TasksPage() {
               <span className="material-symbols-outlined rounded-2xl bg-[#d5e3ff]/50 p-1.5 text-[#3a5f94] text-xl">category</span>
               <div>
                 <p className="text-[9px] font-bold tracking-[0.26em] text-slate-500 uppercase">Catálogo</p>
-                <h2 className="text-base font-black text-slate-900">{editingCatalogId ? "Editar" : "Nuevo"}</h2>
+                <h2 className="text-base font-black text-slate-900">{editingCatalogId ? "Editar tarea" : "Crear Tarea"}</h2>
               </div>
             </div>
 
@@ -1272,27 +1515,74 @@ export default function TasksPage() {
                 </select>
               </label>
 
-              <label className="block space-y-1">
-                <span className="text-xs font-bold text-slate-500">Lugar de la tarea</span>
-                <select
-                  style={selectChevronStyle}
-                  value={catalogForm.sector}
-                  onChange={(event) => setCatalogForm((current) => ({ ...current, sector: event.target.value }))}
-                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
-                >
-                  <option value="">Aún no seleccionado</option>
-                  {selectedTaskSpace && !selectedTaskSpace.editable ? (
-                    <option value={selectedTaskSpace.nombre} disabled>
-                      {selectedTaskSpace.nombre} (predefinido)
-                    </option>
-                  ) : null}
-                  {customTaskSpaces.map((space) => (
-                    <option key={space.id} value={space.nombre}>
-                      {space.nombre}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              {editingCatalogId ? (
+                <label className="block space-y-1">
+                  <span className="text-xs font-bold text-slate-500">Lugar de la tarea</span>
+                  <select
+                    style={selectChevronStyle}
+                    value={catalogForm.sector}
+                    onChange={(event) => setCatalogForm((current) => ({ ...current, sector: event.target.value }))}
+                    className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
+                  >
+                    <option value="">Aún no seleccionado</option>
+                    {taskLocationOptions.map((location) => (
+                      <option key={location.id} value={location.nombre}>
+                        {location.nombre}{location.source === "salon" ? " (Salón)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : (
+                <div className="space-y-2 rounded-md border border-[#d9e4ea] bg-[#f3f7fa] px-3 py-2 sm:col-span-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-bold text-slate-500">Lugares de la tarea</span>
+                    <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-bold text-slate-500">
+                      {selectedCatalogLocations.length} seleccionados
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedCatalogLocations(taskLocationOptions.map((location) => location.nombre))}
+                      className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[10px] font-bold tracking-[0.14em] text-slate-600 uppercase transition hover:bg-slate-50"
+                    >
+                      Seleccionar todos
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedCatalogLocations([])}
+                      className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[10px] font-bold tracking-[0.14em] text-slate-600 uppercase transition hover:bg-slate-50"
+                    >
+                      Limpiar
+                    </button>
+                  </div>
+                  <div className="max-h-44 overflow-y-auto pr-1">
+                    {taskLocationOptions.length === 0 ? (
+                      <p className="text-[11px] text-slate-500">No hay lugares disponibles para seleccionar.</p>
+                    ) : (
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        {taskLocationOptions.map((location) => {
+                          const checked = selectedCatalogLocations.includes(location.nombre);
+                          return (
+                            <label key={location.id} className="flex items-center gap-2 rounded-md bg-white px-2 py-1 text-xs font-semibold text-slate-700">
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => toggleCatalogLocation(location.nombre)}
+                                className="h-4 w-4 rounded border-slate-300 text-slate-900"
+                              />
+                              <span>
+                                {location.nombre}{location.source === "salon" ? " (Salón)" : ""}
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-slate-500">Se creará una tarea por cada lugar seleccionado.</p>
+                </div>
+              )}
 
               <label className="block space-y-1">
                 <span className="text-xs font-bold text-slate-500">Tiempo estimado (min)</span>
@@ -1654,177 +1944,11 @@ export default function TasksPage() {
             </div>
           </form>
         </section>
+        ) : null}
 
-        <section className="grid gap-4 xl:grid-cols-[1.25fr_0.75fr]">
-          <form onSubmit={submitInstance} className="rounded-xl border border-[#d9e4ea] bg-white p-5 shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
-            <div className="flex items-start gap-3">
-              <span className="material-symbols-outlined rounded-2xl bg-[#d5e3ff]/50 p-2 text-[#3a5f94]">calendar_add_on</span>
-              <div>
-                <p className="text-[10px] font-bold tracking-[0.26em] text-slate-500 uppercase">Instancias</p>
-                <h2 className="mt-1 text-lg font-black text-slate-900">Programación</h2>
-              </div>
-            </div>
-
-            <div className="mt-5 grid gap-3 sm:grid-cols-2">
-              <label className="block space-y-0.5">
-                <span className="text-xs font-bold text-slate-500">Categoría de Tarea</span>
-                <select
-                  style={selectChevronStyle}
-                  value={instanceForm.tareaCatalogoId}
-                  onChange={(event) => setInstanceForm((current) => ({ ...current, tareaCatalogoId: event.target.value }))}
-                  className="w-full rounded-md border-none bg-[#e8eff3] px-2 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
-                >
-                  <option value="">Selecciona un catalogo</option>
-                  {catalog.map((task) => (
-                    <option key={task.id} value={task.id}>
-                      {task.nombre}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="block space-y-1">
-                <span className="text-xs font-bold text-slate-500">Salon</span>
-                <select
-                  style={selectChevronStyle}
-                  value={instanceForm.salonId}
-                  onChange={(event) => setInstanceForm((current) => ({ ...current, salonId: event.target.value }))}
-                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
-                >
-                  <option value="">Sin salon asignado</option>
-                  {rooms.map((room) => (
-                    <option key={room.id} value={room.id}>
-                      {roomLabel(room)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="block space-y-1">
-                <span className="text-xs font-bold text-slate-500">Prioridad</span>
-                <select
-                  style={selectChevronStyle}
-                  value={instanceForm.prioridad}
-                  onChange={(event) => setInstanceForm((current) => ({ ...current, prioridad: event.target.value as TaskPriority }))}
-                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
-                >
-                  {(["Baja", "Media", "Alta", "Urgente"] as TaskPriority[]).map((priority) => (
-                    <option key={priority} value={priority}>
-                      {priority}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="block space-y-1">
-                <span className="text-xs font-bold text-slate-500">Fecha programada</span>
-                <input
-                  type="date"
-                  value={instanceForm.fechaProgramada}
-                  onChange={(event) => setInstanceForm((current) => ({ ...current, fechaProgramada: event.target.value }))}
-                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
-                />
-              </label>
-
-              <label className="block space-y-1">
-                <span className="text-xs font-bold text-slate-500">Hora programada</span>
-                <input
-                  type="time"
-                  lang="en-US"
-                  value={instanceForm.horaProgramada}
-                  onChange={(event) => setInstanceForm((current) => ({ ...current, horaProgramada: event.target.value }))}
-                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
-                />
-              </label>
-
-              <label className="flex items-center gap-3 rounded-md border border-[#d9e4ea] bg-[#f0f4f7] px-4 py-1 sm:col-span-2">
-                <input
-                  type="checkbox"
-                  checked={instanceForm.asignacionAutomatica}
-                  onChange={(event) => setInstanceForm((current) => ({ ...current, asignacionAutomatica: event.target.checked }))}
-                  className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-500"
-                />
-                <span className="text-sm font-semibold text-slate-700">Activar asignacion automatica</span>
-              </label>
-
-              <label className="block space-y-1 sm:col-span-2">
-                <span className="text-xs font-bold text-slate-500">Detalle adicional</span>
-                <textarea
-                  value={instanceForm.detalleAdicional}
-                  onChange={(event) => setInstanceForm((current) => ({ ...current, detalleAdicional: event.target.value }))}
-                  rows={3}
-                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
-                  placeholder="Instrucciones, prioridad operativa, observaciones..."
-                />
-              </label>
-
-              <button
-                type="submit"
-                disabled={busyAction === "instance-create"}
-                className={`${primaryButtonClass} justify-center sm:col-span-2`}
-              >
-                <span className="material-symbols-outlined text-[18px]">add_task</span>
-                {busyAction === "instance-create" ? "Programando..." : "Crear instancia"}
-              </button>
-            </div>
-          </form>
-
-          <div className="space-y-4">
-          <form onSubmit={submitTaskAssignment} className="rounded-xl border border-[#d9d7f8] bg-white p-5 shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
-            <div className="flex items-start gap-3">
-              <span className="material-symbols-outlined rounded-2xl bg-[#d5e3ff]/50 p-2 text-[#3a5f94]">assignment_ind</span>
-              <div>
-                <p className="text-[10px] font-bold tracking-[0.26em] text-slate-500 uppercase">Asignaciones</p>
-                <h2 className="mt-1 text-lg font-black text-slate-900">Operational Assignment</h2>
-              </div>
-            </div>
-
-            <div className="mt-5 grid gap-3 sm:grid-cols-2">
-              <label className="block space-y-1 sm:col-span-2">
-                <span className="text-xs font-bold text-slate-500">Instancia</span>
-                <select
-                  style={selectChevronStyle}
-                  value={assignmentForm.tareaInstanciaId}
-                  onChange={(event) => setAssignmentForm((current) => ({ ...current, tareaInstanciaId: event.target.value }))}
-                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
-                >
-                  <option value="">Selecciona una instancia</option>
-                  {instances.map((task) => (
-                    <option key={task.id} value={task.id}>
-                      {task.tareaNombre} · {task.estado} · {task.fechaProgramada}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="block space-y-1 sm:col-span-2">
-                <span className="text-xs font-bold text-slate-500">Staff</span>
-                <select
-                  style={selectChevronStyle}
-                  value={assignmentForm.staffId}
-                  onChange={(event) => setAssignmentForm((current) => ({ ...current, staffId: event.target.value }))}
-                  className="w-full appearance-none rounded-md border-none bg-[#e8eff3] px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
-                >
-                  <option value="">Selecciona un staff</option>
-                  {staff.map((person) => (
-                    <option key={person.id} value={person.id}>
-                      {staffLabel(person)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <button
-                type="submit"
-                disabled={busyAction === "task-assign"}
-                className={`${primaryButtonClass} justify-center sm:col-span-2`}
-              >
-                <span className="material-symbols-outlined text-[18px]">assignment_ind</span>
-                {busyAction === "task-assign" ? "Asignando..." : "Crear asignacion"}
-              </button>
-            </div>
-          </form>
-
+        {tasksSubtab === "gestion" ? (
+        <section className="grid gap-4">
+          <div>
           <form onSubmit={submitReview} className="rounded-xl border border-[#d3e4fe] bg-white p-5 shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
             <div className="flex items-start gap-3">
               <span className="material-symbols-outlined rounded-2xl bg-[#d5e3ff]/50 p-2 text-[#3a5f94]">fact_check</span>
@@ -1922,7 +2046,9 @@ export default function TasksPage() {
           </form>
           </div>
         </section>
+        ) : null}
 
+        {tasksSubtab === "tareas-creadas" ? (
         <section>
           <div className="rounded-xl border border-slate-200 bg-white shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
             <div className="flex flex-col gap-3 border-b border-slate-200 bg-[#f0f4f7] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
@@ -1931,46 +2057,96 @@ export default function TasksPage() {
                 <h2 className="mt-1 text-lg font-black text-slate-900">Tareas definidas</h2>
               </div>
               <span className="rounded-full bg-white px-3 py-1 text-[11px] font-semibold text-slate-600 shadow-sm">
-                {catalog.length} tareas
+                {filteredCatalog.length} tareas
               </span>
             </div>
+            <div className="grid gap-3 border-b border-slate-200 bg-white px-5 py-4 sm:grid-cols-3">
+              <label className="block space-y-1">
+                <span className="text-[10px] font-bold tracking-[0.2em] text-slate-500 uppercase">Buscar</span>
+                <input
+                  value={catalogSearchQuery}
+                  onChange={(event) => setCatalogSearchQuery(event.target.value)}
+                  placeholder="Nombre, ID o sector"
+                  className="w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700 focus:border-[#3a5f94] focus:bg-white focus:outline-none"
+                />
+              </label>
+              <label className="block space-y-1">
+                <span className="text-[10px] font-bold tracking-[0.2em] text-slate-500 uppercase">Tipo</span>
+                <select
+                  style={selectChevronStyle}
+                  value={catalogTypeFilter}
+                  onChange={(event) => setCatalogTypeFilter(event.target.value as TaskType | "todos")}
+                  className="w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700 focus:border-[#3a5f94] focus:bg-white focus:outline-none"
+                >
+                  <option value="todos">Todos</option>
+                  <option value="Recurrente">Recurrente</option>
+                  <option value="Esporadica">Esporadica</option>
+                </select>
+              </label>
+              <label className="block space-y-1">
+                <span className="text-[10px] font-bold tracking-[0.2em] text-slate-500 uppercase">Sector</span>
+                <select
+                  style={selectChevronStyle}
+                  value={catalogSectorFilter}
+                  onChange={(event) => setCatalogSectorFilter(event.target.value)}
+                  className="w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700 focus:border-[#3a5f94] focus:bg-white focus:outline-none"
+                >
+                  <option value="todos">Todos</option>
+                  {catalogSectorOptions.map((sector) => (
+                    <option key={sector} value={sector}>{sector}</option>
+                  ))}
+                </select>
+              </label>
+              <div className="sm:col-span-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCatalogSearchQuery("");
+                    setCatalogTypeFilter("todos");
+                    setCatalogSectorFilter("todos");
+                  }}
+                  className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] font-bold tracking-[0.16em] text-slate-600 uppercase transition hover:bg-slate-100"
+                >
+                  Limpiar filtros
+                </button>
+              </div>
+            </div>
             <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-slate-200 text-left">
+              <table className="min-w-full divide-y divide-slate-200 text-left text-xs">
                 <thead className="bg-slate-50">
                   <tr>
-                    <th className="px-5 py-3 text-[10px] font-black tracking-[0.2em] text-slate-500 uppercase">Nombre</th>
-                    <th className="px-5 py-3 text-[10px] font-black tracking-[0.2em] text-slate-500 uppercase">Tipo</th>
-                    <th className="px-5 py-3 text-[10px] font-black tracking-[0.2em] text-slate-500 uppercase">Sector</th>
-                    <th className="px-5 py-3 text-[10px] font-black tracking-[0.2em] text-slate-500 uppercase">Habilidades</th>
-                    <th className="px-5 py-3 text-[10px] font-black tracking-[0.2em] text-slate-500 uppercase">Checklist</th>
-                    <th className="px-5 py-3 text-[10px] font-black tracking-[0.2em] text-slate-500 uppercase">Tiempo</th>
-                    <th className="px-5 py-3 text-[10px] font-black tracking-[0.2em] text-slate-500 uppercase">Asignación</th>
-                    <th className="px-5 py-3 text-[10px] font-black tracking-[0.2em] text-slate-500 uppercase">Programación</th>
-                    <th className="px-5 py-3 text-[10px] font-black tracking-[0.2em] text-slate-500 uppercase">Acciones</th>
+                    <th className="px-3 py-2 text-[10px] font-black tracking-[0.2em] text-slate-500 uppercase">Nombre</th>
+                    <th className="px-3 py-2 text-[10px] font-black tracking-[0.2em] text-slate-500 uppercase">Tipo</th>
+                    <th className="px-3 py-2 text-[10px] font-black tracking-[0.2em] text-slate-500 uppercase">Sector</th>
+                    <th className="px-3 py-2 text-[10px] font-black tracking-[0.2em] text-slate-500 uppercase">Habilidades</th>
+                    <th className="px-3 py-2 text-[10px] font-black tracking-[0.2em] text-slate-500 uppercase">Checklist</th>
+                    <th className="px-3 py-2 text-[10px] font-black tracking-[0.2em] text-slate-500 uppercase">Tiempo</th>
+                    <th className="px-3 py-2 text-[10px] font-black tracking-[0.2em] text-slate-500 uppercase">Asignación</th>
+                    <th className="px-3 py-2 text-[10px] font-black tracking-[0.2em] text-slate-500 uppercase">Programación</th>
+                    <th className="px-3 py-2 text-[10px] font-black tracking-[0.2em] text-slate-500 uppercase">Acciones</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {catalog.length === 0 ? (
+                  {filteredCatalog.length === 0 ? (
                     <tr>
-                      <td colSpan={9} className="px-5 py-10 text-center text-sm text-slate-500">
-                        No hay tareas de catalogo todavia.
+                      <td colSpan={9} className="px-3 py-8 text-center text-sm text-slate-500">
+                        No hay tareas que coincidan con los filtros.
                       </td>
                     </tr>
                   ) : (
-                    catalog.map((task) => (
+                    filteredCatalog.map((task) => (
                       <tr key={task.id} className="hover:bg-slate-50/80">
-                        <td className="px-5 py-4">
+                        <td className="px-3 py-2.5">
                           <p className="text-sm font-bold text-slate-900">{task.nombre}</p>
-                          <p className="mt-1 text-[11px] text-slate-500">{task.id}</p>
                         </td>
-                        <td className="px-5 py-4 text-sm text-slate-600">{task.tipo}</td>
-                        <td className="px-5 py-4 text-sm text-slate-600">{task.sector}</td>
-                        <td className="px-5 py-4 text-sm text-slate-600">
+                        <td className="px-3 py-2.5 text-slate-600">{task.tipo}</td>
+                        <td className="px-3 py-2.5 text-slate-600">{task.sector}</td>
+                        <td className="px-3 py-2.5 text-slate-600">
                           {task.habilidadesRequeridasIds.length > 0
                             ? task.habilidadesRequeridasIds.map((skillId) => skillById.get(skillId)?.nombre ?? skillId).join(", ")
                             : "Sin requisito"}
                         </td>
-                        <td className="px-5 py-4 text-sm text-slate-600">
+                        <td className="px-3 py-2.5 text-slate-600">
                           {task.requerimientos.length > 0 ? (
                             <div className="flex flex-wrap gap-1">
                               {task.requerimientos.map((item) => (
@@ -1983,8 +2159,8 @@ export default function TasksPage() {
                             "Sin checklist"
                           )}
                         </td>
-                        <td className="px-5 py-4 text-sm text-slate-600">{task.tiempoEstimadoMin} min</td>
-                        <td className="px-5 py-4 text-sm text-slate-600">
+                        <td className="px-3 py-2.5 text-slate-600">{task.tiempoEstimadoMin} min</td>
+                        <td className="px-3 py-2.5 text-slate-600">
                           {assignmentModeLabels[task.modoAsignacion]} · {task.cantidadPersonal} persona(s)
                           <p className="mt-1 text-xs text-slate-500">
                             Personal: {(task.staffAsignadosIds ?? []).length > 0
@@ -1992,7 +2168,7 @@ export default function TasksPage() {
                               : "Sin lista predefinida"}
                           </p>
                         </td>
-                        <td className="px-5 py-4 text-sm text-slate-600">
+                        <td className="px-3 py-2.5 text-slate-600">
                           {task.tipo === "Recurrente"
                             ? task.horaProgramada && task.diasSemana.length > 0
                               ? `${task.diasSemana.map((day) => dayLabels[day] ?? day).join("/")} ${task.horaProgramada}`
@@ -2004,7 +2180,7 @@ export default function TasksPage() {
                             </p>
                           ) : null}
                         </td>
-                        <td className="px-5 py-4 text-sm text-slate-600">
+                        <td className="px-3 py-2.5 text-slate-600">
                           <div className="flex gap-2">
                             <button
                               type="button"
@@ -2032,7 +2208,9 @@ export default function TasksPage() {
           </div>
 
         </section>
+        ) : null}
 
+        {tasksSubtab === "gestion" ? (
         <section className="grid gap-5 xl:grid-cols-[1.18fr_0.82fr]">
           <div className="rounded-xl border border-slate-200 bg-white shadow-[0_10px_30px_rgba(42,52,57,0.06)] overflow-hidden">
             <div className="flex flex-col gap-2 border-b border-slate-200 bg-[#f0f4f7] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
@@ -2195,6 +2373,7 @@ export default function TasksPage() {
             </div>
           </div>
         </section>
+        ) : null}
       </div>
     </main>
   );

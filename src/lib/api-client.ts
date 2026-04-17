@@ -1,6 +1,18 @@
-import { readAuthSession } from "@/lib/auth-session";
+import { clearAuthSession, readAuthSession } from "@/lib/auth-session";
 
 const trimSlash = (value: string) => value.replace(/\/+$/, "");
+
+const isSessionExpiredMessage = (message: string) => {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("sesion invalida") ||
+    normalized.includes("sesión invalida") ||
+    normalized.includes("sesion expirada") ||
+    normalized.includes("sesión expirada") ||
+    normalized.includes("token invalido") ||
+    normalized.includes("token inválido")
+  );
+};
 
 const toFriendlyApiError = (path: string, message: string, status?: number) => {
   const normalizedMessage = message.toLowerCase();
@@ -103,10 +115,12 @@ export async function fetchApiJson<T>(path: string, init?: RequestInit): Promise
   let lastError: Error | null = null;
   let lastUrl = "";
   const attemptDetails: string[] = [];
+  let attempts = 0;
 
   for (const base of candidates) {
     const url = `${base}${normalizedPath}`;
     lastUrl = url;
+    attempts += 1;
     try {
       const session = typeof window !== "undefined" ? readAuthSession() : null;
       const headers = new Headers(init?.headers ?? undefined);
@@ -135,7 +149,6 @@ export async function fetchApiJson<T>(path: string, init?: RequestInit): Promise
           body && typeof body === "object" && "error" in body && typeof body.error === "string"
             ? body.error
             : `HTTP ${response.status}`;
-        attemptDetails.push(`${url} -> ${errorMessage}`);
         throw new HttpResponseError(errorMessage, response.status);
       }
 
@@ -147,8 +160,20 @@ export async function fetchApiJson<T>(path: string, init?: RequestInit): Promise
       return body as T;
     } catch (error) {
       lastError = error instanceof Error ? error : new Error("Load failed");
-      if (attemptDetails.length < candidates.length) {
-        attemptDetails.push(`${url} -> ${lastError.message}`);
+      attemptDetails.push(`${url} -> ${lastError.message}`);
+
+      const isLoginCall = normalizedPath.includes("/api/staff/login");
+      const isAuthHttpError =
+        error instanceof HttpResponseError &&
+        (error.status === 401 || error.status === 403) &&
+        isSessionExpiredMessage(lastError.message);
+
+      if (!isLoginCall && isAuthHttpError && typeof window !== "undefined") {
+        clearAuthSession();
+
+        if (!window.location.pathname.startsWith("/login")) {
+          window.location.assign("/login");
+        }
       }
 
       // If the same-origin proxy returns 404 in dev, allow fallback hosts.
@@ -168,7 +193,7 @@ export async function fetchApiJson<T>(path: string, init?: RequestInit): Promise
   if (process.env.NODE_ENV !== "production") {
     const details = attemptDetails.join(" | ");
     console.error(
-      `[API] Request failed path=${normalizedPath} lastUrl=${lastUrl} message=${lastError?.message ?? "Load failed"} attempts=${candidates.length} details=${details}`,
+      `[API] Request failed path=${normalizedPath} lastUrl=${lastUrl} message=${lastError?.message ?? "Load failed"} attempts=${attempts} details=${details}`,
     );
   }
 

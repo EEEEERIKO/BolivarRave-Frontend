@@ -27,6 +27,14 @@ type AuditoriumEvent = {
   needsMonitor: boolean;
   needsProjector: boolean;
   needsWaterFilter: boolean;
+  assignedWorkers: Array<{
+    staffId: string;
+    cedula: string;
+    numeroStaff: number;
+    nombreCompleto: string;
+    rol: string;
+    estado: string;
+  }>;
   observations: string;
   color: "blue" | "emerald" | "amber";
   scheduleBlocks: ScheduleBlock[];
@@ -47,12 +55,30 @@ type AuditorioReservaApi = {
   observaciones: string | null;
   estado: AuditorioEstado;
   fechaCreacion: string;
+  encargados?: Array<{
+    staffId: string;
+    cedula: string;
+    numeroStaff: number;
+    nombreCompleto: string;
+    rol: string;
+    estado: string;
+  }>;
   horarios: Array<{
     id: string;
     fechaEspecifica: string;
     horaInicio: string;
     horaFin: string;
   }>;
+};
+
+type StaffApi = {
+  id: string;
+  cedula: string;
+  numeroStaff: number;
+  rol: string;
+  nombres: string;
+  apellidos: string;
+  estado: string;
 };
 
 type NewEventFormState = {
@@ -67,6 +93,7 @@ type NewEventFormState = {
   needsMonitor: boolean;
   needsProjector: boolean;
   needsWaterFilter: boolean;
+  assignedStaffIds: string[];
   observations: string;
   scheduleBlocks: ScheduleBlock[];
 };
@@ -213,6 +240,20 @@ function getEventResourcesLabel(event: AuditoriumEvent) {
   return `${resources.slice(0, -1).join(", ")} y ${resources[resources.length - 1]}`;
 }
 
+function getStaffPhotoUrl(cedula: string) {
+  return `/api/staff-photo/${encodeURIComponent(cedula)}`;
+}
+
+function getStaffInitials(fullName: string) {
+  return fullName
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase();
+}
+
 function toMinutes(value: string) {
   const [hour, minute] = value.split(":").map(Number);
   return (hour ?? 0) * 60 + (minute ?? 0);
@@ -270,6 +311,7 @@ function mapReservaToEvent(reserva: AuditorioReservaApi): AuditoriumEvent {
     needsMonitor: reserva.requiereMonitor,
     needsProjector: reserva.requiereProyector,
     needsWaterFilter: reserva.requiereFiltroAgua,
+    assignedWorkers: reserva.encargados ?? [],
     observations: reserva.observaciones ?? "",
     color: colorFromEstado(reserva.estado),
     scheduleBlocks: reserva.horarios
@@ -359,6 +401,7 @@ function createEmptyFormState(defaultDate: string): NewEventFormState {
     needsMonitor: false,
     needsProjector: false,
     needsWaterFilter: false,
+    assignedStaffIds: [],
     observations: "",
     scheduleBlocks: [
       {
@@ -380,6 +423,7 @@ export default function AuditorioPage() {
   const defaultDateKey = useMemo(() => toDateKey(colombiaToday), [colombiaToday]);
 
   const [events, setEvents] = useState<AuditoriumEvent[]>([]);
+  const [staffCatalog, setStaffCatalog] = useState<StaffApi[]>([]);
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [monthCursor, setMonthCursor] = useState(startOfMonth(colombiaToday));
   const [dragOverDateKey, setDragOverDateKey] = useState<string | null>(null);
@@ -413,6 +457,19 @@ export default function AuditorioPage() {
     });
   }, []);
 
+  const syncStaffCatalog = useCallback(async () => {
+    if (!canManageAuditorio) {
+      setStaffCatalog([]);
+      return;
+    }
+
+    const response = await fetchApiJson<{ staff?: StaffApi[] }>("/api/staff", {
+      cache: "no-store",
+    });
+
+    setStaffCatalog(response.staff ?? []);
+  }, [canManageAuditorio]);
+
   useEffect(() => {
     let isMounted = true;
 
@@ -420,7 +477,7 @@ export default function AuditorioPage() {
       try {
         setIsLoading(true);
         setLoadError(null);
-        await syncReservas();
+        await Promise.all([syncReservas(), syncStaffCatalog()]);
       } catch (error) {
         if (!isMounted) return;
         const message = error instanceof Error ? error.message : "No se pudo cargar reservas del auditorio";
@@ -437,7 +494,7 @@ export default function AuditorioPage() {
     return () => {
       isMounted = false;
     };
-  }, [syncReservas]);
+  }, [syncReservas, syncStaffCatalog]);
 
   const handleRealtimeRefresh = useCallback(() => {
     syncReservas().catch((error) => {
@@ -567,6 +624,7 @@ export default function AuditorioPage() {
     requiereMonitor: state.needsMonitor,
     requiereProyector: state.needsProjector,
     requiereFiltroAgua: state.needsWaterFilter,
+    encargadoStaffIds: Array.from(new Set(state.assignedStaffIds)),
     observaciones: state.observations.trim() || null,
     estado: state.status as AuditorioEstado,
     horarios: state.scheduleBlocks
@@ -607,6 +665,7 @@ export default function AuditorioPage() {
       needsMonitor: selectedEvent.needsMonitor,
       needsProjector: selectedEvent.needsProjector,
       needsWaterFilter: selectedEvent.needsWaterFilter,
+      assignedStaffIds: selectedEvent.assignedWorkers.map((worker) => worker.staffId),
       observations: selectedEvent.observations,
       scheduleBlocks: selectedEvent.scheduleBlocks.map((block, index) => ({
         ...block,
@@ -695,6 +754,7 @@ export default function AuditorioPage() {
             requiereMonitor: sourceEvent.needsMonitor,
             requiereProyector: sourceEvent.needsProjector,
             requiereFiltroAgua: sourceEvent.needsWaterFilter,
+            encargadoStaffIds: sourceEvent.assignedWorkers.map((worker) => worker.staffId),
             observaciones: sourceEvent.observations || null,
             estado: sourceEvent.status,
             horarios: shiftedBlocks.map((block) => ({
@@ -853,6 +913,13 @@ export default function AuditorioPage() {
       setFieldErrors(errors);
       setFormError("Revisa los campos marcados en rojo.");
       return;
+    }
+
+    if (!editingEventId && formState.assignedStaffIds.length === 0) {
+      const confirmed = window.confirm("Seguro que quieres crearlo sin asignar a ningún trabajador?");
+      if (!confirmed) {
+        return;
+      }
     }
 
     setFieldErrors({});
@@ -1239,6 +1306,48 @@ export default function AuditorioPage() {
                 <p>
                   <span className="font-semibold">Recursos:</span> {getEventResourcesLabel(selectedEvent)}
                 </p>
+                <div>
+                  <p className="font-semibold">Encargado(s):</p>
+                  {selectedEvent.assignedWorkers.length > 0 ? (
+                    <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                      {selectedEvent.assignedWorkers.map((worker) => (
+                        <div
+                          key={`encargado-${worker.staffId}`}
+                          className="flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 p-2"
+                        >
+                          <div className="flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[#295786] text-[11px] font-bold text-white">
+                            <img
+                              src={getStaffPhotoUrl(worker.cedula)}
+                              alt={`Foto de ${worker.nombreCompleto}`}
+                              className="h-full w-full object-cover"
+                              onError={(event) => {
+                                const image = event.currentTarget;
+                                image.style.display = "none";
+                                const fallback = image.parentElement?.querySelector<HTMLElement>("[data-worker-fallback='true']");
+                                fallback?.classList.remove("hidden");
+                              }}
+                              onLoad={(event) => {
+                                const image = event.currentTarget;
+                                const fallback = image.parentElement?.querySelector<HTMLElement>("[data-worker-fallback='true']");
+                                fallback?.classList.add("hidden");
+                                image.style.display = "block";
+                              }}
+                            />
+                            <div data-worker-fallback="true" className="hidden items-center justify-center">
+                              {getStaffInitials(worker.nombreCompleto)}
+                            </div>
+                          </div>
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-semibold text-slate-900">{worker.nombreCompleto}</p>
+                            <p className="text-xs text-slate-600">{worker.rol}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-slate-500">Sin encargados asignados.</p>
+                  )}
+                </div>
                 <div className="space-y-1">
                   <p className="font-semibold">Horarios:</p>
                   <div className="space-y-2">
@@ -1463,6 +1572,71 @@ export default function AuditorioPage() {
                     Filtro de Agua
                   </label>
                 </div>
+              </div>
+
+              <div className="rounded-md border border-slate-200 p-3">
+                <p className="mb-2 text-sm font-semibold text-slate-800">Trabajadores encargados del evento</p>
+                {staffCatalog.length > 0 ? (
+                  <div className="max-h-72 overflow-auto rounded-md border border-slate-200 bg-slate-50 p-2">
+                    <div className="grid gap-2 md:grid-cols-2">
+                    {staffCatalog.map((staffMember) => {
+                      const checked = formState.assignedStaffIds.includes(staffMember.id);
+                      const label = `${staffMember.nombres} ${staffMember.apellidos}`.trim();
+
+                      return (
+                        <label
+                          key={`staff-${staffMember.id}`}
+                          className={`flex cursor-pointer items-center gap-3 rounded-lg border p-2 text-sm transition ${
+                            checked ? "border-[#295786] bg-[#295786]/5" : "border-slate-200 bg-white hover:bg-slate-50"
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(event) => {
+                              const isChecked = event.target.checked;
+                              setFormState((current) => ({
+                                ...current,
+                                assignedStaffIds: isChecked
+                                  ? Array.from(new Set([...current.assignedStaffIds, staffMember.id]))
+                                  : current.assignedStaffIds.filter((id) => id !== staffMember.id),
+                              }));
+                            }}
+                          />
+                          <div className="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[#295786] text-[10px] font-bold text-white">
+                            <img
+                              src={getStaffPhotoUrl(staffMember.cedula)}
+                              alt={`Foto de ${label}`}
+                              className="h-full w-full object-cover"
+                              onError={(event) => {
+                                const image = event.currentTarget;
+                                image.style.display = "none";
+                                const fallback = image.parentElement?.querySelector<HTMLElement>("[data-staff-fallback='true']");
+                                fallback?.classList.remove("hidden");
+                              }}
+                              onLoad={(event) => {
+                                const image = event.currentTarget;
+                                const fallback = image.parentElement?.querySelector<HTMLElement>("[data-staff-fallback='true']");
+                                fallback?.classList.add("hidden");
+                                image.style.display = "block";
+                              }}
+                            />
+                            <div data-staff-fallback="true" className="hidden items-center justify-center">
+                              {getStaffInitials(label)}
+                            </div>
+                          </div>
+                          <div className="min-w-0">
+                            <p className="truncate font-semibold text-slate-900">{label}</p>
+                            <p className="text-xs text-slate-500">{staffMember.rol}</p>
+                          </div>
+                        </label>
+                      );
+                    })}
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-500">No hay personal disponible para asignar.</p>
+                )}
               </div>
 
               <div className="rounded-md border border-slate-200 p-3">
