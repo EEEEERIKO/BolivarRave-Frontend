@@ -5,6 +5,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { MouseEvent as ReactMouseEvent } from "react";
 import { readAuthSession, type AuthSession } from "@/lib/auth-session";
 import { fetchApiJson } from "@/lib/api-client";
 import { useWebSocketSchedules } from "@/lib/use-websocket-schedules";
@@ -26,6 +27,27 @@ type PendingScheduleRequest = {
   startDate: string;
   endDate: string;
   createdAt: string;
+};
+
+type UpcomingAuditorioNotification = {
+  id: string;
+  reservaId: string;
+  nombreEvento: string;
+  organizador: string;
+  estado: "Pendiente" | "Aprobada" | "Cancelada";
+  fechaEspecifica: string;
+  horaInicio: string;
+  horaFin: string;
+  startsAt: string;
+  notificationType: "en_curso" | "proximo";
+  assignedWorkers: Array<{
+    staffId: string;
+    cedula: string;
+    numeroStaff: number;
+    nombreCompleto: string;
+    rol: string;
+    estado: string;
+  }>;
 };
 
 type NavItem = {
@@ -60,6 +82,62 @@ function getStaffPhotoUrl(cedula: string): string {
   return `/api/staff-photo/${encodeURIComponent(cedula)}`;
 }
 
+function formatTimeAmPm(value: string): string {
+  const [hoursText, minutesText] = value.split(":");
+  const hours = Number(hoursText);
+  const minutes = Number(minutesText);
+
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
+    return value;
+  }
+
+  const suffix = hours >= 12 ? "PM" : "AM";
+  const normalizedHour = ((hours + 11) % 12) + 1;
+  return `${normalizedHour}:${String(minutes).padStart(2, "0")} ${suffix}`;
+}
+
+function formatDateLong(value: string): string {
+  const [year, month, day] = value.split("-").map(Number);
+  const parsed = new Date(year ?? 0, (month ?? 1) - 1, day ?? 1);
+
+  return parsed.toLocaleDateString("es-CO", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+}
+
+function getStaffInitials(fullName: string): string {
+  return fullName
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase();
+}
+
+function getNotificationStatus(event: UpcomingAuditorioNotification): "en_curso" | "proximo_inmediato" | "proximo" {
+  if (event.notificationType === "en_curso") {
+    return "en_curso";
+  }
+
+  // Calcular minutos hasta el inicio
+  const [startHours, startMinutes] = event.horaInicio.split(":").map(Number);
+  const eventStart = new Date(event.fechaEspecifica);
+  eventStart.setHours(startHours ?? 0, startMinutes ?? 0, 0, 0);
+
+  const now = new Date();
+  const minutesUntilStart = (eventStart.getTime() - now.getTime()) / (1000 * 60);
+
+  if (minutesUntilStart > 0 && minutesUntilStart <= 90) {
+    return "proximo_inmediato";
+  }
+
+  return "proximo";
+}
+
 export function AdminShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -67,6 +145,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [pendingRequests, setPendingRequests] = useState<PendingScheduleRequest[]>([]);
+  const [upcomingAuditorioEvents, setUpcomingAuditorioEvents] = useState<UpcomingAuditorioNotification[]>([]);
   const [authSession, setAuthSession] = useState<AuthSession | null>(null);
   const [isSessionReady, setIsSessionReady] = useState(false);
   const notificationsPanelRef = useRef<HTMLDivElement>(null);
@@ -76,7 +155,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   }, [pathname]);
 
   useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
+    const handleClickOutside = (event: globalThis.MouseEvent) => {
       if (notificationsPanelRef.current && !notificationsPanelRef.current.contains(event.target as Node)) {
         setIsNotificationsOpen(false);
       }
@@ -116,37 +195,85 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
     }
   }, [isLoginRoute, pathname, router]);
 
-  const syncPendingRequests = async () => {
-    if (!authSession || authSession.role !== "admin") {
+  const syncNotifications = async () => {
+    const role = authSession?.role;
+    const canManageSchedules = role === "admin";
+    const canReadAuditorioNotifications = role === "admin" || role === "monitor";
+
+    if (!role) {
       setPendingRequests([]);
+      setUpcomingAuditorioEvents([]);
       return;
     }
 
     try {
-      const response = await fetchApiJson<{ requests?: PendingScheduleRequest[] }>("/api/schedules/requests", {
-        cache: "no-store",
-      });
-      setPendingRequests(response.requests ?? []);
+      const [requestsResponse, upcomingResponse] = await Promise.all([
+        canManageSchedules
+          ? fetchApiJson<{ requests?: PendingScheduleRequest[] }>("/api/schedules/requests", { cache: "no-store" })
+          : Promise.resolve({ requests: [] as PendingScheduleRequest[] }),
+        canReadAuditorioNotifications
+          ? fetchApiJson<{ notifications?: UpcomingAuditorioNotification[] }>("/api/auditorio/notifications/upcoming", {
+              cache: "no-store",
+            })
+          : Promise.resolve({ notifications: [] as UpcomingAuditorioNotification[] }),
+      ]);
+
+      setPendingRequests(requestsResponse.requests ?? []);
+      setUpcomingAuditorioEvents(upcomingResponse.notifications ?? []);
     } catch {
       setPendingRequests([]);
+      setUpcomingAuditorioEvents([]);
     }
   };
 
   useEffect(() => {
-    void syncPendingRequests();
+    void syncNotifications();
   }, [authSession]);
 
   useWebSocketSchedules({
-    enabled: Boolean(authSession && authSession.role === "admin"),
+    enabled: Boolean(authSession && (authSession.role === "admin" || authSession.role === "monitor")),
     onScheduleRefresh: () => {
-      void syncPendingRequests();
+      void syncNotifications();
     },
   });
+
+  const totalNotifications = useMemo(() => {
+    if (!authSession) {
+      return 0;
+    }
+
+    if (authSession.role === "admin") {
+      return pendingRequests.length + upcomingAuditorioEvents.length;
+    }
+
+    if (authSession.role === "monitor") {
+      return upcomingAuditorioEvents.length;
+    }
+
+    return 0;
+  }, [authSession, pendingRequests.length, upcomingAuditorioEvents.length]);
 
   const visibleNavItems = useMemo(
     () => navItems.filter((item) => !item.allowedRoles || item.allowedRoles.includes(authSession?.role ?? "colaborador")),
     [authSession]
   );
+
+  const handleSidebarRouteClick = (event: ReactMouseEvent<HTMLAnchorElement>, href: string) => {
+    if (pathname === href) {
+      event.preventDefault();
+      return;
+    }
+
+    setIsMobileMenuOpen(false);
+    setIsNotificationsOpen(false);
+
+    // Fallback: leaving /tasks can occasionally stall in dev with client-side rendering.
+    // Force a full navigation to avoid getting stuck in a perpetual "Rendering" state.
+    if (pathname.startsWith("/tasks") && typeof window !== "undefined") {
+      event.preventDefault();
+      window.location.assign(href);
+    }
+  };
 
   if (isLoginRoute) {
     return <>{children}</>;
@@ -164,6 +291,34 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex min-h-screen bg-[#f6f7f8] text-slate-900 dark:bg-[#13181f] dark:text-slate-100">
+      <style>{`
+        @keyframes pulsoAhora {
+          0%, 100% {
+            border-color: rgb(239, 68, 68);
+            box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4);
+          }
+          50% {
+            border-color: rgb(220, 38, 38);
+            box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.2);
+          }
+        }
+        @keyframes pulsoProximo {
+          0%, 100% {
+            border-color: rgb(217, 119, 6);
+            box-shadow: 0 0 0 0 rgba(217, 119, 6, 0.3);
+          }
+          50% {
+            border-color: rgb(180, 83, 9);
+            box-shadow: 0 0 0 4px rgba(217, 119, 6, 0.15);
+          }
+        }
+        .evento-en-curso {
+          animation: pulsoAhora 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        .evento-proximo-inmediato {
+          animation: pulsoProximo 2.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+      `}</style>
       <button
         type="button"
         aria-label="Cerrar navegación"
@@ -187,7 +342,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
             const isActive = item.isRoute ? pathname === item.href : false;
             if (item.isRoute) {
               return (
-                <Link key={item.label} className={navClasses(isActive)} href={item.href}>
+                <Link key={item.label} className={navClasses(isActive)} href={item.href} onClick={(event) => handleSidebarRouteClick(event, item.href)}>
                   <span className="material-symbols-outlined">{item.icon}</span>
                   <span>{item.label}</span>
                 </Link>
@@ -251,6 +406,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
               onClick={() => setIsMobileMenuOpen(true)}
               className="inline-flex size-10 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-700 lg:hidden dark:bg-slate-800 dark:text-slate-300"
             >
+                          );
               <span className="material-symbols-outlined">menu</span>
             </button>
             <div className="flex min-w-0 shrink items-center gap-2.5">
@@ -282,9 +438,9 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
               className="relative flex size-10 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-600 transition hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700"
             >
               <span className="material-symbols-outlined">notifications</span>
-              {authSession.role === "admin" && pendingRequests.length > 0 ? (
+              {(authSession.role === "admin" || authSession.role === "monitor") && totalNotifications > 0 ? (
                 <span className="absolute top-1.5 right-1.5 flex min-h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold leading-none text-white">
-                  {pendingRequests.length > 9 ? "9+" : pendingRequests.length}
+                  {totalNotifications > 9 ? "9+" : totalNotifications}
                 </span>
               ) : null}
             </button>
@@ -307,33 +463,241 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
 
                 {authSession.role === "admin" ? (
                   <div className="mt-4 space-y-3">
+                    {upcomingAuditorioEvents.length > 0 ? (
+                      <div className="space-y-2">
+                        <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Auditorio: en curso y proximos</p>
+                        {upcomingAuditorioEvents.map((event) => {
+                          const notifStatus = getNotificationStatus(event);
+                          return (
+                          <button
+                            key={event.id}
+                            type="button"
+                            onClick={() => {
+                              setIsNotificationsOpen(false);
+                              router.push("/auditorio");
+                            }}
+                            className={`w-full rounded-lg border bg-[#295786]/5 px-3 py-3 text-left text-sm text-slate-700 transition dark:text-slate-100 ${
+                              notifStatus === "en_curso"
+                                ? "evento-en-curso border-red-500 dark:border-red-500"
+                                : notifStatus === "proximo_inmediato"
+                                  ? "evento-proximo-inmediato border-amber-600 dark:border-amber-500"
+                                  : "border-[#295786]/20 hover:border-[#295786]/40 hover:bg-[#295786]/10 dark:border-[#295786]/40 dark:bg-[#295786]/20 dark:hover:bg-[#295786]/30"
+                            }`}
+                          >
+                            <div className="flex items-center gap-2">
+                              <p className={`text-xs font-semibold ${
+                                notifStatus === "en_curso"
+                                  ? "text-red-700 dark:text-red-400"
+                                  : notifStatus === "proximo_inmediato"
+                                    ? "text-amber-700 dark:text-amber-300"
+                                    : "text-[#295786] dark:text-slate-200"
+                              }`}>
+                                {notifStatus === "en_curso" ? "Evento en curso en auditorio" : notifStatus === "proximo_inmediato" ? "Comienza pronto" : "Evento proximo en auditorio"}
+                              </p>
+                              {notifStatus === "en_curso" && (
+                                <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-700 dark:bg-red-900/30 dark:text-red-300">
+                                  <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-red-500"></span>
+                                  EN CURSO
+                                </span>
+                              )}
+                              {notifStatus === "proximo_inmediato" && (
+                                <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
+                                  <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500"></span>
+                                  PRONTO
+                                </span>
+                              )}
+                            </div>
+                            <p className="mt-1 font-semibold text-slate-900 dark:text-white">{event.nombreEvento}</p>
+                            <p className="text-xs text-slate-600 dark:text-slate-300">{formatDateLong(event.fechaEspecifica)}</p>
+                            <p className="text-xs text-slate-600 dark:text-slate-300">{formatTimeAmPm(event.horaInicio)} - {formatTimeAmPm(event.horaFin)}</p>
+
+                            <div className="mt-3">
+                              <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Encargado(s)</p>
+                              {(event.assignedWorkers ?? []).length > 0 ? (
+                                <div className="grid grid-cols-2 gap-2">
+                                  {(event.assignedWorkers ?? []).map((worker) => (
+                                    <div
+                                      key={`${event.id}-${worker.staffId}`}
+                                      className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-2 py-2 dark:border-slate-700 dark:bg-slate-900/60"
+                                    >
+                                      <div className="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[#295786] text-[10px] font-bold text-white">
+                                        <img
+                                          src={getStaffPhotoUrl(worker.cedula)}
+                                          alt={`Foto de ${worker.nombreCompleto}`}
+                                          className="h-full w-full object-cover"
+                                          onError={(event) => {
+                                            const image = event.currentTarget;
+                                            image.style.display = "none";
+                                            const fallback = image.parentElement?.querySelector<HTMLElement>("[data-notification-worker-fallback='true']");
+                                            fallback?.classList.remove("hidden");
+                                          }}
+                                          onLoad={(event) => {
+                                            const image = event.currentTarget;
+                                            const fallback = image.parentElement?.querySelector<HTMLElement>("[data-notification-worker-fallback='true']");
+                                            fallback?.classList.add("hidden");
+                                            image.style.display = "block";
+                                          }}
+                                        />
+                                        <div data-notification-worker-fallback="true" className="hidden items-center justify-center">
+                                          {getStaffInitials(worker.nombreCompleto)}
+                                        </div>
+                                      </div>
+                                      <div className="min-w-0">
+                                        <p className="truncate text-xs font-semibold text-slate-900 dark:text-white">{worker.nombreCompleto}</p>
+                                        <p className="truncate text-[10px] text-slate-500 dark:text-slate-400">{worker.rol}</p>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800 dark:border-amber-400/30 dark:bg-amber-400/10 dark:text-amber-200">
+                                  No hay encargado asignado.
+                                </div>
+                              )}
+                            </div>
+
+                            <p className="mt-2 text-xs font-semibold text-[#295786] dark:text-slate-200">Ver auditorio</p>
+                          </button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-4 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                        No hay eventos de auditorio en la siguiente ventana de notificaciones.
+                      </div>
+                    )}
+
                     {pendingRequests.length > 0 ? (
-                      pendingRequests.map((request) => (
+                      <div className="space-y-2">
+                        <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Solicitudes de salon pendientes</p>
+                        {pendingRequests.map((request) => (
+                          <button
+                            key={request.id}
+                            type="button"
+                            onClick={() => {
+                              setIsNotificationsOpen(false);
+                              router.push(`/schedules?eventId=${encodeURIComponent(request.eventId)}&requestId=${encodeURIComponent(request.id)}`);
+                            }}
+                            className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-left text-sm text-slate-700 transition hover:border-[#295786]/30 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                          >
+                            <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">Solicitud de {request.requestedByName}</p>
+                            <p className="mt-1 font-semibold text-slate-900 dark:text-white">{request.code} | {request.subject}</p>
+                            <p className="text-xs text-slate-600 dark:text-slate-400">{request.day} · {request.room}</p>
+                            <p className="text-xs text-slate-600 dark:text-slate-400">{request.start} - {request.end}</p>
+                            <p className="mt-2 text-xs font-semibold text-[#295786]">Ir a la reserva</p>
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+
+                    {pendingRequests.length === 0 && upcomingAuditorioEvents.length === 0 ? (
+                      <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-4 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                        Sin notificaciones por ahora.
+                      </div>
+                    ) : null}
+                  </div>
+                ) : authSession.role === "monitor" ? (
+                  <div className="mt-4 space-y-3">
+                    {upcomingAuditorioEvents.length > 0 ? (
+                      upcomingAuditorioEvents.map((event) => {
+                        const notifStatus = getNotificationStatus(event);
+                        return (
                         <button
-                          key={request.id}
+                          key={event.id}
                           type="button"
                           onClick={() => {
                             setIsNotificationsOpen(false);
-                            router.push(`/schedules?eventId=${encodeURIComponent(request.eventId)}&requestId=${encodeURIComponent(request.id)}`);
+                            router.push("/auditorio");
                           }}
-                          className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-left text-sm text-slate-700 transition hover:border-[#295786]/30 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                          className={`w-full rounded-lg border bg-[#295786]/5 px-3 py-3 text-left text-sm text-slate-700 transition dark:text-slate-100 ${
+                            notifStatus === "en_curso"
+                              ? "evento-en-curso border-red-500 dark:border-red-500"
+                              : notifStatus === "proximo_inmediato"
+                                ? "evento-proximo-inmediato border-amber-600 dark:border-amber-500"
+                                : "border-[#295786]/20 hover:border-[#295786]/40 hover:bg-[#295786]/10 dark:border-[#295786]/40 dark:bg-[#295786]/20 dark:hover:bg-[#295786]/30"
+                          }`}
                         >
-                          <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">Solicitud de {request.requestedByName}</p>
-                          <p className="mt-1 font-semibold text-slate-900 dark:text-white">{request.code} | {request.subject}</p>
-                          <p className="text-xs text-slate-600 dark:text-slate-400">{request.day} · {request.room}</p>
-                          <p className="text-xs text-slate-600 dark:text-slate-400">{request.start} - {request.end}</p>
-                          <p className="mt-2 text-xs font-semibold text-[#295786]">Ir a la reserva</p>
+                          <div className="flex items-center gap-2">
+                            <p className={`text-xs font-semibold ${
+                              notifStatus === "en_curso"
+                                ? "text-red-700 dark:text-red-400"
+                                : notifStatus === "proximo_inmediato"
+                                  ? "text-amber-700 dark:text-amber-300"
+                                  : "text-[#295786] dark:text-slate-200"
+                            }`}>
+                              {notifStatus === "en_curso" ? "Evento en curso en auditorio" : notifStatus === "proximo_inmediato" ? "Comienza pronto" : "Evento proximo en auditorio"}
+                            </p>
+                            {notifStatus === "en_curso" && (
+                              <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-700 dark:bg-red-900/30 dark:text-red-300">
+                                <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-red-500"></span>
+                                EN CURSO
+                              </span>
+                            )}
+                            {notifStatus === "proximo_inmediato" && (
+                              <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
+                                <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500"></span>
+                                PRONTO
+                              </span>
+                            )}
+                          </div>
+                          <p className="mt-1 font-semibold text-slate-900 dark:text-white">{event.nombreEvento}</p>
+                          <p className="text-xs text-slate-600 dark:text-slate-300">{formatDateLong(event.fechaEspecifica)}</p>
+                          <p className="text-xs text-slate-600 dark:text-slate-300">{formatTimeAmPm(event.horaInicio)} - {formatTimeAmPm(event.horaFin)}</p>
+
+                          <div className="mt-3">
+                            <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Encargado(s)</p>
+                            {(event.assignedWorkers ?? []).length > 0 ? (
+                              <div className="grid grid-cols-2 gap-2">
+                                {(event.assignedWorkers ?? []).map((worker) => (
+                                  <div
+                                    key={`${event.id}-${worker.staffId}`}
+                                    className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-2 py-2 dark:border-slate-700 dark:bg-slate-900/60"
+                                  >
+                                    <div className="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[#295786] text-[10px] font-bold text-white">
+                                      <img
+                                        src={getStaffPhotoUrl(worker.cedula)}
+                                        alt={`Foto de ${worker.nombreCompleto}`}
+                                        className="h-full w-full object-cover"
+                                        onError={(event) => {
+                                          const image = event.currentTarget;
+                                          image.style.display = "none";
+                                          const fallback = image.parentElement?.querySelector<HTMLElement>("[data-notification-worker-fallback='true']");
+                                          fallback?.classList.remove("hidden");
+                                        }}
+                                        onLoad={(event) => {
+                                          const image = event.currentTarget;
+                                          const fallback = image.parentElement?.querySelector<HTMLElement>("[data-notification-worker-fallback='true']");
+                                          fallback?.classList.add("hidden");
+                                          image.style.display = "block";
+                                        }}
+                                      />
+                                      <div data-notification-worker-fallback="true" className="hidden items-center justify-center">
+                                        {getStaffInitials(worker.nombreCompleto)}
+                                      </div>
+                                    </div>
+                                    <div className="min-w-0">
+                                      <p className="truncate text-xs font-semibold text-slate-900 dark:text-white">{worker.nombreCompleto}</p>
+                                      <p className="truncate text-[10px] text-slate-500 dark:text-slate-400">{worker.rol}</p>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800 dark:border-amber-400/30 dark:bg-amber-400/10 dark:text-amber-200">
+                                No hay encargado asignado.
+                              </div>
+                            )}
+                          </div>
+
+                          <p className="mt-2 text-xs font-semibold text-[#295786] dark:text-slate-200">Ver auditorio</p>
                         </button>
-                      ))
+                        );
+                      })
                     ) : (
                       <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-4 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
-                        Sin notificaciones por ahora. Las solicitudes pendientes aparecerán aquí cuando estén disponibles.
+                        Sin notificaciones por ahora. Aquí verás los eventos de auditorio de las próximas horas.
                       </div>
                     )}
-                  </div>
-                ) : authSession.role === "monitor" ? (
-                  <div className="mt-4 rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-4 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
-                    Sin notificaciones por ahora. Aquí verás el estado de tus solicitudes cuando se activen.
                   </div>
                 ) : (
                   <div className="mt-4 rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-4 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">

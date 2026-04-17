@@ -18,7 +18,7 @@ const nextConfig: NextConfig = {
     return {
       beforeFiles: [
         {
-          source: "/api/:path*",
+          source: "/api/:path((?!staff-photo(?:/|$)).*)",
           destination: `${backendBase}/api/:path*`,
         },
       ],
