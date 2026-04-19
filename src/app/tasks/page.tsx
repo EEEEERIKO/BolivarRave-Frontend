@@ -334,7 +334,6 @@ export default function TasksPage() {
     rechazoEstado: "Corregir",
     observacionesRevision: "",
   });
-  const [showRecurrenceAlertModal, setShowRecurrenceAlertModal] = useState(false);
   const [showCatalogValidationModal, setShowCatalogValidationModal] = useState(false);
 
   const catalogById = useMemo(() => new Map(catalog.map((item) => [item.id, item])), [catalog]);
@@ -856,25 +855,6 @@ export default function TasksPage() {
             ? `Tareas de catalogo creadas correctamente (${createdCount}).`
             : "Tarea de catalogo creada correctamente.",
       });
-
-        // Preparar mensaje con información de la tarea
-        const taskSummary = [
-          `📋 ${nombre}`,
-          `📁 Tipo: ${catalogForm.tipo}`,
-          `📍 Lugar(es): ${selectedCatalogLocations.join(", ")}`,
-          `👥 Cantidad de personal: ${cantidadPersonal}`,
-          `⏱️ Tiempo estimado: ${tiempoEstimadoMin} min`,
-          catalogForm.tipo === "Recurrente"
-            ? `🔄 Recurrencia: ${catalogForm.programacionRecurrente === "programada" ? "Programada" : "Diaria en cualquier momento"}`
-            : `📅 Fecha/Hora: ${catalogForm.fechaEsporadica} ${catalogForm.horaEsporadica}`,
-        ].join("\n");
-
-        setNotice({
-          kind: "success",
-          text: isEditing
-            ? `✅ Tarea actualizada\n\n${taskSummary}`
-            : `✅ Tarea creada\n\n${taskSummary}`,
-        });
       await refresh();
     } catch (error) {
       setNotice({ kind: "error", text: error instanceof Error ? error.message : "No se pudo guardar la tarea de catalogo." });
@@ -1554,44 +1534,22 @@ export default function TasksPage() {
                 </div>
               ) : null}
 
-              {catalogForm.tipo === "Recurrente" && !catalogForm.programacionRecurrente ? (
-                <div className="space-y-2 sm:col-span-2 lg:col-span-6">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCatalogForm((current) => ({ ...current, programacionRecurrente: "programada" }));
-                      setShowRecurrenceAlertModal(false);
-                    }}
-                    className="w-full rounded-md bg-sky-100 px-3 py-2.5 text-left text-xs font-semibold text-sky-900 transition hover:bg-sky-200 dark:bg-sky-800 dark:text-sky-100 dark:hover:bg-sky-700"
-                  >
-                    Programada por días y hora
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCatalogForm((current) => ({ ...current, programacionRecurrente: "diaria_libre" }));
-                      setShowRecurrenceAlertModal(false);
-                    }}
-                    className="w-full rounded-md bg-sky-100 px-3 py-2.5 text-left text-xs font-semibold text-sky-900 transition hover:bg-sky-200 dark:bg-sky-800 dark:text-sky-100 dark:hover:bg-sky-700"
-                  >
-                    Diaria en cualquier momento
-                  </button>
-                </div>
-              ) : catalogForm.tipo === "Recurrente" ? (
+              {catalogForm.tipo === "Recurrente" ? (
                 <>
                   <div className="space-y-2 rounded-md border border-[#d9e4ea] bg-[#f3f7fa] px-3 py-2 sm:col-span-2 lg:col-span-6">
                     <span className="text-xs font-bold text-slate-500">Tipo de recurrencia</span>
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      <label className="flex items-center gap-2 rounded-md bg-white px-2 py-1 text-xs font-semibold text-slate-700">
-                        <input
-                          type="radio"
-                          name="programacionRecurrente"
-                          checked={catalogForm.programacionRecurrente === "programada"}
-                          onChange={() => setCatalogForm((current) => ({ ...current, programacionRecurrente: "programada" }))}
-                          className="h-4 w-4 border-slate-300 text-slate-900"
-                        />
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                      <button
+                        type="button"
+                        onClick={() => setCatalogForm((current) => ({ ...current, programacionRecurrente: "programada" }))}
+                        className={`flex-1 rounded-md border px-3 py-2.5 text-left text-xs font-semibold transition ${
+                          catalogForm.programacionRecurrente === "programada"
+                            ? "border-[#3a5f94] bg-[#dce8f7] text-[#23456f] shadow-sm"
+                            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                        }`}
+                      >
                         <span className="inline-flex items-center gap-1">
-                          Programada por dias y hora
+                          Programada por días y hora
                           <span
                             title="Usa esta opción si la tarea debe ejecutarse en días específicos y a una hora definida, por ejemplo lunes y miércoles a las 07:00."
                             className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-slate-300 bg-slate-100 text-[10px] font-bold text-slate-600"
@@ -1599,15 +1557,16 @@ export default function TasksPage() {
                             ?
                           </span>
                         </span>
-                      </label>
-                      <label className="flex items-center gap-2 rounded-md bg-white px-2 py-1 text-xs font-semibold text-slate-700">
-                        <input
-                          type="radio"
-                          name="programacionRecurrente"
-                          checked={catalogForm.programacionRecurrente === "diaria_libre"}
-                          onChange={() => setCatalogForm((current) => ({ ...current, programacionRecurrente: "diaria_libre" }))}
-                          className="h-4 w-4 border-slate-300 text-slate-900"
-                        />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCatalogForm((current) => ({ ...current, programacionRecurrente: "diaria_libre" }))}
+                        className={`flex-1 rounded-md border px-3 py-2.5 text-left text-xs font-semibold transition ${
+                          catalogForm.programacionRecurrente === "diaria_libre"
+                            ? "border-[#3a5f94] bg-[#dce8f7] text-[#23456f] shadow-sm"
+                            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                        }`}
+                      >
                         <span className="inline-flex items-center gap-1">
                           Diaria en cualquier momento
                           <span
@@ -1617,7 +1576,7 @@ export default function TasksPage() {
                             ?
                           </span>
                         </span>
-                      </label>
+                      </button>
                     </div>
                   </div>
 
