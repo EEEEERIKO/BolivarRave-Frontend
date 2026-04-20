@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { Rnd, RndDragCallback, RndResizeCallback } from "react-rnd";
 import { fetchApiJson } from "@/lib/api-client";
 import { readAuthSession } from "@/lib/auth-session";
+import { getDisabledRoomKeys, isRoomDisabled, loadSharedScheduleState, setSharedVisualRoomAssignment } from "@/lib/disabled-rooms";
 import { useWebSocketSchedules } from "@/lib/use-websocket-schedules";
 
 const toAmPmLabel = (value: string) => {
@@ -77,6 +78,8 @@ type PendingScopedUpdate = {
   source: "drag" | "resize";
   updatedEvent: ScheduleEvent;
 };
+
+type DisabledVisualAssignmentState = Record<string, string>;
 
 type ReservationType = "normal" | "momentanea" | "iglesia";
 
@@ -526,6 +529,58 @@ const getWeekdayName = (date: Date) => {
   return weekDays[(day + 6) % 7];
 };
 
+const hasTimeOverlap = (aStart: string, aEnd: string, bStart: string, bEnd: string) => {
+  return aStart < bEnd && bStart < aEnd;
+};
+
+const getDisabledVisualAssignmentKey = (eventId: string, targetDateIso: string) => `${eventId}::${targetDateIso}`;
+
+const forbiddenDisabledReassignmentTargets = new Set(
+  [
+    "Laboratorio de análisis de datos y simulación financiera 403",
+    "Laboratorio de simulación financiera 403",
+    "Laboratorio de Desarrollo de Software (LDS) 404",
+    "Laboratorio Múltiple de Física 405",
+    "Laboratorio de Física 405",
+    "Laboratorio de Infantil 204",
+    "Sala Informática 1 Bolivar",
+    "Sala Informática 2 Bolivar",
+  ].map((room) => normalizeKey(canonicalizeRoomName(room)))
+);
+
+const isForbiddenDisabledReassignmentTarget = (room: string) => {
+  return forbiddenDisabledReassignmentTargets.has(normalizeKey(canonicalizeRoomName(room)));
+};
+
+const inferRoomFloor = (room: string): number | null => {
+  const canonicalRoom = canonicalizeRoomName(room);
+  const normalized = normalizeKey(canonicalRoom);
+
+  if (normalized.includes("primer piso")) return 1;
+  if (normalized.includes("segundo piso")) return 2;
+  if (normalized.includes("tercer piso")) return 3;
+  if (normalized.includes("cuarto piso")) return 4;
+  if (normalized.includes("quinto piso")) return 5;
+
+  const pisoMatch = normalized.match(/\bpiso\s*(\d)\b/);
+  if (pisoMatch) {
+    const explicitFloor = Number(pisoMatch[1]);
+    if (Number.isInteger(explicitFloor) && explicitFloor > 0) {
+      return explicitFloor;
+    }
+  }
+
+  const numericMatch = canonicalRoom.match(/\b(\d{3,4})\b/);
+  if (numericMatch) {
+    const firstDigit = Number(numericMatch[1].slice(0, 1));
+    if (Number.isInteger(firstDigit) && firstDigit > 0) {
+      return firstDigit;
+    }
+  }
+
+  return null;
+};
+
 const startOfWeekMonday = (date: Date) => {
   const copy = new Date(date.getFullYear(), date.getMonth(), date.getDate());
   const day = copy.getDay();
@@ -725,7 +780,9 @@ export default function SchedulesPage() {
   });
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [events, setEvents] = useState<ScheduleEvent[]>(fastInitialSnapshot?.events ?? []);
+  const [disabledRoomNames, setDisabledRoomNames] = useState<string[]>([]);
   const [pendingRequests, setPendingRequests] = useState<ScheduleRequest[]>([]);
+  const [disabledVisualAssignments, setDisabledVisualAssignments] = useState<DisabledVisualAssignmentState>({});
   const [roomCatalog, setRoomCatalog] = useState<string[]>(
     fastInitialSnapshot?.rooms?.length ? fastInitialSnapshot.rooms : rooms
   );
@@ -733,6 +790,7 @@ export default function SchedulesPage() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isRequestMode, setIsRequestMode] = useState(false);
   const [requestEditId, setRequestEditId] = useState<string | null>(null);
+  const [requestEditEventId, setRequestEditEventId] = useState<string | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
   const [isCreatingEvent, setIsCreatingEvent] = useState(false);
   const [requestActionState, setRequestActionState] = useState<{ requestId: string; status: "aprobada" | "rechazada" } | null>(null);
@@ -757,6 +815,7 @@ export default function SchedulesPage() {
   const authSession = useMemo(() => readAuthSession(), []);
   const canManageSchedules = authSession?.role === "admin";
   const canRequestSchedule = authSession?.role === "monitor";
+  const disabledRoomKeys = useMemo(() => getDisabledRoomKeys(disabledRoomNames), [disabledRoomNames]);
 
   useEffect(() => {
     pendingScopedUpdateRef.current = pendingScopedUpdate;
@@ -774,11 +833,18 @@ export default function SchedulesPage() {
     return "blue";
   };
 
+  const isNotFoundApiError = (error: unknown) => {
+    if (!(error instanceof Error)) return false;
+    const message = error.message.toLowerCase();
+    return message.includes("404") || message.includes("no se encontro") || message.includes("no se encontró");
+  };
+
   const syncSchedulesFromApi = async () => {
-    const [eventsBody, roomsBody, requestsBody] = await Promise.all([
+    const [eventsBody, roomsBody, requestsBody, sharedState] = await Promise.all([
       fetchApiJson<{ events?: ScheduleEvent[] }>("/api/schedules/events", { cache: "no-store" }),
       fetchApiJson<{ rooms?: string[] }>("/api/schedules/rooms", { cache: "no-store" }),
       canManageSchedules ? fetchApiJson<{ requests?: ScheduleRequest[] }>("/api/schedules/requests", { cache: "no-store" }) : Promise.resolve({ requests: [] as ScheduleRequest[] }),
+      loadSharedScheduleState(),
     ]);
 
     const loadedEvents = normalizeLoadedEvents(eventsBody.events ?? [], normalizeColor);
@@ -797,6 +863,14 @@ export default function SchedulesPage() {
     } else {
       setPendingRequests([]);
     }
+
+    setDisabledRoomNames(sharedState.disabledRooms);
+    setDisabledVisualAssignments(
+      (sharedState.visualAssignments ?? []).reduce<DisabledVisualAssignmentState>((accumulator, assignment) => {
+        accumulator[`${assignment.eventId}::${assignment.targetDate}`] = assignment.roomName;
+        return accumulator;
+      }, {})
+    );
   };
 
   // Close week picker when clicking outside
@@ -847,16 +921,24 @@ export default function SchedulesPage() {
         setRemoteLoadError(null);
         console.info("[Schedules] Loading events and rooms from API");
 
-        const [eventsBody, roomsBody] = await Promise.all([
+        const [eventsBody, roomsBody, sharedState] = await Promise.all([
           fetchApiJson<{ events?: ScheduleEvent[] }>("/api/schedules/events", { cache: "no-store" }),
           fetchApiJson<{ rooms?: string[] }>("/api/schedules/rooms", { cache: "no-store" }),
+          loadSharedScheduleState(),
         ]);
 
         if (cancelled) return;
 
         const loadedEvents = normalizeLoadedEvents(eventsBody.events ?? [], normalizeColor);
-
         setEvents(loadedEvents);
+
+        setDisabledRoomNames(sharedState.disabledRooms);
+        setDisabledVisualAssignments(
+          (sharedState.visualAssignments ?? []).reduce<DisabledVisualAssignmentState>((accumulator, assignment) => {
+            accumulator[`${assignment.eventId}::${assignment.targetDate}`] = assignment.roomName;
+            return accumulator;
+          }, {})
+        );
 
         const loadedRooms = normalizeLoadedRooms((roomsBody.rooms ?? []).filter((room) => typeof room === "string" && room.trim().length > 0));
         if (loadedRooms.length > 0) {
@@ -924,6 +1006,7 @@ export default function SchedulesPage() {
     setIsCreatingEvent(false);
     setIsRequestMode(requestMode);
     setRequestEditId(null);
+    setRequestEditEventId(null);
     setNewEvent(
       requestMode
         ? {
@@ -941,6 +1024,7 @@ export default function SchedulesPage() {
     setCreateError(null);
     setIsRequestMode(true);
     setRequestEditId(selectedEvent.requestId);
+    setRequestEditEventId(selectedEvent.classId ?? null);
     setNewEvent({
       reservationType: selectedEvent.reservationType ?? "normal",
       faculty: selectedEvent.faculty,
@@ -1015,7 +1099,7 @@ export default function SchedulesPage() {
     return () => window.clearTimeout(timer);
   }, [selectedEventId, selectedDay, currentWeekStart, events]);
 
-    const requestedEventId = searchParams.get("eventId")?.trim() || null;
+  const requestedEventId = searchParams.get("eventId")?.trim() || null;
 
   useEffect(() => {
     if (!requestedEventId) return;
@@ -1094,11 +1178,95 @@ export default function SchedulesPage() {
     [events, selectedDay, filteredRooms, currentWeekStart]
   );
 
+  const visualReassignmentByEventId = useMemo(() => {
+    const assignments = new Map<string, string | null>();
+    const roomOrder = new Map<string, number>();
+    filteredRooms.forEach((room, index) => roomOrder.set(room, index));
+
+    const availableRooms = filteredRooms.filter(
+      (room) => !isRoomDisabled(room, disabledRoomKeys) && !isForbiddenDisabledReassignmentTarget(room)
+    );
+    const occupancy = new Map<string, Array<{ start: string; end: string }>>();
+
+    visibleEvents.forEach((event) => {
+      if (isRoomDisabled(event.room, disabledRoomKeys)) {
+        return;
+      }
+
+      if (!occupancy.has(event.room)) {
+        occupancy.set(event.room, []);
+      }
+      occupancy.get(event.room)?.push({ start: event.start, end: event.end });
+    });
+
+    const disabledRoomEvents = visibleEvents
+      .filter((event) => isRoomDisabled(event.room, disabledRoomKeys))
+      .sort((a, b) => `${a.start}-${a.id}`.localeCompare(`${b.start}-${b.id}`));
+
+    disabledRoomEvents.forEach((event) => {
+      const sourceFloor = inferRoomFloor(event.room);
+      const prioritizedRooms = [...availableRooms].sort((leftRoom, rightRoom) => {
+        const leftFloor = inferRoomFloor(leftRoom);
+        const rightFloor = inferRoomFloor(rightRoom);
+
+        if (sourceFloor !== null) {
+          const leftDistance = leftFloor === null ? Number.MAX_SAFE_INTEGER : Math.abs(leftFloor - sourceFloor);
+          const rightDistance = rightFloor === null ? Number.MAX_SAFE_INTEGER : Math.abs(rightFloor - sourceFloor);
+          if (leftDistance !== rightDistance) {
+            return leftDistance - rightDistance;
+          }
+        }
+
+        const leftOrder = roomOrder.get(leftRoom) ?? Number.MAX_SAFE_INTEGER;
+        const rightOrder = roomOrder.get(rightRoom) ?? Number.MAX_SAFE_INTEGER;
+        return leftOrder - rightOrder;
+      });
+
+      const targetRoom = prioritizedRooms.find((room) => {
+        const intervals = occupancy.get(room) ?? [];
+        return intervals.every((interval) => !hasTimeOverlap(interval.start, interval.end, event.start, event.end));
+      });
+
+      assignments.set(event.id, targetRoom ?? null);
+
+      if (targetRoom) {
+        if (!occupancy.has(targetRoom)) {
+          occupancy.set(targetRoom, []);
+        }
+        occupancy.get(targetRoom)?.push({ start: event.start, end: event.end });
+      }
+    });
+
+    return assignments;
+  }, [visibleEvents, filteredRooms, disabledRoomKeys]);
+
   const selectedDayDateIso = useMemo(() => {
     const selectedDayIndex = weekDays.indexOf(selectedDay);
     if (selectedDayIndex < 0) return toIsoLocalDate(currentWeekStart);
     return toIsoLocalDate(addDays(currentWeekStart, selectedDayIndex));
   }, [currentWeekStart, selectedDay]);
+
+  const resolvedVisualRoomByEventId = useMemo(() => {
+    const resolved = new Map<string, string | null>();
+
+    visibleEvents.forEach((event) => {
+      if (!isRoomDisabled(event.room, disabledRoomKeys)) {
+        return;
+      }
+
+      const manualKey = getDisabledVisualAssignmentKey(event.id, selectedDayDateIso);
+      const manualRoom = disabledVisualAssignments[manualKey];
+      const isManualRoomValid =
+        Boolean(manualRoom) &&
+        filteredRooms.includes(manualRoom) &&
+        !isRoomDisabled(manualRoom, disabledRoomKeys) &&
+        !isForbiddenDisabledReassignmentTarget(manualRoom);
+
+      resolved.set(event.id, isManualRoomValid ? manualRoom : (visualReassignmentByEventId.get(event.id) ?? null));
+    });
+
+    return resolved;
+  }, [visibleEvents, disabledRoomKeys, selectedDayDateIso, disabledVisualAssignments, filteredRooms, visualReassignmentByEventId]);
 
   const applyLocalScopedUpdate = (id: string, updatedEvent: ScheduleEvent, targetDate: string, updateScope: UpdateScope) => {
     if (updateScope === "always") {
@@ -1281,6 +1449,9 @@ export default function SchedulesPage() {
   const isTodayInVisibleWeek = dateValue(colombiaToday) >= dateValue(currentWeekStart) && dateValue(colombiaToday) <= dateValue(currentWeekEnd);
   const showCurrentTimeMarker = normalizeDayKey(selectedDay) === normalizeDayKey(getWeekdayName(colombiaToday)) && isTodayInVisibleWeek;
   const selectedEvent = events.find((event) => event.id === selectedEventId) ?? null;
+  const selectedVisibleEvent = visibleEvents.find((event) => event.id === selectedEventId) ?? selectedEvent;
+  const selectedEventInDisabledRoom = selectedVisibleEvent ? isRoomDisabled(selectedVisibleEvent.room, disabledRoomKeys) : false;
+  const selectedEventVisualRoom = selectedVisibleEvent ? (resolvedVisualRoomByEventId.get(selectedVisibleEvent.id) ?? null) : null;
   const selectedReservationType = selectedEvent ? inferReservationType(selectedEvent) : null;
   const selectedRequestActionStatus =
     selectedEvent?.requestId && requestActionState?.requestId === selectedEvent.requestId ? requestActionState.status : null;
@@ -1290,8 +1461,10 @@ export default function SchedulesPage() {
     canRequestSchedule &&
     selectedEvent?.requestId &&
     selectedEvent.requestStatus === "pendiente" &&
-    selectedEvent.requestedByStaffId &&
-    selectedEvent.requestedByStaffId === authSession?.staffId,
+    (
+      !selectedEvent.requestedByStaffId ||
+      selectedEvent.requestedByStaffId === authSession?.staffId
+    ),
   );
 
   const timeColWidth = gridViewportWidth > 0 && gridViewportWidth < 640 ? 78 : 96;
@@ -1396,6 +1569,38 @@ export default function SchedulesPage() {
     };
   };
 
+  const handleDisabledVisualDragStop = (eventItem: ScheduleEvent): RndDragCallback => {
+    return (_event, data) => {
+      const newRoomIndex = Math.min(
+        filteredRooms.length - 1,
+        Math.max(0, Math.round((data.x - 4 - timeColWidth) / roomColWidth))
+      );
+
+      const targetRoom = filteredRooms[newRoomIndex] ?? "";
+      if (!targetRoom) return;
+      if (isRoomDisabled(targetRoom, disabledRoomKeys)) return;
+      if (isForbiddenDisabledReassignmentTarget(targetRoom)) return;
+
+      void setSharedVisualRoomAssignment({
+        eventId: eventItem.id,
+        targetDate: selectedDayDateIso,
+        roomName: targetRoom,
+      })
+        .then((sharedState) => {
+          setDisabledRoomNames(sharedState.disabledRooms);
+          setDisabledVisualAssignments(
+            (sharedState.visualAssignments ?? []).reduce<DisabledVisualAssignmentState>((accumulator, assignment) => {
+              accumulator[`${assignment.eventId}::${assignment.targetDate}`] = assignment.roomName;
+              return accumulator;
+            }, {})
+          );
+        })
+        .catch((error) => {
+          console.error("No se pudo guardar la reasignacion visual:", error);
+        });
+    };
+  };
+
   const handleResizeStop = (id: string): RndResizeCallback => {
     return (_event, _direction, ref, _delta, position) => {
       const newRoomIndex = Math.min(
@@ -1458,6 +1663,14 @@ export default function SchedulesPage() {
       return;
     }
 
+    const editingRequestClassId = requestEditId
+      ? (
+        selectedEvent?.classId ??
+        events.find((item) => item.requestId === requestEditId)?.classId ??
+        null
+      )
+      : null;
+
     for (let i = 0; i < newEvent.slots.length; i++) {
       const slot = newEvent.slots[i];
       const effectiveDay = forcedMomentaneaDay ?? slot.day;
@@ -1496,6 +1709,18 @@ export default function SchedulesPage() {
       }
 
       const overlappingClass = events.find((existing) => {
+        if (
+          editingRequestClassId &&
+          existing.classId &&
+          existing.classId === editingRequestClassId
+        ) {
+          return false;
+        }
+
+        if (requestEditId && existing.requestId === requestEditId) {
+          return false;
+        }
+
         if (existing.day !== effectiveDay || existing.room !== slot.room) {
           return false;
         }
@@ -1613,25 +1838,60 @@ export default function SchedulesPage() {
     setIsCreatingEvent(true);
 
     try {
-      const createEndpoint = isRequestMode
-        ? (requestEditId ? `/api/schedules/requests/${requestEditId}` : "/api/schedules/requests")
-        : "/api/schedules/events";
-      const createResponse = await fetchApiJson<{ message: string; eventId: string }>(createEndpoint, {
-        method: isRequestMode && requestEditId ? "PUT" : "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          reservationType: newEvent.reservationType,
-          faculty: normalizedFaculty || "Sin facultad",
-          code: normalizedCode || "SIN-CODIGO",
-          subject: normalizedSubject || "CLASE NUEVA",
-          teacher: normalizedTeacher || "DOCENTE PENDIENTE",
-          startDate: baseStartDate,
-          endDate: baseEndDate,
-          slots: payloadSlots,
-        }),
-      });
+      const requestPayload = {
+        reservationType: newEvent.reservationType,
+        faculty: normalizedFaculty || "Sin facultad",
+        code: normalizedCode || "SIN-CODIGO",
+        subject: normalizedSubject || "CLASE NUEVA",
+        teacher: normalizedTeacher || "DOCENTE PENDIENTE",
+        startDate: baseStartDate,
+        endDate: baseEndDate,
+        slots: payloadSlots,
+      };
+
+      let createResponse: { message: string; eventId: string };
+
+      if (isRequestMode && (requestEditId || requestEditEventId)) {
+        const editEndpoints = [
+          requestEditId ? `/api/schedules/requests/${requestEditId}` : null,
+          requestEditEventId ? `/api/schedules/requests/event/${requestEditEventId}` : null,
+        ].filter((value): value is string => Boolean(value));
+
+        let lastError: unknown = null;
+
+        for (const [index, endpoint] of editEndpoints.entries()) {
+          try {
+            createResponse = await fetchApiJson<{ message: string; eventId: string }>(endpoint, {
+              method: "PUT",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify(requestPayload),
+            });
+            lastError = null;
+            break;
+          } catch (error) {
+            lastError = error;
+            const isLastEndpoint = index === editEndpoints.length - 1;
+            if (!isNotFoundApiError(error) || isLastEndpoint) {
+              throw error;
+            }
+          }
+        }
+
+        if (lastError) {
+          throw lastError;
+        }
+      } else {
+        const createEndpoint = isRequestMode ? "/api/schedules/requests" : "/api/schedules/events";
+        createResponse = await fetchApiJson<{ message: string; eventId: string }>(createEndpoint, {
+          method: isRequestMode ? "POST" : "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(requestPayload),
+        });
+      }
 
       const normalizeColor = (value: string): ScheduleEvent["color"] => {
         if (value === "blue" || value === "emerald" || value === "amber" || value === "violet" || value === "red") {
@@ -2112,19 +2372,46 @@ export default function SchedulesPage() {
     })();
   };
 
-  const deleteOwnRequest = (requestId: string) => {
+  const deleteOwnRequest = (requestId: string, eventId?: string) => {
     void (async () => {
       if (!window.confirm("¿Quieres eliminar esta solicitud pendiente?")) {
         return;
       }
 
       try {
-        await fetchApiJson<{ message: string }>(`/api/schedules/requests/${requestId}`, {
-          method: "DELETE",
-          headers: {
-            "Content-Type": "application/json",
-          },
-        });
+        const endpoints = [
+          requestId ? `/api/schedules/requests/${requestId}` : null,
+          eventId ? `/api/schedules/requests/event/${eventId}` : null,
+        ].filter((value): value is string => Boolean(value));
+
+        if (endpoints.length === 0) {
+          throw new Error("No se pudo identificar la solicitud a eliminar");
+        }
+
+        let lastError: unknown = null;
+
+        for (const [index, endpoint] of endpoints.entries()) {
+          try {
+            await fetchApiJson<{ message: string }>(endpoint, {
+              method: "DELETE",
+              headers: {
+                "Content-Type": "application/json",
+              },
+            });
+            lastError = null;
+            break;
+          } catch (error) {
+            lastError = error;
+            const isLastEndpoint = index === endpoints.length - 1;
+            if (!isNotFoundApiError(error) || isLastEndpoint) {
+              throw error;
+            }
+          }
+        }
+
+        if (lastError) {
+          throw lastError;
+        }
 
         await syncSchedulesFromApi();
         setSelectedEventId(null);
@@ -2381,10 +2668,19 @@ export default function SchedulesPage() {
                 {filteredRooms.map((room, roomIndex) => (
                   <div
                     key={`header-${room}-${roomIndex}`}
-                    className="sticky top-0 z-20 border-r border-b border-slate-200 bg-white px-3 py-2"
+                    className={`sticky top-0 z-20 border-r border-b px-3 py-2 ${
+                      isRoomDisabled(room, disabledRoomKeys)
+                        ? "border-red-200 bg-red-50"
+                        : "border-slate-200 bg-white"
+                    }`}
                     suppressHydrationWarning
                   >
-                    <p className="line-clamp-2 text-xs font-semibold text-slate-700">{room}</p>
+                    <p className={`line-clamp-2 text-xs font-semibold ${isRoomDisabled(room, disabledRoomKeys) ? "text-red-700" : "text-slate-700"}`}>
+                      {room}
+                    </p>
+                    {isRoomDisabled(room, disabledRoomKeys) ? (
+                      <p className="mt-0.5 text-[10px] font-semibold tracking-wide text-red-600 uppercase">Inhabilitado</p>
+                    ) : null}
                   </div>
                 ))}
 
@@ -2411,11 +2707,13 @@ export default function SchedulesPage() {
                         className={`border-r border-b transition-colors ${
                           rowIndex === currentTimeSlotIndex && showCurrentTimeMarker
                             ? "border-t-4 border-t-red-600 bg-red-100 hover:bg-red-200"
+                            : isRoomDisabled(room, disabledRoomKeys)
+                              ? "border-red-100 bg-red-50/60 hover:bg-red-100"
                             : "border-slate-100 hover:bg-[#295786]/5"
                         }`}
                         style={{ gridRow: rowIndex + 2, gridColumn: roomIndex + 2 }}
                         onClick={() => setSelectedEventId(null)}
-                        title={`${room} - ${(() => {
+                        title={`${room}${isRoomDisabled(room, disabledRoomKeys) ? " (inhabilitado)" : ""} - ${(() => {
                           const [slotStart = "", slotEnd = ""] = slot.split("-");
                           return `${toAmPmLabel(slotStart)} - ${toAmPmLabel(slotEnd)}`;
                         })()}`}
@@ -2426,87 +2724,214 @@ export default function SchedulesPage() {
               </div>
 
               {visibleEvents.map((event) => {
-                const geom = eventGeometry(event, filteredRooms);
-                if (geom.roomIndex < 0) return null;
-
+                const isEventInDisabledRoom = isRoomDisabled(event.room, disabledRoomKeys);
+                const visualReassignedRoom = isEventInDisabledRoom ? (resolvedVisualRoomByEventId.get(event.id) ?? null) : null;
+                const originalGeom = eventGeometry(event, filteredRooms);
+                const reassignedEvent = visualReassignedRoom ? { ...event, room: visualReassignedRoom } : null;
+                const reassignedGeom = reassignedEvent ? eventGeometry(reassignedEvent, filteredRooms) : null;
                 const isEventSelected = selectedEventId === event.id;
-                const hasEnoughSpace = geom.span >= 4;
                 const isPendingRequest = event.requestStatus === "pendiente";
                 const reservationType = inferReservationType(event);
                 const reservationBadge =
                   isPendingRequest
                     ? "PENDIENTE"
                     : reservationType === "momentanea"
-                    ? "RESERVA DIA"
-                    : reservationType === "iglesia"
-                      ? "RESERVA IGLESIA"
-                      : null;
+                      ? "RESERVA DIA"
+                      : reservationType === "iglesia"
+                        ? "RESERVA IGLESIA"
+                        : null;
+
+                if (!isEventInDisabledRoom) {
+                  if (originalGeom.roomIndex < 0) return null;
+
+                  const hasEnoughSpace = originalGeom.span >= 4;
+
+                  return (
+                    <Rnd
+                      key={event.id}
+                      bounds="parent"
+                      dragGrid={[roomColWidth, slotHeight]}
+                      resizeGrid={[roomColWidth, slotHeight]}
+                      disableDragging={!isEventSelected || !canManageSchedules || isPendingRequest}
+                      size={{ width: originalGeom.width, height: originalGeom.height }}
+                      position={{ x: originalGeom.x, y: originalGeom.y }}
+                      enableResizing={
+                        isEventSelected && canManageSchedules && !isPendingRequest
+                          ? {
+                              top: true,
+                              right: false,
+                              bottom: true,
+                              left: false,
+                              topRight: false,
+                              bottomRight: false,
+                              bottomLeft: false,
+                              topLeft: false,
+                            }
+                          : {
+                              top: false,
+                              right: false,
+                              bottom: false,
+                              left: false,
+                              topRight: false,
+                              bottomRight: false,
+                              bottomLeft: false,
+                              topLeft: false,
+                            }
+                      }
+                      onDragStop={handleDragStop(event.id, originalGeom.span)}
+                      onResizeStop={handleResizeStop(event.id)}
+                      onClick={() => {
+                        setSelectedEventId(event.id);
+                        setIsEditMode(false);
+                        setEditError(null);
+                      }}
+                      className={`z-10 overflow-hidden rounded-lg border-l-4 p-2 text-left shadow-sm transition hover:shadow-md ${getEventVisualClass(event)} ${
+                        isEventSelected && canManageSchedules && !isPendingRequest ? "ring-2 ring-[#295786] cursor-grab active:cursor-grabbing" : "cursor-pointer"
+                      }`}
+                      minHeight={slotHeight - 8}
+                      minWidth={roomColWidth - 8}
+                    >
+                      <div data-schedule-event-id={event.id} className="h-full">
+                        {reservationBadge ? (
+                          <p className="mb-1 inline-flex rounded-full border border-slate-400 bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-slate-700">
+                            {reservationBadge}
+                          </p>
+                        ) : null}
+                        <p className={`text-[11px] font-semibold opacity-80 ${hasEnoughSpace ? "whitespace-normal break-words" : "truncate"}`}>
+                          {event.faculty}
+                        </p>
+                        <p className={`text-sm font-bold ${hasEnoughSpace ? "whitespace-normal break-words" : "truncate"}`}>
+                          {event.code} | {event.subject}
+                        </p>
+                        <p className={`mt-1 text-[11px] font-medium ${hasEnoughSpace ? "whitespace-normal break-words" : "truncate"}`}>
+                          {event.teacher}
+                        </p>
+                        <p className={`text-[11px] ${hasEnoughSpace ? "whitespace-normal" : "truncate"}`}>
+                          {event.start} - {event.end}
+                        </p>
+                      </div>
+                    </Rnd>
+                  );
+                }
+
+                const hasEnoughSpace = Math.max(originalGeom.span, reassignedGeom?.span ?? 1) >= 4;
 
                 return (
-                  <Rnd
-                    key={event.id}
-                    bounds="parent"
-                    dragGrid={[roomColWidth, slotHeight]}
-                    resizeGrid={[roomColWidth, slotHeight]}
-                    disableDragging={!isEventSelected || !canManageSchedules || isPendingRequest}
-                    size={{ width: geom.width, height: geom.height }}
-                    position={{ x: geom.x, y: geom.y }}
-                    enableResizing={
-                      isEventSelected && canManageSchedules && !isPendingRequest
-                        ? {
-                            top: true,
-                            right: false,
-                            bottom: true,
-                            left: false,
-                            topRight: false,
-                            bottomRight: false,
-                            bottomLeft: false,
-                            topLeft: false,
-                          }
-                        : {
-                            top: false,
-                            right: false,
-                            bottom: false,
-                            left: false,
-                            topRight: false,
-                            bottomRight: false,
-                            bottomLeft: false,
-                            topLeft: false,
-                          }
-                    }
-                    onDragStop={handleDragStop(event.id, geom.span)}
-                    onResizeStop={handleResizeStop(event.id)}
-                    onClick={() => {
-                      setSelectedEventId(event.id);
-                      setIsEditMode(false);
-                      setEditError(null);
-                    }}
-                    className={`z-10 overflow-hidden rounded-lg border-l-4 p-2 text-left shadow-sm transition hover:shadow-md ${getEventVisualClass(event)} ${
-                      isEventSelected && canManageSchedules && !isPendingRequest ? "ring-2 ring-[#295786] cursor-grab active:cursor-grabbing" : "cursor-pointer"
-                    }`}
-                    minHeight={slotHeight - 8}
-                    minWidth={roomColWidth - 8}
-                  >
-                    <div data-schedule-event-id={event.id} className="h-full">
-                      {reservationBadge ? (
-                        <p className="mb-1 inline-flex rounded-full border border-slate-400 bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-slate-700">
-                          {reservationBadge}
-                        </p>
-                      ) : null}
-                      <p className={`text-[11px] font-semibold opacity-80 ${hasEnoughSpace ? "whitespace-normal break-words" : "truncate"}`}>
-                        {event.faculty}
-                      </p>
-                      <p className={`text-sm font-bold ${hasEnoughSpace ? "whitespace-normal break-words" : "truncate"}`}>
-                        {event.code} | {event.subject}
-                      </p>
-                      <p className={`mt-1 text-[11px] font-medium ${hasEnoughSpace ? "whitespace-normal break-words" : "truncate"}`}>
-                        {event.teacher}
-                      </p>
-                      <p className={`text-[11px] ${hasEnoughSpace ? "whitespace-normal" : "truncate"}`}>
-                        {event.start} - {event.end}
-                      </p>
-                    </div>
-                  </Rnd>
+                  <Fragment key={`${event.id}-disabled-room-pair`}>
+                    {originalGeom.roomIndex >= 0 ? (
+                      <Rnd
+                        key={`${event.id}-original`}
+                        bounds="parent"
+                        dragGrid={[roomColWidth, slotHeight]}
+                        resizeGrid={[roomColWidth, slotHeight]}
+                        disableDragging
+                        size={{ width: originalGeom.width, height: originalGeom.height }}
+                        position={{ x: originalGeom.x, y: originalGeom.y }}
+                        enableResizing={{
+                          top: false,
+                          right: false,
+                          bottom: false,
+                          left: false,
+                          topRight: false,
+                          bottomRight: false,
+                          bottomLeft: false,
+                          topLeft: false,
+                        }}
+                        onClick={() => {
+                          setSelectedEventId(event.id);
+                          setIsEditMode(false);
+                          setEditError(null);
+                        }}
+                        className={`z-10 overflow-hidden rounded-lg border-l-4 p-2 text-left shadow-sm transition hover:shadow-md bg-red-50 border-red-700 text-red-900 border-2 ${
+                          isEventSelected && canManageSchedules ? "ring-2 ring-[#295786] cursor-default" : "cursor-default"
+                        }`}
+                        minHeight={slotHeight - 8}
+                        minWidth={roomColWidth - 8}
+                      >
+                        <div data-schedule-event-id={event.id} className="h-full">
+                          {reservationBadge ? (
+                            <p className="mb-1 inline-flex rounded-full border border-red-300 bg-white px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-red-700">
+                              {reservationBadge}
+                            </p>
+                          ) : null}
+                          <p className="mb-1 inline-flex rounded-full border border-red-300 bg-white px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-red-700">
+                            ORIGINAL
+                          </p>
+                          <p className={`text-[11px] font-semibold opacity-80 ${hasEnoughSpace ? "whitespace-normal break-words" : "truncate"}`}>
+                            {event.faculty}
+                          </p>
+                          <p className={`text-sm font-bold ${hasEnoughSpace ? "whitespace-normal break-words" : "truncate"}`}>
+                            {event.code} | {event.subject}
+                          </p>
+                          <p className={`mt-1 text-[11px] font-medium ${hasEnoughSpace ? "whitespace-normal break-words" : "truncate"}`}>
+                            {event.teacher}
+                          </p>
+                          <p className={`text-[11px] ${hasEnoughSpace ? "whitespace-normal" : "truncate"}`}>
+                            {event.start} - {event.end}
+                          </p>
+                          <p className={`mt-1 text-[10px] font-bold ${hasEnoughSpace ? "whitespace-normal" : "truncate"}`}>
+                            Inhabilitado. Se reasignó visualmente en {visualReassignedRoom ?? "sin salón alterno"}.
+                          </p>
+                        </div>
+                      </Rnd>
+                    ) : null}
+
+                    {reassignedGeom && visualReassignedRoom ? (
+                      <Rnd
+                        key={`${event.id}-reassigned`}
+                        bounds="parent"
+                        dragGrid={[roomColWidth, slotHeight]}
+                        resizeGrid={[roomColWidth, slotHeight]}
+                        disableDragging={!isEventSelected || !canManageSchedules}
+                        size={{ width: reassignedGeom.width, height: reassignedGeom.height }}
+                        position={{ x: reassignedGeom.x, y: reassignedGeom.y }}
+                        enableResizing={{
+                          top: false,
+                          right: false,
+                          bottom: false,
+                          left: false,
+                          topRight: false,
+                          bottomRight: false,
+                          bottomLeft: false,
+                          topLeft: false,
+                        }}
+                        onDragStop={handleDisabledVisualDragStop(event)}
+                        onClick={() => {
+                          setSelectedEventId(event.id);
+                          setIsEditMode(false);
+                          setEditError(null);
+                        }}
+                        className={`z-10 overflow-hidden rounded-lg border-l-4 p-2 text-left shadow-sm transition hover:shadow-md bg-red-50 border-red-700 text-red-900 border-2 ${
+                          isEventSelected && canManageSchedules ? "ring-2 ring-[#295786] cursor-grab active:cursor-grabbing" : "cursor-pointer"
+                        }`}
+                        minHeight={slotHeight - 8}
+                        minWidth={roomColWidth - 8}
+                      >
+                        <div data-schedule-event-id={event.id} className="h-full">
+                          {reservationBadge ? (
+                            <p className="mb-1 inline-flex rounded-full border border-red-300 bg-white px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-red-700">
+                              {reservationBadge}
+                            </p>
+                          ) : null}
+                          <p className={`text-[11px] font-semibold opacity-80 ${hasEnoughSpace ? "whitespace-normal break-words" : "truncate"}`}>
+                            {event.faculty}
+                          </p>
+                          <p className={`text-sm font-bold ${hasEnoughSpace ? "whitespace-normal break-words" : "truncate"}`}>
+                            {event.code} | {event.subject}
+                          </p>
+                          <p className={`mt-1 text-[11px] font-medium ${hasEnoughSpace ? "whitespace-normal break-words" : "truncate"}`}>
+                            {event.teacher}
+                          </p>
+                          <p className={`text-[11px] ${hasEnoughSpace ? "whitespace-normal" : "truncate"}`}>
+                            {event.start} - {event.end}
+                          </p>
+                          <p className={`mt-1 text-[10px] font-bold ${hasEnoughSpace ? "whitespace-normal" : "truncate"}`}>
+                            En {visualReassignedRoom} por inhabilitación. Arrastra para elegir otro salón.
+                          </p>
+                        </div>
+                      </Rnd>
+                    ) : null}
+                  </Fragment>
                 );
               })}
             </div>
@@ -2555,15 +2980,20 @@ export default function SchedulesPage() {
                         Eliminando clase, por favor espera...
                       </div>
                     ) : null}
-                    <p className="text-xs font-semibold text-[#295786]">{selectedEvent.day}</p>
+                    <p className="text-xs font-semibold text-[#295786]">{selectedVisibleEvent?.day ?? selectedEvent.day}</p>
                     <p className="mt-1 inline-flex rounded-full bg-slate-200 px-2 py-0.5 text-xs font-semibold text-slate-700">
                       {reservationTypeLabels[selectedReservationType ?? "normal"]}
                     </p>
                     <h3 className="mt-1 text-base font-bold">{selectedEvent.code} | {selectedEvent.subject}</h3>
                     <p className="mt-2 text-sm text-slate-600">Facultad: {selectedEvent.faculty}</p>
                     <p className="text-sm text-slate-600">Docente: {selectedEvent.teacher}</p>
-                    <p className="text-sm text-slate-600">Salón: {selectedEvent.room}</p>
-                    <p className="text-sm text-slate-600">Horario: {selectedEvent.start} - {selectedEvent.end}</p>
+                    <p className="text-sm text-slate-600">Salón: {selectedVisibleEvent?.room ?? selectedEvent.room}</p>
+                    {selectedEventInDisabledRoom ? (
+                      <p className="text-sm font-semibold text-red-700">
+                        Alerta: salón inhabilitado. {selectedEventVisualRoom ? `Reasignación visual a ${selectedEventVisualRoom}.` : "No hay salón alterno disponible en este horario."}
+                      </p>
+                    ) : null}
+                    <p className="text-sm text-slate-600">Horario: {selectedVisibleEvent?.start ?? selectedEvent.start} - {selectedVisibleEvent?.end ?? selectedEvent.end}</p>
                     <p className="text-sm text-slate-600">Rango: {selectedEvent.startDate} a {selectedEvent.endDate}</p>
                     <p className="text-sm text-slate-600">
                       Estado: {selectedEvent.requestStatus === "pendiente" ? "Pendiente" : selectedEvent.requestStatus === "rechazada" ? "Rechazada" : "Aprobada"}
@@ -2606,7 +3036,7 @@ export default function SchedulesPage() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => selectedEvent.requestId ? deleteOwnRequest(selectedEvent.requestId) : null}
+                          onClick={() => selectedEvent.requestId ? deleteOwnRequest(selectedEvent.requestId, selectedEvent.classId) : null}
                           className="rounded-lg bg-red-600 px-3 py-2 text-sm font-semibold text-white"
                         >
                           Eliminar solicitud

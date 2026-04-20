@@ -129,6 +129,8 @@ type StaffTaskInstanceItem = {
   fechaProgramada: string;
   horaProgramada: string;
   staffAsignadoId: string | null;
+  tiempoEstimadoMin?: number;
+  subtareas?: string[];
 };
 
 type StaffTaskInstancesResponse = {
@@ -144,6 +146,8 @@ type StaffCatalogTaskItem = {
   horaProgramada: string | null;
   fechaEsporadica: string | null;
   horaEsporadica: string | null;
+  tiempoEstimadoMin: number;
+  requerimientos?: string[];
 };
 
 type StaffCatalogTasksResponse = {
@@ -205,8 +209,8 @@ function getTodayIsoDateLocal(): string {
 }
 
 function getCurrentTaskDayIndex(): number {
-  // JS: 0=Sunday..6=Saturday -> App tasks: 0=Monday..6=Sunday
-  return (new Date().getDay() + 6) % 7;
+  // Tasks module stores diasSemana as 0=Domingo..6=Sabado.
+  return new Date().getDay();
 }
 
 function calculateHoursDifference(startTime: string, endTime: string): number {
@@ -2067,10 +2071,23 @@ export default function StaffPage() {
         const todayDayIndex = getCurrentTaskDayIndex();
         const nextMap: Record<string, StaffTaskInstanceItem[]> = {};
         const instanceCatalogIdsByStaff = new Map<string, Set<string>>();
+        const catalogDurationById = new Map<string, number>();
+        const catalogSubtasksById = new Map<string, string[]>();
 
         for (const staffMember of staffList) {
           nextMap[staffMember.id] = [];
           instanceCatalogIdsByStaff.set(staffMember.id, new Set<string>());
+        }
+
+        for (const task of catalogResponse.tasks ?? []) {
+          if (Number.isFinite(task.tiempoEstimadoMin) && task.tiempoEstimadoMin > 0) {
+            catalogDurationById.set(task.id, task.tiempoEstimadoMin);
+          }
+
+          const subtasks = Array.isArray(task.requerimientos)
+            ? task.requerimientos.map((item) => item.trim()).filter(Boolean)
+            : [];
+          catalogSubtasksById.set(task.id, subtasks);
         }
 
         for (const task of instancesResponse.tasks ?? []) {
@@ -2082,7 +2099,11 @@ export default function StaffPage() {
             nextMap[task.staffAsignadoId] = [];
           }
 
-          nextMap[task.staffAsignadoId].push(task);
+          nextMap[task.staffAsignadoId].push({
+            ...task,
+            tiempoEstimadoMin: task.tiempoEstimadoMin ?? (task.tareaCatalogoId ? catalogDurationById.get(task.tareaCatalogoId) : undefined),
+            subtareas: task.tareaCatalogoId ? catalogSubtasksById.get(task.tareaCatalogoId) : undefined,
+          });
 
           if (task.tareaCatalogoId) {
             instanceCatalogIdsByStaff.get(task.staffAsignadoId)?.add(task.tareaCatalogoId);
@@ -2126,6 +2147,8 @@ export default function StaffPage() {
               fechaProgramada: today,
               horaProgramada: scheduledTime,
               staffAsignadoId: staffId,
+              tiempoEstimadoMin: task.tiempoEstimadoMin,
+              subtareas: catalogSubtasksById.get(task.id),
             });
           }
         }
@@ -2524,6 +2547,7 @@ export default function StaffPage() {
   const selectedStaffPendingTasksCount = selectedStaffAssignedTasksToday.filter(
     (task) => task.estado !== "Completada" && task.estado !== "Cancelada" && task.estado !== "Rechazada",
   ).length;
+  const assignedTasksTitle = `Tareas asignadas: ${getCurrentWorkWeekDay()}`;
 
   const getTaskPriorityAccentClass = (priority: TaskPriority): string => {
     if (priority === "Urgente") return "border-rose-500";
@@ -2533,13 +2557,13 @@ export default function StaffPage() {
   };
 
   const renderAssignedTasksPanel = (title: string) => (
-    <section className="rounded-2xl bg-[#e8eff3] p-4 sm:p-5">
-      <div className="mb-3 flex items-center justify-between">
-        <h3 className="flex items-center gap-2 text-sm font-black text-[#153f73]">
-          <span className="material-symbols-outlined">assignment</span>
+    <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5 lg:p-6">
+      <div className="mb-4 flex items-center justify-between gap-2">
+        <h4 className="flex items-center gap-2 text-[11px] font-black tracking-widest text-[#566166] uppercase">
+          <span className="h-1.5 w-1.5 rounded-full bg-[#3a5f94]" />
           {title}
-        </h3>
-        <span className="text-[11px] font-bold text-[#566166]">{selectedStaffPendingTasksCount} pendientes</span>
+        </h4>
+        <span className="text-xs font-semibold text-[#566166]">{selectedStaffPendingTasksCount} pendientes</span>
       </div>
 
       {isLoadingAssignedTasksToday ? (
@@ -2550,35 +2574,52 @@ export default function StaffPage() {
         <div className="space-y-2">
           {selectedStaffAssignedTasksToday.map((task) => {
             const isCompleted = task.estado === "Completada";
-            const dueTimeLabel = formatTimeAmPm(task.horaProgramada);
+            const startTimeLabel = formatTimeAmPm(task.horaProgramada);
+            const estimatedMinutesLabel = Number.isFinite(task.tiempoEstimadoMin ?? NaN) && (task.tiempoEstimadoMin ?? 0) > 0
+              ? `${task.tiempoEstimadoMin} min`
+              : "No definido";
+            const subtasks = Array.isArray(task.subtareas) ? task.subtareas : [];
 
             return (
-              <div
+              <details
                 key={`assigned-task-${task.id}`}
-                className={`flex items-center gap-3 rounded-lg bg-white p-3 shadow-sm ${
+                className={`rounded-lg bg-white shadow-sm ${
                   isCompleted ? "" : `border-l-4 ${getTaskPriorityAccentClass(task.prioridad)}`
                 }`}
               >
-                <input
-                  checked={isCompleted}
-                  className="rounded border-slate-300 text-[#3a5f94] focus:ring-[#3a5f94]"
-                  type="checkbox"
-                  readOnly
-                />
-                <div className="flex-1">
-                  <p className={`text-xs font-bold ${isCompleted ? "text-[#566166] line-through" : "text-[#2a3439]"}`}>
-                    {task.tareaNombre}
-                  </p>
-                  <p className={`text-[10px] ${isCompleted ? "text-slate-400" : "text-[#566166]"}`}>
-                    {isCompleted
-                      ? `Estado: ${task.estado} • Programada a las ${dueTimeLabel}`
-                      : `Prioridad: ${task.prioridad.toLowerCase()} • Vence a las ${dueTimeLabel}`}
-                  </p>
+                <summary className="flex cursor-pointer list-none items-center gap-3 p-3 marker:content-none">
+                  <span className={`material-symbols-outlined text-base ${isCompleted ? "text-green-500" : "text-amber-500"}`}>
+                    {isCompleted ? "check_circle" : "schedule"}
+                  </span>
+                  <div className="flex-1">
+                    <p className={`text-sm font-semibold ${isCompleted ? "text-[#566166] line-through" : "text-[#2a3439]"}`}>
+                      {task.tareaNombre}
+                    </p>
+                    <p className={`text-xs ${isCompleted ? "text-slate-400" : "text-[#566166]"}`}>
+                      {isCompleted
+                        ? `Estado: ${task.estado} • Inicio: ${startTimeLabel} • Estimado: ${estimatedMinutesLabel}`
+                        : `Inicio: ${startTimeLabel} • Estimado: ${estimatedMinutesLabel}`}
+                    </p>
+                  </div>
+                  <span className="material-symbols-outlined text-base text-slate-500">expand_more</span>
+                </summary>
+
+                <div className="border-t border-slate-100 px-3 py-2.5">
+                  <p className="text-xs font-semibold text-slate-500">Subtareas</p>
+                  {subtasks.length === 0 ? (
+                    <p className="mt-1 text-xs text-[#566166]">Sin subtareas registradas.</p>
+                  ) : (
+                    <div className="mt-1.5 space-y-1">
+                      {subtasks.map((subtask, index) => (
+                        <div key={`subtask-${task.id}-${index + 1}`} className="flex items-start gap-2 text-xs text-[#2a3439]">
+                          <span className="material-symbols-outlined text-sm text-slate-400">subdirectory_arrow_right</span>
+                          <span>{subtask}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
-                <span className={`material-symbols-outlined text-base ${isCompleted ? "text-green-500" : "text-amber-500"}`}>
-                  {isCompleted ? "check_circle" : "schedule"}
-                </span>
-              </div>
+              </details>
             );
           })}
         </div>
@@ -4092,7 +4133,7 @@ export default function StaffPage() {
           {selectedStaff && !isCollaborador ? (
           <>
           <div ref={selectedStaffContentRef} className="hidden grid-cols-1 gap-4 xl:grid xl:grid-cols-1 xl:gap-6 2xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,1fr)]">
-            {renderAssignedTasksPanel(`Tareas asignadas: ${selectedStaff?.nombres ?? "Personal"}`)}
+            {renderAssignedTasksPanel(assignedTasksTitle)}
 
             <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5 lg:p-6">
               <h4 className="mb-4 flex items-center gap-2 text-[11px] font-black tracking-widest text-[#566166] uppercase">
@@ -4657,7 +4698,7 @@ export default function StaffPage() {
                       </>
                     ) : null}
 
-                    {mobileDetailTab === "tasks" ? renderAssignedTasksPanel(`Tareas asignadas: ${selectedStaff.nombres}`) : null}
+                    {mobileDetailTab === "tasks" ? renderAssignedTasksPanel(assignedTasksTitle) : null}
 
                     {mobileDetailTab === "daily" ? (
                       <section className="rounded-2xl border border-slate-200 bg-white p-4">

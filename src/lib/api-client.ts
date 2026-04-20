@@ -49,6 +49,10 @@ const toFriendlyApiError = (path: string, message: string, status?: number) => {
     return "Esta acción fue bloqueada por seguridad. Intenta de nuevo o contacta al administrador.";
   }
 
+  if (status === 404 && path.includes("/api/schedules/requests")) {
+    return message;
+  }
+
   if (status === 404) {
     return "No encontramos el recurso solicitado. Es posible que ya haya sido eliminado o movido.";
   }
