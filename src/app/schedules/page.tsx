@@ -25,6 +25,7 @@ type ScheduleEvent = {
   id: string;
   classId?: string;
   requestId?: string;
+  requestedByStaffId?: string;
   day: string;
   room: string;
   start: string;
@@ -51,6 +52,7 @@ type ScheduleRequest = {
   id: string;
   eventId: string;
   status: "pendiente" | "aprobada" | "rechazada";
+  requestedByStaffId?: string;
   requestedByName: string;
   requestedByRole: string;
   faculty: string;
@@ -730,6 +732,7 @@ export default function SchedulesPage() {
   const [remoteLoadError, setRemoteLoadError] = useState<string | null>(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isRequestMode, setIsRequestMode] = useState(false);
+  const [requestEditId, setRequestEditId] = useState<string | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
   const [isCreatingEvent, setIsCreatingEvent] = useState(false);
   const [requestActionState, setRequestActionState] = useState<{ requestId: string; status: "aprobada" | "rechazada" } | null>(null);
@@ -920,6 +923,7 @@ export default function SchedulesPage() {
     setCreateError(null);
     setIsCreatingEvent(false);
     setIsRequestMode(requestMode);
+    setRequestEditId(null);
     setNewEvent(
       requestMode
         ? {
@@ -929,6 +933,36 @@ export default function SchedulesPage() {
           }
         : getInitialNewEvent()
     );
+  };
+
+  const openRequestEditor = () => {
+    if (!selectedEvent?.requestId || !isOwnPendingRequest) return;
+
+    setCreateError(null);
+    setIsRequestMode(true);
+    setRequestEditId(selectedEvent.requestId);
+    setNewEvent({
+      reservationType: selectedEvent.reservationType ?? "normal",
+      faculty: selectedEvent.faculty,
+      code: selectedEvent.code,
+      subject: selectedEvent.subject,
+      teacher: selectedEvent.teacher,
+      startDate: selectedEvent.startDate,
+      endDate: selectedEvent.endDate,
+      oneDayDate: selectedEvent.startDate,
+      churchGroup: "",
+      churchEvent: "",
+      churchContact: "",
+      slots: [
+        {
+          day: selectedEvent.day,
+          room: selectedEvent.room,
+          start: selectedEvent.start,
+          end: selectedEvent.end,
+        },
+      ],
+    });
+    setIsCreateOpen(true);
   };
 
   const centerEventInGrid = (eventId: string) => {
@@ -1203,7 +1237,7 @@ export default function SchedulesPage() {
           start: updatedEvent.start,
           end: updatedEvent.end,
           updateScope,
-          ...(updateScope === "week" ? { targetDate } : {}),
+          targetDate,
         }),
       });
 
@@ -1252,6 +1286,13 @@ export default function SchedulesPage() {
     selectedEvent?.requestId && requestActionState?.requestId === selectedEvent.requestId ? requestActionState.status : null;
   const isRequestActionActive = (requestId: string) => requestActionState?.requestId === requestId;
   const getRequestActionStatus = (requestId: string) => (isRequestActionActive(requestId) ? requestActionState?.status ?? null : null);
+  const isOwnPendingRequest = Boolean(
+    canRequestSchedule &&
+    selectedEvent?.requestId &&
+    selectedEvent.requestStatus === "pendiente" &&
+    selectedEvent.requestedByStaffId &&
+    selectedEvent.requestedByStaffId === authSession?.staffId,
+  );
 
   const timeColWidth = gridViewportWidth > 0 && gridViewportWidth < 640 ? 78 : 96;
   const roomColWidth = useMemo(() => {
@@ -1572,9 +1613,11 @@ export default function SchedulesPage() {
     setIsCreatingEvent(true);
 
     try {
-      const createEndpoint = isRequestMode ? "/api/schedules/requests" : "/api/schedules/events";
+      const createEndpoint = isRequestMode
+        ? (requestEditId ? `/api/schedules/requests/${requestEditId}` : "/api/schedules/requests")
+        : "/api/schedules/events";
       const createResponse = await fetchApiJson<{ message: string; eventId: string }>(createEndpoint, {
-        method: "POST",
+        method: isRequestMode && requestEditId ? "PUT" : "POST",
         headers: {
           "Content-Type": "application/json",
         },
@@ -1655,7 +1698,7 @@ export default function SchedulesPage() {
       resetCreateForm();
       setIsCreateOpen(false);
     } catch (error) {
-      const message = error instanceof Error ? error.message : isRequestMode ? "No se pudo enviar la solicitud en base de datos" : "No se pudo crear la clase en base de datos";
+      const message = error instanceof Error ? error.message : isRequestMode ? (requestEditId ? "No se pudo actualizar la solicitud en base de datos" : "No se pudo enviar la solicitud en base de datos") : "No se pudo crear la clase en base de datos";
       setCreateError(message);
     } finally {
       setIsCreatingEvent(false);
@@ -2067,6 +2110,34 @@ export default function SchedulesPage() {
         setRequestActionState((current) => (current?.requestId === requestId ? null : current));
       }
     })();
+  };
+
+  const deleteOwnRequest = (requestId: string) => {
+    void (async () => {
+      if (!window.confirm("¿Quieres eliminar esta solicitud pendiente?")) {
+        return;
+      }
+
+      try {
+        await fetchApiJson<{ message: string }>(`/api/schedules/requests/${requestId}`, {
+          method: "DELETE",
+          headers: {
+            "Content-Type": "application/json",
+          },
+        });
+
+        await syncSchedulesFromApi();
+        setSelectedEventId(null);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "No se pudo eliminar la solicitud";
+        window.alert(message);
+      }
+    })();
+  };
+
+  const editOwnRequest = () => {
+    if (!isOwnPendingRequest) return;
+    openRequestEditor();
   };
 
   const canConfirmDeleteAll = deleteAllConfirmText.trim().toLowerCase() === "confirmar";
@@ -2524,6 +2595,23 @@ export default function SchedulesPage() {
                           {selectedEvent.requestId && isRequestActionActive(selectedEvent.requestId) && selectedRequestActionStatus === "rechazada" ? "Rechazando..." : "Rechazar solicitud"}
                         </button>
                       </div>
+                    ) : isOwnPendingRequest ? (
+                      <div className="mt-4 grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={editOwnRequest}
+                          className="rounded-lg bg-[#295786] px-3 py-2 text-sm font-semibold text-white"
+                        >
+                          Editar solicitud
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => selectedEvent.requestId ? deleteOwnRequest(selectedEvent.requestId) : null}
+                          className="rounded-lg bg-red-600 px-3 py-2 text-sm font-semibold text-white"
+                        >
+                          Eliminar solicitud
+                        </button>
+                      </div>
                     ) : canManageSchedules ? (
                       <div className="mt-4 grid grid-cols-2 gap-2">
                         <button
@@ -2822,10 +2910,14 @@ export default function SchedulesPage() {
       {isCreateOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
           <form onSubmit={createEvent} aria-busy={isCreatingEvent} className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl bg-white p-5 shadow-2xl">
-            <h3 className="text-lg font-bold text-slate-900">{isRequestMode ? "Solicitar salón" : "Agregar nueva clase"}</h3>
+            <h3 className="text-lg font-bold text-slate-900">
+              {isRequestMode ? (requestEditId ? "Editar solicitud" : "Solicitar salón") : "Agregar nueva clase"}
+            </h3>
             <p className="mt-1 text-sm text-slate-500">
               {isRequestMode
-                ? "La solicitud quedará pendiente hasta que un administrador la apruebe o rechace."
+                ? requestEditId
+                  ? "Actualiza tu solicitud pendiente. Solo puedes cambiarla mientras no haya sido aprobada o rechazada."
+                  : "La solicitud quedará pendiente hasta que un administrador la apruebe o rechace."
                 : "Formato antiguo: Facultad : CODIGO | MATERIA | DOCENTE | FECHA INICIO | FECHA FIN"}
             </p>
 

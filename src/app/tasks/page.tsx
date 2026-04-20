@@ -64,6 +64,7 @@ type TaskInstanceItem = {
 
 type StaffItem = {
   id: string;
+  cedula?: string | null;
   nombres: string;
   apellidos: string;
   roleId: number;
@@ -96,6 +97,19 @@ type TaskSpacesResponse = {
 
 type StaffResponse = {
   staff?: StaffItem[];
+};
+
+type StaffJornadaItem = {
+  id: string;
+  staffId: string;
+  diaSemana: string;
+  horaEntrada: string;
+  horaSalida: string;
+  totalHorasDia: number;
+};
+
+type StaffJornadasBulkResponse = {
+  jornadas?: Record<string, StaffJornadaItem[]>;
 };
 
 type TasksResponse = {
@@ -168,7 +182,7 @@ type ReviewFormState = {
   observacionesRevision: string;
 };
 
-type TasksSubtab = "gestion" | "tareas-creadas" | "habilidades" | "lugares";
+type TasksSubtab = "gestion" | "tareas-creadas" | "tareas-asignadas" | "habilidades" | "lugares";
 
 const priorityStyles: Record<TaskPriority, string> = {
   Baja: "bg-slate-100 text-slate-600",
@@ -205,6 +219,38 @@ const TASK_RECURRENT_TIME_OPTIONS = Array.from({ length: 35 }, (_, idx) => {
   const minute = totalMinutes % 60;
   return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 });
+
+const weekDayNames = ["Domingo", "Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado"] as const;
+
+function normalizeDayLabel(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function parseTimeToMinutes(value: string): number | null {
+  const [hourText = "", minuteText = ""] = value.split(":");
+  const hour = Number(hourText);
+  const minute = Number(minuteText);
+
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) {
+    return null;
+  }
+
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+    return null;
+  }
+
+  return hour * 60 + minute;
+}
+
+function minutesToHHMM(totalMinutes: number): string {
+  const normalized = ((totalMinutes % (24 * 60)) + (24 * 60)) % (24 * 60);
+  const hour = Math.floor(normalized / 60);
+  const minute = normalized % 60;
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
 
 function formatDateLabel(dateValue: string): string {
   if (!dateValue) {
@@ -253,6 +299,77 @@ function staffLabel(staff: StaffItem): string {
   return `${staff.nombres} ${staff.apellidos}`.trim();
 }
 
+function staffInitials(staff: StaffItem): string {
+  return `${staff.nombres} ${staff.apellidos}`
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("");
+}
+
+function staffRoleLabel(staff: StaffItem): string {
+  const normalizedRole = (staff.rol ?? "").trim().toLowerCase();
+
+  if (staff.roleId === 1 || staff.roleId === 2 || normalizedRole.includes("monitor")) {
+    return "Monitora";
+  }
+
+  if (normalizedRole.includes("admin")) {
+    return "Administradora";
+  }
+
+  return "Colaboradora";
+}
+
+function getStaffPhotoUrl(cedula: string): string {
+  return `/api/staff-photo/${encodeURIComponent(cedula)}`;
+}
+
+function calculateEndTimeLabel(startTime: string, durationMinutes: number): string | null {
+  const [hoursText = "", minutesText = ""] = startTime.split(":");
+  const hours = Number(hoursText);
+  const minutes = Number(minutesText);
+
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes) || !Number.isFinite(durationMinutes)) {
+    return null;
+  }
+
+  const startTotalMinutes = hours * 60 + minutes;
+  const endTotalMinutes = (startTotalMinutes + Math.max(0, durationMinutes)) % (24 * 60);
+  const endHours = Math.floor(endTotalMinutes / 60);
+  const endMinutes = endTotalMinutes % 60;
+  return `${String(endHours).padStart(2, "0")}:${String(endMinutes).padStart(2, "0")}`;
+}
+
+function assignedTaskTimeWindowLabel(task: TaskCatalogItem): string {
+  const startTime = task.tipo === "Recurrente" ? task.horaProgramada : task.horaEsporadica;
+  if (!startTime) {
+    return `Inicio flexible · Duración ${task.tiempoEstimadoMin} min`;
+  }
+
+  const endTime = calculateEndTimeLabel(startTime, task.tiempoEstimadoMin);
+  if (!endTime) {
+    return `Inicio ${startTime} · Duración ${task.tiempoEstimadoMin} min`;
+  }
+
+  return `Inicio ${toAmPmLabel(startTime)} · Fin ${toAmPmLabel(endTime)}`;
+}
+
+function assignedTaskScheduleLabel(task: TaskCatalogItem): string {
+  if (task.tipo === "Recurrente") {
+    if (task.diasSemana.length > 0) {
+      return task.diasSemana.map((day) => dayLabels[day] ?? day).join("/");
+    }
+
+    return "En cualquier momento del día";
+  }
+
+  const dateLabel = task.fechaEsporadica ? formatDateLabel(task.fechaEsporadica) : "Sin fecha";
+  const timeLabel = task.horaEsporadica ? toAmPmLabel(task.horaEsporadica) : "Sin hora";
+  return `${dateLabel} · ${timeLabel}`;
+}
+
 function staffMatchesAllSkills(staffId: string, requiredSkills: string[], links: StaffSkillLink[]): boolean {
   if (requiredSkills.length === 0) {
     return true;
@@ -268,8 +385,10 @@ export default function TasksPage() {
   const [skills, setSkills] = useState<SkillItem[]>([]);
   const [staffSkills, setStaffSkills] = useState<StaffSkillLink[]>([]);
   const [staff, setStaff] = useState<StaffItem[]>([]);
+  const [staffJornadasByStaffId, setStaffJornadasByStaffId] = useState<Record<string, StaffJornadaItem[]>>({});
   const [rooms, setRooms] = useState<RoomItem[]>([]);
   const [taskSpaces, setTaskSpaces] = useState<TaskSpaceItem[]>([]);
+  const [loadingTaskLocations, setLoadingTaskLocations] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [notice, setNotice] = useState<NoticeState>(null);
@@ -335,6 +454,9 @@ export default function TasksPage() {
     observacionesRevision: "",
   });
   const [showCatalogValidationModal, setShowCatalogValidationModal] = useState(false);
+  const [catalogSubmitErrorModalMessage, setCatalogSubmitErrorModalMessage] = useState<string | null>(null);
+  const [assignmentScheduleWarningMessage, setAssignmentScheduleWarningMessage] = useState<string | null>(null);
+  const [pendingAssignmentPayload, setPendingAssignmentPayload] = useState<{ tareaInstanciaId: string; staffId: string } | null>(null);
 
   const catalogById = useMemo(() => new Map(catalog.map((item) => [item.id, item])), [catalog]);
   const skillById = useMemo(() => new Map(skills.map((item) => [item.id, item])), [skills]);
@@ -387,6 +509,12 @@ export default function TasksPage() {
   const eligibleStaffIds = useMemo(() => {
     return new Set(staff.filter((person) => staffMatchesAllSkills(person.id, selectedCatalogSkillIds, staffSkills)).map((person) => person.id));
   }, [selectedCatalogSkillIds, staff, staffSkills]);
+
+  const suggestedStaffForManualAssignment = useMemo(() => {
+    return staff
+      .filter((person) => staffMatchesAllSkills(person.id, catalogForm.habilidadesRequeridasIds, staffSkills))
+      .sort((a, b) => staffLabel(a).localeCompare(staffLabel(b), "es", { sensitivity: "base" }));
+  }, [catalogForm.habilidadesRequeridasIds, staff, staffSkills]);
 
   const selectedAssignmentCatalogSkillIds = catalogById.get(
     instances.find((task) => task.id === assignmentForm.tareaInstanciaId)?.tareaCatalogoId ?? "",
@@ -483,19 +611,55 @@ export default function TasksPage() {
     });
   }, [catalog, catalogSearchQuery, catalogTypeFilter, catalogSectorFilter]);
 
+  const assignedCatalogTasks = useMemo(
+    () => filteredCatalog.filter((task) => (task.staffAsignadosIds ?? []).length > 0),
+    [filteredCatalog],
+  );
+
+  const assignedTasksByStaff = useMemo(() => {
+    const buckets = new Map<string, { staffId: string; person: StaffItem | null; tasks: TaskCatalogItem[] }>();
+
+    assignedCatalogTasks.forEach((task) => {
+      const uniqueStaff = Array.from(new Set(task.staffAsignadosIds ?? []));
+
+      uniqueStaff.forEach((staffId) => {
+        const existing = buckets.get(staffId);
+        if (existing) {
+          existing.tasks.push(task);
+          return;
+        }
+
+        buckets.set(staffId, {
+          staffId,
+          person: staff.find((member) => member.id === staffId) ?? null,
+          tasks: [task],
+        });
+      });
+    });
+
+    return Array.from(buckets.values()).sort((a, b) => {
+      const aName = a.person ? staffLabel(a.person) : a.staffId;
+      const bName = b.person ? staffLabel(b.person) : b.staffId;
+      return aName.localeCompare(bName, "es");
+    });
+  }, [assignedCatalogTasks, staff]);
+
   const loadData = async (options?: { preserveNotice?: boolean }) => {
     const preserveNotice = options?.preserveNotice ?? false;
     if (!preserveNotice) {
       setNotice(null);
     }
 
+    setLoadingTaskLocations(true);
+
     try {
-      const [catalogBody, instancesBody, skillsBody, staffSkillsBody, staffBody, roomsBody, spacesBody] = await Promise.all([
+      const [catalogBody, instancesBody, skillsBody, staffSkillsBody, staffBody, jornadasBody, roomsBody, spacesBody] = await Promise.all([
         fetchApiJson<TasksResponse>("/api/tasks/catalog", { cache: "no-store" }),
         fetchApiJson<InstancesResponse>("/api/tasks/instances", { cache: "no-store" }),
         fetchApiJson<SkillsResponse>("/api/tasks/skills", { cache: "no-store" }),
         fetchApiJson<StaffSkillsResponse>("/api/tasks/staff-habilidades", { cache: "no-store" }),
         fetchApiJson<StaffResponse>("/api/staff", { cache: "no-store" }),
+        fetchApiJson<StaffJornadasBulkResponse>("/api/staff/jornadas-bulk", { cache: "no-store" }).catch(() => ({} as StaffJornadasBulkResponse)),
         fetchApiJson<RoomsInfoResponse>("/api/schedules/rooms-info", { cache: "no-store" }).catch(() => ({} as RoomsInfoResponse)),
         fetchApiJson<TaskSpacesResponse>("/api/tasks/spaces", { cache: "no-store" }).catch(() => ({} as TaskSpacesResponse)),
       ]);
@@ -505,6 +669,7 @@ export default function TasksPage() {
       setSkills(skillsBody.skills ?? []);
       setStaffSkills(staffSkillsBody.links ?? []);
       setStaff(staffBody.staff ?? []);
+      setStaffJornadasByStaffId(jornadasBody.jornadas ?? {});
       const uniqueRooms = Array.from(
         new Map(
           (roomsBody.roomsByFloor ?? [])
@@ -549,6 +714,7 @@ export default function TasksPage() {
         text: error instanceof Error ? error.message : "No se pudieron cargar las tareas.",
       });
     } finally {
+      setLoadingTaskLocations(false);
       setRefreshing(false);
     }
   };
@@ -722,6 +888,7 @@ export default function TasksPage() {
 
   const submitCatalog = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    setCatalogSubmitErrorModalMessage(null);
 
     if (missingCatalogFields.length > 0) {
       setShowCatalogValidationModal(true);
@@ -769,6 +936,91 @@ export default function TasksPage() {
         }
       }
 
+      const scheduleWarnings: string[] = [];
+      const selectedStaffMembers = catalogForm.staffAsignadosIds
+        .map((id) => staff.find((person) => person.id === id))
+        .filter((value): value is StaffItem => Boolean(value));
+
+      const taskStartTime =
+        catalogForm.tipo === "Recurrente" && catalogForm.programacionRecurrente === "programada"
+          ? catalogForm.horaProgramada
+          : catalogForm.tipo === "Esporadica"
+            ? catalogForm.horaEsporadica
+            : "";
+
+      const taskStartMin = parseTimeToMinutes(taskStartTime);
+      const taskDurationMin = Math.max(1, tiempoEstimadoMin);
+      const taskEndMin = taskStartMin !== null ? taskStartMin + taskDurationMin : null;
+
+      const relevantDays = (() => {
+        if (catalogForm.tipo === "Recurrente") {
+          if (catalogForm.programacionRecurrente !== "programada") return [] as string[];
+          return catalogForm.diasSemana.map((dayIndex) => weekDayNames[dayIndex] ?? "").filter(Boolean);
+        }
+
+        if (catalogForm.tipo === "Esporadica" && catalogForm.fechaEsporadica) {
+          const date = new Date(`${catalogForm.fechaEsporadica}T00:00:00`);
+          if (!Number.isNaN(date.getTime())) {
+            return [weekDayNames[date.getDay()] ?? ""].filter(Boolean);
+          }
+        }
+
+        return [] as string[];
+      })();
+
+      if (selectedStaffMembers.length > 0 && taskStartMin !== null && taskEndMin !== null && relevantDays.length > 0) {
+        if (taskEndMin > 24 * 60) {
+          scheduleWarnings.push(`La tarea termina fuera del día laboral (${toAmPmLabel(taskStartTime)} + ${taskDurationMin} min).`);
+        }
+
+        for (const member of selectedStaffMembers) {
+          const jornadas = staffJornadasByStaffId[member.id] ?? [];
+
+          for (const dayName of relevantDays) {
+            const dayKey = normalizeDayLabel(dayName);
+            const jornadasDelDia = jornadas.filter((item) => normalizeDayLabel(item.diaSemana) === dayKey);
+
+            if (jornadasDelDia.length === 0) {
+              scheduleWarnings.push(`${staffLabel(member)} no tiene jornada registrada para ${dayName}.`);
+              continue;
+            }
+
+            const fitsInAnySlot = jornadasDelDia.some((slot) => {
+              const entryMin = parseTimeToMinutes(slot.horaEntrada);
+              const exitMin = parseTimeToMinutes(slot.horaSalida);
+              if (entryMin === null || exitMin === null) {
+                return false;
+              }
+
+              return taskStartMin >= entryMin && taskEndMin <= exitMin;
+            });
+
+            if (!fitsInAnySlot) {
+              const jornadaTexto = jornadasDelDia
+                .map((slot) => `${toAmPmLabel(slot.horaEntrada)} - ${toAmPmLabel(slot.horaSalida)}`)
+                .join(" / ");
+              const finalLabel = `${String(Math.floor(taskEndMin / 60)).padStart(2, "0")}:${String(taskEndMin % 60).padStart(2, "0")}`;
+              scheduleWarnings.push(
+                `${staffLabel(member)} (${dayName}) trabaja en ${jornadaTexto}. La tarea quedaría de ${toAmPmLabel(taskStartTime)} a ${toAmPmLabel(finalLabel)}.`,
+              );
+            }
+          }
+        }
+      }
+
+      if (scheduleWarnings.length > 0) {
+        const warningPreview = scheduleWarnings.slice(0, 8).map((line) => `• ${line}`).join("\n");
+        const extraText = scheduleWarnings.length > 8 ? `\n\nY ${scheduleWarnings.length - 8} advertencia(s) más.` : "";
+        const proceed = confirm(
+          `Alerta: se detectó que esta asignación puede quedar fuera de horario laboral.\n\n${warningPreview}${extraText}\n\n¿Deseas continuar de todos modos?`,
+        );
+
+        if (!proceed) {
+          setBusyAction(null);
+          return;
+        }
+      }
+
       const basePayload = {
         nombre,
         tipo: catalogForm.tipo as TaskType,
@@ -810,12 +1062,72 @@ export default function TasksPage() {
           new Set(selectedCatalogLocations.map((sector) => sector.trim()).filter((sector) => sector.length > 0)),
         );
 
-        for (const sector of sectorsToCreate) {
+        const hasFixedStartTime =
+          (catalogForm.tipo === "Recurrente" && catalogForm.programacionRecurrente === "programada" && Boolean(catalogForm.horaProgramada)) ||
+          (catalogForm.tipo === "Esporadica" && Boolean(catalogForm.horaEsporadica));
+
+        const baseStartTime = catalogForm.tipo === "Recurrente" ? catalogForm.horaProgramada : catalogForm.horaEsporadica;
+        const baseStartMin = hasFixedStartTime && baseStartTime ? parseTimeToMinutes(baseStartTime) : null;
+
+        const sequentialSchedule = sectorsToCreate.map((sector, index) => {
+          if (baseStartMin === null) {
+            return { sector, start: null as string | null, end: null as string | null };
+          }
+
+          const startMin = baseStartMin + index * tiempoEstimadoMin;
+          const endMin = startMin + tiempoEstimadoMin;
+          return {
+            sector,
+            start: minutesToHHMM(startMin),
+            end: minutesToHHMM(endMin),
+          };
+        });
+
+        if (baseStartMin !== null && sectorsToCreate.length > 1) {
+          const totalEnd = baseStartMin + sectorsToCreate.length * tiempoEstimadoMin;
+          if (totalEnd > 24 * 60) {
+            setBusyAction(null);
+            setNotice({
+              kind: "error",
+              text: "No alcanza el día para encadenar todas las tareas seleccionadas. Ajusta hora inicial, duración o reduce lugares.",
+            });
+            return;
+          }
+
+          const previewLines = sequentialSchedule
+            .map((item) => `• ${item.sector}: ${toAmPmLabel(item.start ?? "")} - ${toAmPmLabel(item.end ?? "")}`)
+            .join("\n");
+
+          const confirmSequential = confirm(
+            `Se detectaron ${sectorsToCreate.length} lugares.\n\nSe programarán automáticamente una detrás de otra con esta secuencia:\n${previewLines}\n\n¿Deseas crear el catálogo con estos horarios?`,
+          );
+
+          if (!confirmSequential) {
+            setBusyAction(null);
+            return;
+          }
+        }
+
+        for (const [index, sector] of sectorsToCreate.entries()) {
+          let adjustedHoraProgramada: string | null = basePayload.horaProgramada;
+          let adjustedHoraEsporadica: string | null = basePayload.horaEsporadica;
+
+          if (baseStartMin !== null) {
+            const shiftedStart = minutesToHHMM(baseStartMin + index * tiempoEstimadoMin);
+            if (catalogForm.tipo === "Recurrente") {
+              adjustedHoraProgramada = shiftedStart;
+            } else if (catalogForm.tipo === "Esporadica") {
+              adjustedHoraEsporadica = shiftedStart;
+            }
+          }
+
           await fetchApiJson<{ message: string; id?: string; ids?: string[] }>("/api/tasks/catalog", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               ...basePayload,
+              horaProgramada: adjustedHoraProgramada,
+              horaEsporadica: adjustedHoraEsporadica,
               sector,
             }),
           });
@@ -857,7 +1169,9 @@ export default function TasksPage() {
       });
       await refresh();
     } catch (error) {
-      setNotice({ kind: "error", text: error instanceof Error ? error.message : "No se pudo guardar la tarea de catalogo." });
+      const message = error instanceof Error ? error.message : "No se pudo guardar la tarea de catalogo.";
+      setNotice({ kind: "error", text: message });
+      setCatalogSubmitErrorModalMessage(message);
     } finally {
       setBusyAction(null);
     }
@@ -1017,23 +1331,89 @@ export default function TasksPage() {
       return;
     }
 
-    try {
-      setBusyAction("task-assign");
-      await fetchApiJson<{ message: string; asignacionId: string }>("/api/tasks/assignments", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          tareaInstanciaId: assignmentForm.tareaInstanciaId,
-          staffId: assignmentForm.staffId,
-        }),
+    const selectedInstance = instances.find((task) => task.id === assignmentForm.tareaInstanciaId);
+    const selectedStaff = staff.find((person) => person.id === assignmentForm.staffId);
+    const selectedCatalog = selectedInstance ? catalogById.get(selectedInstance.tareaCatalogoId) : null;
+
+    const scheduleWarning = (() => {
+      if (!selectedInstance || !selectedStaff) {
+        return null;
+      }
+
+      const startMin = parseTimeToMinutes(selectedInstance.horaProgramada);
+      if (startMin === null) {
+        return null;
+      }
+
+      const durationMin = Math.max(1, selectedCatalog?.tiempoEstimadoMin ?? 0);
+      const endMin = startMin + durationMin;
+      if (endMin > 24 * 60) {
+        return `La tarea "${selectedInstance.tareaNombre}" termina fuera del día laboral (${toAmPmLabel(selectedInstance.horaProgramada)} + ${durationMin} min).`;
+      }
+
+      const date = new Date(`${selectedInstance.fechaProgramada}T00:00:00`);
+      if (Number.isNaN(date.getTime())) {
+        return null;
+      }
+
+      const dayName = weekDayNames[date.getDay()] ?? "";
+      const dayKey = normalizeDayLabel(dayName);
+      const jornadas = staffJornadasByStaffId[selectedStaff.id] ?? [];
+      const jornadasDelDia = jornadas.filter((item) => normalizeDayLabel(item.diaSemana) === dayKey);
+
+      if (jornadasDelDia.length === 0) {
+        return `${staffLabel(selectedStaff)} no tiene jornada registrada para ${dayName}. Esta asignación quedará fuera de horario laboral.`;
+      }
+
+      const fitsInAnySlot = jornadasDelDia.some((slot) => {
+        const entryMin = parseTimeToMinutes(slot.horaEntrada);
+        const exitMin = parseTimeToMinutes(slot.horaSalida);
+        if (entryMin === null || exitMin === null) {
+          return false;
+        }
+
+        return startMin >= entryMin && endMin <= exitMin;
       });
-      setNotice({ kind: "success", text: "Tarea asignada correctamente." });
-      await refresh();
-    } catch (error) {
-      setNotice({ kind: "error", text: error instanceof Error ? error.message : "No se pudo asignar la tarea." });
-    } finally {
-      setBusyAction(null);
+
+      if (fitsInAnySlot) {
+        return null;
+      }
+
+      const jornadaTexto = jornadasDelDia.map((slot) => `${toAmPmLabel(slot.horaEntrada)} - ${toAmPmLabel(slot.horaSalida)}`).join(" / ");
+      const horaFinal = `${String(Math.floor(endMin / 60)).padStart(2, "0")}:${String(endMin % 60).padStart(2, "0")}`;
+      return `${staffLabel(selectedStaff)} trabaja en ${dayName} de ${jornadaTexto}. La tarea quedaría de ${toAmPmLabel(selectedInstance.horaProgramada)} a ${toAmPmLabel(horaFinal)}.`;
+    })();
+
+    if (scheduleWarning) {
+      setPendingAssignmentPayload({
+        tareaInstanciaId: assignmentForm.tareaInstanciaId,
+        staffId: assignmentForm.staffId,
+      });
+      setAssignmentScheduleWarningMessage(scheduleWarning);
+      return;
     }
+
+    const assignTask = async (payload: { tareaInstanciaId: string; staffId: string }) => {
+      try {
+        setBusyAction("task-assign");
+        await fetchApiJson<{ message: string; asignacionId: string }>("/api/tasks/assignments", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        setNotice({ kind: "success", text: "Tarea asignada correctamente." });
+        await refresh();
+      } catch (error) {
+        setNotice({ kind: "error", text: error instanceof Error ? error.message : "No se pudo asignar la tarea." });
+      } finally {
+        setBusyAction(null);
+      }
+    };
+
+    await assignTask({
+      tareaInstanciaId: assignmentForm.tareaInstanciaId,
+      staffId: assignmentForm.staffId,
+    });
   };
 
   const submitTaskSpace = async (event: FormEvent<HTMLFormElement>) => {
@@ -1219,6 +1599,17 @@ export default function TasksPage() {
             </button>
             <button
               type="button"
+              onClick={() => setTasksSubtab("tareas-asignadas")}
+              className={`rounded-md px-4 py-2 text-[11px] font-bold tracking-[0.18em] uppercase transition ${
+                tasksSubtab === "tareas-asignadas"
+                  ? "bg-[#3a5f94] text-white shadow-sm"
+                  : "border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100"
+              }`}
+            >
+              Tareas Asignadas
+            </button>
+            <button
+              type="button"
               onClick={() => setTasksSubtab("habilidades")}
               className={`rounded-md px-4 py-2 text-[11px] font-bold tracking-[0.18em] uppercase transition ${
                 tasksSubtab === "habilidades"
@@ -1321,6 +1712,7 @@ export default function TasksPage() {
                     <button
                       type="button"
                       onClick={() => setSelectedCatalogLocations(taskLocationOptions.map((location) => location.nombre))}
+                      disabled={loadingTaskLocations}
                       className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[10px] font-bold tracking-[0.14em] text-slate-600 uppercase transition hover:bg-slate-50"
                     >
                       Seleccionar todos
@@ -1328,13 +1720,16 @@ export default function TasksPage() {
                     <button
                       type="button"
                       onClick={() => setSelectedCatalogLocations([])}
+                      disabled={loadingTaskLocations}
                       className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[10px] font-bold tracking-[0.14em] text-slate-600 uppercase transition hover:bg-slate-50"
                     >
                       Limpiar
                     </button>
                   </div>
                   <div className="max-h-44 overflow-y-auto pr-1">
-                    {taskLocationOptions.length === 0 ? (
+                    {loadingTaskLocations ? (
+                      <p className="text-[11px] font-semibold text-slate-500">Cargando lugares...</p>
+                    ) : taskLocationOptions.length === 0 ? (
                       <p className="text-[11px] text-slate-500">No hay lugares disponibles para seleccionar.</p>
                     ) : (
                       <div className="grid gap-2 sm:grid-cols-2">
@@ -1503,32 +1898,41 @@ export default function TasksPage() {
                 <div className="space-y-2 rounded-md border border-[#d9e4ea] bg-[#f3f7fa] px-3 py-2 sm:col-span-2 lg:col-span-6">
                   <span className="text-xs font-bold text-slate-500">Personal sugerido para asignación</span>
                   <div className="grid gap-2 sm:grid-cols-2">
-                    {staff
-                      .filter((person) => staffMatchesAllSkills(person.id, catalogForm.habilidadesRequeridasIds, staffSkills))
-                      .map((person) => {
-                        const checked = catalogForm.staffAsignadosIds.includes(person.id);
-                        return (
-                          <label key={person.id} className="flex items-center gap-2 rounded-md bg-white px-2 py-1 text-xs font-semibold text-slate-700">
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              onChange={(event) => {
-                                const enabled = event.target.checked;
-                                setCatalogForm((current) => ({
-                                  ...current,
-                                  staffAsignadosIds: enabled
-                                    ? [...current.staffAsignadosIds, person.id]
-                                    : current.staffAsignadosIds.filter((id) => id !== person.id),
-                                }));
-                              }}
-                              className="h-4 w-4 rounded border-slate-300 text-slate-900"
+                    {suggestedStaffForManualAssignment.map((person) => {
+                      const checked = catalogForm.staffAsignadosIds.includes(person.id);
+                      return (
+                        <label key={person.id} className="flex items-center gap-2 rounded-md bg-white px-2 py-1 text-xs font-semibold text-slate-700">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(event) => {
+                              const enabled = event.target.checked;
+                              setCatalogForm((current) => ({
+                                ...current,
+                                staffAsignadosIds: enabled
+                                  ? [...current.staffAsignadosIds, person.id]
+                                  : current.staffAsignadosIds.filter((id) => id !== person.id),
+                              }));
+                            }}
+                            className="h-4 w-4 rounded border-slate-300 text-slate-900"
+                          />
+                          {person.cedula ? (
+                            <img
+                              src={getStaffPhotoUrl(person.cedula)}
+                              alt={staffLabel(person)}
+                              className="h-7 w-7 shrink-0 rounded-full border border-slate-200 object-cover"
                             />
-                            {staffLabel(person)}
-                          </label>
-                        );
-                      })}
+                          ) : (
+                            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-slate-100 text-[10px] font-bold text-slate-600">
+                              {staffInitials(person)}
+                            </div>
+                          )}
+                          <span className="truncate">{staffLabel(person)}</span>
+                        </label>
+                      );
+                    })}
                   </div>
-                  {staff.filter((person) => staffMatchesAllSkills(person.id, catalogForm.habilidadesRequeridasIds, staffSkills)).length === 0 ? (
+                  {suggestedStaffForManualAssignment.length === 0 ? (
                     <p className="text-[11px] text-amber-700">Sin personal compatible con las habilidades requeridas.</p>
                   ) : null}
                 </div>
@@ -1752,6 +2156,94 @@ export default function TasksPage() {
                     className="rounded-md border border-slate-200 px-4 py-2 text-[11px] font-bold tracking-[0.18em] text-slate-600 uppercase transition hover:bg-slate-50"
                   >
                     Entendido
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {catalogSubmitErrorModalMessage ? (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 px-4 py-6 backdrop-blur-sm">
+              <div className="w-full max-w-lg rounded-2xl border border-rose-200 bg-white p-5 shadow-[0_20px_60px_rgba(15,23,42,0.25)]">
+                <div className="flex items-start gap-3">
+                  <span className="material-symbols-outlined rounded-xl bg-rose-100 p-2 text-rose-700">error</span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[10px] font-black tracking-[0.26em] text-rose-600 uppercase">No se pudo guardar</p>
+                    <h3 className="mt-1 text-lg font-black text-slate-900">Error al crear/editar catálogo</h3>
+                    <p className="mt-1 text-sm text-slate-600">Revisa el detalle para corregir y volver a intentar.</p>
+                  </div>
+                </div>
+
+                <div className="mt-4 rounded-xl bg-rose-50 p-4">
+                  <p className="text-sm text-rose-900">{catalogSubmitErrorModalMessage}</p>
+                </div>
+
+                <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setCatalogSubmitErrorModalMessage(null)}
+                    className="rounded-md border border-slate-200 px-4 py-2 text-[11px] font-bold tracking-[0.18em] text-slate-600 uppercase transition hover:bg-slate-50"
+                  >
+                    Entendido
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {assignmentScheduleWarningMessage ? (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 px-4 py-6 backdrop-blur-sm">
+              <div className="w-full max-w-lg rounded-2xl border border-amber-200 bg-white p-5 shadow-[0_20px_60px_rgba(15,23,42,0.25)]">
+                <div className="flex items-start gap-3">
+                  <span className="material-symbols-outlined rounded-xl bg-amber-100 p-2 text-amber-700">warning</span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[10px] font-black tracking-[0.26em] text-amber-600 uppercase">Alerta de horario</p>
+                    <h3 className="mt-1 text-lg font-black text-slate-900">Asignación fuera de jornada</h3>
+                    <p className="mt-1 text-sm text-slate-600">Esta asignación puede quedar fuera del horario laboral de la colaboradora.</p>
+                  </div>
+                </div>
+
+                <div className="mt-4 rounded-xl bg-amber-50 p-4">
+                  <p className="text-sm text-amber-900">{assignmentScheduleWarningMessage}</p>
+                </div>
+
+                <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:justify-end">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAssignmentScheduleWarningMessage(null);
+                      setPendingAssignmentPayload(null);
+                    }}
+                    className="rounded-md border border-slate-200 px-4 py-2 text-[11px] font-bold tracking-[0.18em] text-slate-600 uppercase transition hover:bg-slate-50"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const payload = pendingAssignmentPayload;
+                      setAssignmentScheduleWarningMessage(null);
+                      setPendingAssignmentPayload(null);
+                      if (!payload) return;
+
+                      try {
+                        setBusyAction("task-assign");
+                        await fetchApiJson<{ message: string; asignacionId: string }>("/api/tasks/assignments", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify(payload),
+                        });
+                        setNotice({ kind: "success", text: "Tarea asignada correctamente." });
+                        await refresh();
+                      } catch (error) {
+                        setNotice({ kind: "error", text: error instanceof Error ? error.message : "No se pudo asignar la tarea." });
+                      } finally {
+                        setBusyAction(null);
+                      }
+                    }}
+                    className="rounded-md bg-[#3a5f94] px-4 py-2 text-[11px] font-bold tracking-[0.18em] text-white uppercase transition hover:brightness-110"
+                  >
+                    Continuar de todos modos
                   </button>
                 </div>
               </div>
@@ -2227,6 +2719,104 @@ export default function TasksPage() {
                   )}
                 </tbody>
               </table>
+            </div>
+
+          </div>
+
+        </section>
+        ) : null}
+
+        {tasksSubtab === "tareas-asignadas" ? (
+        <section>
+          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
+            <div>
+              <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-[9px] font-bold tracking-[0.24em] text-slate-500 uppercase">Asignaciones predefinidas</p>
+                  <h3 className="mt-0.5 text-sm font-black text-slate-900">Tareas Asignadas</h3>
+                </div>
+                <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600">
+                  {assignedTasksByStaff.length} personas
+                </span>
+              </div>
+
+              <div className="mt-2.5 space-y-1.5">
+                {assignedTasksByStaff.length === 0 ? (
+                  <p className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-2.5 text-xs text-slate-500">
+                    No hay tareas con trabajador predefinido para los filtros actuales.
+                  </p>
+                ) : (
+                  assignedTasksByStaff.map((group) => (
+                    <details key={`assigned-staff-${group.staffId}`} className="rounded-lg border border-slate-200 bg-slate-50 shadow-sm">
+                      <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-2.5 py-2.5 marker:content-none">
+                        <div className="flex min-w-0 items-center gap-2">
+                          {group.person?.cedula ? (
+                            <img
+                              src={getStaffPhotoUrl(group.person.cedula)}
+                              alt={staffLabel(group.person)}
+                              className="h-8 w-8 rounded-full border border-slate-200 object-cover"
+                            />
+                          ) : (
+                            <div className="flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-slate-100 text-[10px] font-bold text-slate-600">
+                              {group.person ? staffInitials(group.person) : "--"}
+                            </div>
+                          )}
+                          <div className="min-w-0">
+                            <p className="truncate text-[12px] font-black text-slate-900">{group.person ? staffLabel(group.person) : `Personal ${group.staffId.slice(0, 8)}`}</p>
+                            <p className="text-[10px] text-slate-500">{group.person ? staffRoleLabel(group.person) : "Personal"}</p>
+                          </div>
+                        </div>
+                        <span className="rounded-full bg-white px-2 py-0.5 text-[9px] font-bold text-slate-600">
+                          {group.tasks.length} tarea(s)
+                        </span>
+                      </summary>
+
+                      <div className="space-y-1.5 border-t border-slate-200 px-2.5 py-2">
+                        {group.tasks.map((task) => (
+                          <div key={`${group.staffId}-${task.id}`} className="rounded-lg border border-slate-200 bg-white p-2">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <p className="truncate text-[13px] font-black text-slate-900">{task.nombre}</p>
+                                <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+                                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">{task.sector}</span>
+                                  <span className="rounded-full bg-[#dce8f7] px-2 py-0.5 text-[10px] font-semibold text-[#284e7a]">{task.tipo}</span>
+                                </div>
+                                <p className="mt-1 text-[10px] font-semibold text-[#355b8e]">
+                                  Programación: {assignedTaskScheduleLabel(task)}
+                                </p>
+                                <p className="mt-0.5 text-[10px] font-semibold text-slate-600">
+                                  Horario: {assignedTaskTimeWindowLabel(task)}
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="mt-2 flex flex-wrap gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  beginEditCatalog(task);
+                                  setTasksSubtab("gestion");
+                                }}
+                                className="rounded-md bg-[#3a5f94] px-2.5 py-1 text-[10px] font-bold tracking-[0.14em] text-white uppercase transition hover:brightness-110"
+                              >
+                                Editar
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void deleteCatalog(task.id)}
+                                disabled={deletingCatalogId === task.id || busyAction === `catalog-delete-${task.id}`}
+                                className="rounded-md border border-red-200 bg-red-50 px-2.5 py-1 text-[10px] font-bold tracking-[0.14em] text-red-600 uppercase transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                {deletingCatalogId === task.id ? "Eliminando..." : "Eliminar"}
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  ))
+                )}
+              </div>
             </div>
           </div>
 

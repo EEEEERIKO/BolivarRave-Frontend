@@ -33,6 +33,15 @@ type Skill = {
   nombre: string;
 };
 
+type StaffBalanceMovementApi = {
+  id: string;
+  staffId: string;
+  horasDelta: number;
+  motivo: string | null;
+  creadoPorStaffId: string | null;
+  createdAt: string;
+};
+
 type StaffApi = {
   id: string;
   numeroStaff: number;
@@ -108,6 +117,39 @@ type StaffPausasBulkResponse = {
   }>>;
 };
 
+type TaskPriority = "Baja" | "Media" | "Alta" | "Urgente";
+type TaskState = "Pendiente" | "En Progreso" | "En Revision" | "Completada" | "Rechazada" | "Corregir" | "Cancelada";
+
+type StaffTaskInstanceItem = {
+  id: string;
+  tareaCatalogoId?: string;
+  tareaNombre: string;
+  estado: TaskState;
+  prioridad: TaskPriority;
+  fechaProgramada: string;
+  horaProgramada: string;
+  staffAsignadoId: string | null;
+};
+
+type StaffTaskInstancesResponse = {
+  tasks?: StaffTaskInstanceItem[];
+};
+
+type StaffCatalogTaskItem = {
+  id: string;
+  nombre: string;
+  tipo: "Recurrente" | "Esporadica";
+  staffAsignadosIds: string[];
+  diasSemana: number[];
+  horaProgramada: string | null;
+  fechaEsporadica: string | null;
+  horaEsporadica: string | null;
+};
+
+type StaffCatalogTasksResponse = {
+  tasks?: StaffCatalogTaskItem[];
+};
+
 type EditableJornadaItem = {
   id: string;
   diaSemana: WorkWeekDay | "";
@@ -154,6 +196,19 @@ const TIMELINE_TOTAL_MINUTES = TIMELINE_END_MINUTES - TIMELINE_START_MINUTES;
 
 const WEEK_DAYS: WeekDay[] = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
 
+function getTodayIsoDateLocal(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getCurrentTaskDayIndex(): number {
+  // JS: 0=Sunday..6=Saturday -> App tasks: 0=Monday..6=Sunday
+  return (new Date().getDay() + 6) % 7;
+}
+
 function calculateHoursDifference(startTime: string, endTime: string): number {
   if (!startTime || !endTime) return 0;
   const start = timeToMinutes(startTime);
@@ -197,6 +252,20 @@ function formatDurationHuman(hoursDecimal: number): string {
   }
 
   return `${minutes} min`;
+}
+function formatMovementDate(value: string): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  return parsed.toLocaleString("es-CO", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 const TIME_SLOT_OPTIONS = Array.from({ length: ((23 * 60) - (5 * 60)) / 30 + 1 }, (_, index) => {
@@ -405,6 +474,18 @@ const accessRoleLabelById: Record<StaffAccessRoleId, string> = {
 
 function roleRequiresCredential(roleId: number): boolean {
   return roleId === 1 || roleId === 2;
+}
+
+function getDisplayRoleLabel(staffMember: Pick<StaffApi, "rol" | "roleId">): string {
+  const rawRole = (staffMember.rol ?? "").trim();
+  const normalizedRole = normalizeDayName(rawRole);
+
+  if (normalizedRole.includes("monitor")) {
+    return "Monitor";
+  }
+
+  const accessLabel = accessRoleLabelById[staffMember.roleId as StaffAccessRoleId];
+  return rawRole || accessLabel || "Sin rol";
 }
 
 function getFriendlyStaffApiError(rawMessage: string, action: "guardar" | "actualizar" | "eliminar"): string {
@@ -758,7 +839,7 @@ function StaffScheduleBoard({
       setIsLoadingJornadas(!hasCached);
       setScheduleError(null);
 
-      // Fetch all jornadas and pausas in parallel using bulk endpoints (2 requests instead of 2N)
+      // Fetch jornadas and pausas in parallel
       const [jornadasResponse, pausasResponse] = await Promise.all([
         fetchApiJson<StaffJornadasBulkResponse>("/api/staff/jornadas-bulk", {
           cache: "no-store",
@@ -1442,7 +1523,7 @@ function StaffScheduleBoard({
                         <p className="truncate text-xs font-bold text-[#2a3439] sm:text-sm">
                           {staff.nombres} {staff.apellidos}
                         </p>
-                        <p className="truncate text-[10px] text-[#566166]">{staff.rol}</p>
+                        <p className="truncate text-[10px] text-[#566166]">{getDisplayRoleLabel(staff)}</p>
                       </div>
                       {canManageStaff ? (
                         <button
@@ -1801,6 +1882,7 @@ function StaffScheduleBoard({
           </div>
         </div>
       ) : null}
+
     </div>
   );
 }
@@ -1832,6 +1914,13 @@ export default function StaffPage() {
   const [selectedStaffPausas, setSelectedStaffPausas] = useState<StaffPausaItem[]>([]);
   const [isLoadingDailySchedule, setIsLoadingDailySchedule] = useState(false);
   const [dailyScheduleDay, setDailyScheduleDay] = useState<WorkWeekDay>("Lunes");
+  const [assignedTasksTodayByStaffId, setAssignedTasksTodayByStaffId] = useState<Record<string, StaffTaskInstanceItem[]>>({});
+  const [isLoadingAssignedTasksToday, setIsLoadingAssignedTasksToday] = useState(false);
+  const [balanceMovements, setBalanceMovements] = useState<StaffBalanceMovementApi[]>([]);
+  const [isLoadingBalanceMovements, setIsLoadingBalanceMovements] = useState(false);
+  const [isSavingBalanceMovement, setIsSavingBalanceMovement] = useState(false);
+  const [balanceAdjustmentHours, setBalanceAdjustmentHours] = useState("");
+  const [balanceAdjustmentReason, setBalanceAdjustmentReason] = useState("");
   const selectedStaffContentRef = useRef<HTMLDivElement>(null);
   const staffDetailPanelRef = useRef<HTMLDivElement>(null);
   const [showNewPassword, setShowNewPassword] = useState(false);
@@ -1874,10 +1963,6 @@ export default function StaffPage() {
   });
   const [newBirthDateParts, setNewBirthDateParts] = useState<BirthDateParts>({ year: "", month: "", day: "" });
   const [editBirthDateParts, setEditBirthDateParts] = useState<BirthDateParts>({ year: "", month: "", day: "" });
-  const isOnShift = true;
-  const balanceHours = 4;
-  const formattedBalanceHours = `${balanceHours > 0 ? "+" : ""}${balanceHours} horas`;
-
   const selectedStaff = useMemo(() => {
     if (staffList.length === 0) return null;
     if (isCollaborador) {
@@ -1887,6 +1972,46 @@ export default function StaffPage() {
     if (!selectedStaffId) return null;
     return staffList.find((staff) => staff.id === selectedStaffId) ?? null;
   }, [selectedStaffId, staffList, isCollaborador, collaboratorStaffId]);
+
+  const loadBalanceMovements = async (staffId: string) => {
+    try {
+      setIsLoadingBalanceMovements(true);
+      const session = readAuthSession();
+      const response = await fetch(`/api/staff/${staffId}/balance-movimientos?limit=20`, {
+        method: "GET",
+        cache: "no-store",
+        headers: session?.accessToken
+          ? { Authorization: `Bearer ${session.accessToken}` }
+          : undefined,
+      });
+
+      if (response.status === 404) {
+        // A stale cached staff selection can briefly point to a deleted record.
+        setBalanceMovements([]);
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const payload = await response.json() as { movimientos?: StaffBalanceMovementApi[] };
+      setBalanceMovements(Array.isArray(payload.movimientos) ? payload.movimientos : []);
+    } catch {
+      setBalanceMovements([]);
+    } finally {
+      setIsLoadingBalanceMovements(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!selectedStaff?.id) {
+      setBalanceMovements([]);
+      return;
+    }
+
+    void loadBalanceMovements(selectedStaff.id);
+  }, [selectedStaff?.id]);
 
   useEffect(() => {
     if (isCollaborador) return;
@@ -1916,6 +2041,113 @@ export default function StaffPage() {
   }, [isCollaborador, collaboratorStaffId, staffList, selectedStaffId]);
 
   const selectedStaffSkills = selectedStaff?.habilidades ?? [];
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    const loadAssignedTasksToday = async () => {
+      if (staffList.length === 0) {
+        setAssignedTasksTodayByStaffId({});
+        setIsLoadingAssignedTasksToday(false);
+        return;
+      }
+
+      try {
+        setIsLoadingAssignedTasksToday(true);
+        const [instancesResponse, catalogResponse] = await Promise.all([
+          fetchApiJson<StaffTaskInstancesResponse>("/api/tasks/instances", { cache: "no-store" }).catch(() => ({ tasks: [] })),
+          fetchApiJson<StaffCatalogTasksResponse>("/api/tasks/catalog", { cache: "no-store" }).catch(() => ({ tasks: [] })),
+        ]);
+
+        if (isCancelled) {
+          return;
+        }
+
+        const today = getTodayIsoDateLocal();
+        const todayDayIndex = getCurrentTaskDayIndex();
+        const nextMap: Record<string, StaffTaskInstanceItem[]> = {};
+        const instanceCatalogIdsByStaff = new Map<string, Set<string>>();
+
+        for (const staffMember of staffList) {
+          nextMap[staffMember.id] = [];
+          instanceCatalogIdsByStaff.set(staffMember.id, new Set<string>());
+        }
+
+        for (const task of instancesResponse.tasks ?? []) {
+          if (!task.staffAsignadoId || task.fechaProgramada !== today) {
+            continue;
+          }
+
+          if (!nextMap[task.staffAsignadoId]) {
+            nextMap[task.staffAsignadoId] = [];
+          }
+
+          nextMap[task.staffAsignadoId].push(task);
+
+          if (task.tareaCatalogoId) {
+            instanceCatalogIdsByStaff.get(task.staffAsignadoId)?.add(task.tareaCatalogoId);
+          }
+        }
+
+        for (const task of catalogResponse.tasks ?? []) {
+          const assignedStaff = Array.isArray(task.staffAsignadosIds) ? task.staffAsignadosIds : [];
+          if (assignedStaff.length === 0) {
+            continue;
+          }
+
+          const appliesToday = task.tipo === "Recurrente"
+            ? Array.isArray(task.diasSemana) && task.diasSemana.includes(todayDayIndex) && Boolean(task.horaProgramada)
+            : task.fechaEsporadica === today && Boolean(task.horaEsporadica);
+
+          if (!appliesToday) {
+            continue;
+          }
+
+          const scheduledTime = task.tipo === "Recurrente" ? task.horaProgramada : task.horaEsporadica;
+          if (!scheduledTime) {
+            continue;
+          }
+
+          for (const staffId of assignedStaff) {
+            if (!nextMap[staffId]) {
+              continue;
+            }
+
+            if (instanceCatalogIdsByStaff.get(staffId)?.has(task.id)) {
+              continue;
+            }
+
+            nextMap[staffId].push({
+              id: `catalog-${task.id}-${today}`,
+              tareaCatalogoId: task.id,
+              tareaNombre: task.nombre,
+              estado: "Pendiente",
+              prioridad: "Media",
+              fechaProgramada: today,
+              horaProgramada: scheduledTime,
+              staffAsignadoId: staffId,
+            });
+          }
+        }
+
+        for (const tasks of Object.values(nextMap)) {
+          tasks.sort((a, b) => timeToMinutes(a.horaProgramada) - timeToMinutes(b.horaProgramada));
+        }
+
+        setAssignedTasksTodayByStaffId(nextMap);
+      } finally {
+        if (!isCancelled) {
+          setIsLoadingAssignedTasksToday(false);
+        }
+      }
+    };
+
+    void loadAssignedTasksToday();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [staffList]);
 
   useEffect(() => {
     const cachedLiveStatus = getCachedData<Record<string, StaffLiveStatus>>("live_status_by_staff_id");
@@ -2285,6 +2517,75 @@ export default function StaffPage() {
         ? "text-amber-700"
         : "text-slate-500";
 
+  const selectedStaffAssignedTasksToday = selectedStaff
+    ? (assignedTasksTodayByStaffId[selectedStaff.id] ?? [])
+    : [];
+
+  const selectedStaffPendingTasksCount = selectedStaffAssignedTasksToday.filter(
+    (task) => task.estado !== "Completada" && task.estado !== "Cancelada" && task.estado !== "Rechazada",
+  ).length;
+
+  const getTaskPriorityAccentClass = (priority: TaskPriority): string => {
+    if (priority === "Urgente") return "border-rose-500";
+    if (priority === "Alta") return "border-amber-400";
+    if (priority === "Media") return "border-sky-400";
+    return "border-slate-300";
+  };
+
+  const renderAssignedTasksPanel = (title: string) => (
+    <section className="rounded-2xl bg-[#e8eff3] p-4 sm:p-5">
+      <div className="mb-3 flex items-center justify-between">
+        <h3 className="flex items-center gap-2 text-sm font-black text-[#153f73]">
+          <span className="material-symbols-outlined">assignment</span>
+          {title}
+        </h3>
+        <span className="text-[11px] font-bold text-[#566166]">{selectedStaffPendingTasksCount} pendientes</span>
+      </div>
+
+      {isLoadingAssignedTasksToday ? (
+        <p className="rounded-lg bg-white p-3 text-xs text-[#566166]">Cargando tareas asignadas...</p>
+      ) : selectedStaffAssignedTasksToday.length === 0 ? (
+        <p className="rounded-lg bg-white p-3 text-xs text-[#566166]">No hay tareas asignadas para hoy.</p>
+      ) : (
+        <div className="space-y-2">
+          {selectedStaffAssignedTasksToday.map((task) => {
+            const isCompleted = task.estado === "Completada";
+            const dueTimeLabel = formatTimeAmPm(task.horaProgramada);
+
+            return (
+              <div
+                key={`assigned-task-${task.id}`}
+                className={`flex items-center gap-3 rounded-lg bg-white p-3 shadow-sm ${
+                  isCompleted ? "" : `border-l-4 ${getTaskPriorityAccentClass(task.prioridad)}`
+                }`}
+              >
+                <input
+                  checked={isCompleted}
+                  className="rounded border-slate-300 text-[#3a5f94] focus:ring-[#3a5f94]"
+                  type="checkbox"
+                  readOnly
+                />
+                <div className="flex-1">
+                  <p className={`text-xs font-bold ${isCompleted ? "text-[#566166] line-through" : "text-[#2a3439]"}`}>
+                    {task.tareaNombre}
+                  </p>
+                  <p className={`text-[10px] ${isCompleted ? "text-slate-400" : "text-[#566166]"}`}>
+                    {isCompleted
+                      ? `Estado: ${task.estado} • Programada a las ${dueTimeLabel}`
+                      : `Prioridad: ${task.prioridad.toLowerCase()} • Vence a las ${dueTimeLabel}`}
+                  </p>
+                </div>
+                <span className={`material-symbols-outlined text-base ${isCompleted ? "text-green-500" : "text-amber-500"}`}>
+                  {isCompleted ? "check_circle" : "schedule"}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+
   const academicUnavailabilityMatrix = useMemo(() => {
     const slots = (selectedStaff?.bloqueosClase ?? [])
       .map((slot) => ({
@@ -2482,7 +2783,7 @@ export default function StaffPage() {
     try {
       setIsSavingNewStaff(true);
       const parsedNumber = Number(newStaff.staffNumber);
-      const parsedBalance = Number.isFinite(balanceHours) ? balanceHours : 0;
+      const parsedBalance = 0;
       const resolvedBirthDate = buildBirthDate(newBirthDateParts);
       const requiresCredential = roleRequiresCredential(newStaff.roleId);
 
@@ -2721,6 +3022,51 @@ export default function StaffPage() {
       setFormFeedback(null);
     } finally {
       setIsSavingEditStaff(false);
+    }
+  }
+
+  async function handleRegisterBalanceMovement(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!canManageStaff) {
+      alert("Solo el perfil Administrador puede ajustar horas acumuladas.");
+      return;
+    }
+
+    if (!selectedStaff) {
+      alert("Selecciona un miembro del personal primero.");
+      return;
+    }
+
+    const parsedHours = Number(balanceAdjustmentHours);
+    if (!Number.isFinite(parsedHours) || Math.abs(parsedHours) < 0.01) {
+      alert("Ingresa un valor valido diferente de 0. Usa positivo para horas a favor y negativo para horas en contra.");
+      return;
+    }
+
+    try {
+      setIsSavingBalanceMovement(true);
+      await fetchApiJson<{ message: string }>(`/api/staff/${selectedStaff.id}/balance-movimientos`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          horasDelta: Number(parsedHours.toFixed(2)),
+          motivo: balanceAdjustmentReason.trim() || undefined,
+        }),
+      });
+
+      setBalanceAdjustmentHours("");
+      setBalanceAdjustmentReason("");
+      await Promise.all([
+        loadStaff(),
+        loadBalanceMovements(selectedStaff.id),
+      ]);
+      alert("Ajuste de horas registrado correctamente.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "No se pudo registrar el ajuste de horas.";
+      alert(message);
+    } finally {
+      setIsSavingBalanceMovement(false);
     }
   }
 
@@ -3710,7 +4056,7 @@ export default function StaffPage() {
                             <div className="flex-1">
                               <h3 className="leading-tight font-bold text-[#2a3439]">{staff.nombres}</h3>
                               <p className="text-xs text-[#566166]">ID: {staff.cedula}</p>
-                              <p className="mt-1 text-xs font-semibold text-[#566166]">{staff.rol}</p>
+                              <p className="mt-1 text-xs font-semibold text-[#566166]">{getDisplayRoleLabel(staff)}</p>
                             </div>
                             <div className="text-right">
                               <span
@@ -3746,34 +4092,7 @@ export default function StaffPage() {
           {selectedStaff && !isCollaborador ? (
           <>
           <div ref={selectedStaffContentRef} className="hidden grid-cols-1 gap-4 xl:grid xl:grid-cols-1 xl:gap-6 2xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,1fr)]">
-            <section className="rounded-2xl bg-[#e8eff3] p-4 sm:p-5">
-              <div className="mb-3 flex items-center justify-between">
-                <h3 className="flex items-center gap-2 text-sm font-black text-[#153f73]">
-                  <span className="material-symbols-outlined">assignment</span>
-                  Tareas asignadas: {selectedStaff?.nombres ?? "Personal"}
-                </h3>
-                <span className="text-[11px] font-bold text-[#566166]">2 tareas pendientes</span>
-              </div>
-              <div className="space-y-2">
-                <div className="flex items-center gap-3 rounded-lg bg-white p-3 shadow-sm">
-                  <input checked className="rounded border-slate-300 text-[#3a5f94] focus:ring-[#3a5f94]" type="checkbox" readOnly />
-                  <div className="flex-1">
-                    <p className="text-xs font-bold text-[#566166] line-through">Pasillo 3 limpio (ala norte)</p>
-                    <p className="text-[10px] text-slate-400">Completado a las 08:30</p>
-                  </div>
-                  <span className="material-symbols-outlined text-base text-green-500">check_circle</span>
-                </div>
-
-                <div className="flex items-center gap-3 rounded-lg border-l-4 border-amber-400 bg-white p-3 shadow-sm">
-                  <input className="rounded border-slate-300 text-[#3a5f94] focus:ring-[#3a5f94]" type="checkbox" />
-                  <div className="flex-1">
-                    <p className="text-xs font-bold text-[#2a3439]">Preparar salón 101 (rack AV)</p>
-                    <p className="text-[10px] text-[#566166]">Prioridad: alta • Vence a las 11:00</p>
-                  </div>
-                  <span className="material-symbols-outlined text-base text-amber-500">schedule</span>
-                </div>
-              </div>
-            </section>
+            {renderAssignedTasksPanel(`Tareas asignadas: ${selectedStaff?.nombres ?? "Personal"}`)}
 
             <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5 lg:p-6">
               <h4 className="mb-4 flex items-center gap-2 text-[11px] font-black tracking-widest text-[#566166] uppercase">
@@ -3904,33 +4223,7 @@ export default function StaffPage() {
           </>
           ) : selectedStaff && isCollaborador ? (
             <div className="space-y-4 xl:space-y-6">
-              <section className="rounded-2xl bg-[#e8eff3] p-4 sm:p-5">
-                <div className="mb-3 flex items-center justify-between">
-                  <h3 className="flex items-center gap-2 text-sm font-black text-[#153f73]">
-                    <span className="material-symbols-outlined">assignment</span>
-                    Tareas asignadas
-                  </h3>
-                  <span className="text-[11px] font-bold text-[#566166]">2 tareas pendientes</span>
-                </div>
-                <div className="space-y-2">
-                  <div className="flex items-center gap-3 rounded-lg bg-white p-3 shadow-sm">
-                    <input checked className="rounded border-slate-300 text-[#3a5f94] focus:ring-[#3a5f94]" type="checkbox" readOnly />
-                    <div className="flex-1">
-                      <p className="text-xs font-bold text-[#566166] line-through">Pasillo 3 limpio (ala norte)</p>
-                      <p className="text-[10px] text-slate-400">Completado a las 08:30</p>
-                    </div>
-                    <span className="material-symbols-outlined text-base text-green-500">check_circle</span>
-                  </div>
-                  <div className="flex items-center gap-3 rounded-lg border-l-4 border-amber-400 bg-white p-3 shadow-sm">
-                    <input className="rounded border-slate-300 text-[#3a5f94] focus:ring-[#3a5f94]" type="checkbox" />
-                    <div className="flex-1">
-                      <p className="text-xs font-bold text-[#2a3439]">Preparar salón 101 (rack AV)</p>
-                      <p className="text-[10px] text-[#566166]">Prioridad: alta • Vence a las 11:00</p>
-                    </div>
-                    <span className="material-symbols-outlined text-base text-amber-500">schedule</span>
-                  </div>
-                </div>
-              </section>
+              {renderAssignedTasksPanel("Tareas asignadas")}
 
               <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5 lg:p-6">
                 <h4 className="mb-4 flex items-center gap-2 text-[11px] font-black tracking-widest text-[#566166] uppercase">
@@ -4110,6 +4403,62 @@ export default function StaffPage() {
           </div>
 
           <div className="space-y-6 overflow-y-auto p-4 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden sm:p-5 lg:space-y-8 lg:p-6">
+            <section className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <div className="flex items-center justify-between gap-2">
+                <h4 className="text-[11px] font-black tracking-widest text-[#566166] uppercase">Movimientos de horas</h4>
+                {isLoadingBalanceMovements ? <span className="text-[10px] text-slate-500">Cargando...</span> : null}
+              </div>
+
+              {canManageStaff ? (
+                <form className="space-y-2" onSubmit={handleRegisterBalanceMovement}>
+                  <div className="grid grid-cols-1 gap-2">
+                    <input
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs"
+                      type="number"
+                      step="0.25"
+                      min="-200"
+                      max="200"
+                      value={balanceAdjustmentHours}
+                      onChange={(event) => setBalanceAdjustmentHours(event.target.value)}
+                      placeholder="Ej: +2 (a favor) o -1.5 (en contra)"
+                      required
+                    />
+                    <input
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs"
+                      type="text"
+                      maxLength={255}
+                      value={balanceAdjustmentReason}
+                      onChange={(event) => setBalanceAdjustmentReason(event.target.value)}
+                      placeholder="Motivo (opcional)"
+                    />
+                  </div>
+                  <button
+                    className="w-full rounded-lg bg-[#3a5f94] px-3 py-2 text-xs font-bold text-white disabled:opacity-60"
+                    type="submit"
+                    disabled={isSavingBalanceMovement}
+                  >
+                    {isSavingBalanceMovement ? "Registrando..." : "Registrar ajuste"}
+                  </button>
+                </form>
+              ) : null}
+
+              {balanceMovements.length === 0 ? (
+                <p className="text-xs text-[#566166]">No hay movimientos registrados todavía.</p>
+              ) : (
+                <div className="space-y-2">
+                  {balanceMovements.slice(0, 5).map((movement) => (
+                    <div key={movement.id} className="rounded-lg border border-slate-200 bg-white px-2.5 py-2">
+                      <p className={`text-xs font-black ${movement.horasDelta >= 0 ? "text-green-600" : "text-[#9f403d]"}`}>
+                        {movement.horasDelta >= 0 ? "+" : ""}{movement.horasDelta} horas
+                      </p>
+                      <p className="text-[10px] text-[#566166]">{formatMovementDate(movement.createdAt)}</p>
+                      <p className="text-[10px] text-[#2a3439]">{movement.motivo?.trim() ? movement.motivo : "Sin motivo"}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+
             <section>
               <h4 className="mb-4 flex items-center gap-2 text-[11px] font-black tracking-widest text-[#566166] uppercase">
                 <span className="h-1.5 w-1.5 rounded-full bg-[#3a5f94]" />
@@ -4283,7 +4632,7 @@ export default function StaffPage() {
                           <p className="text-[10px] font-bold tracking-wider text-slate-400 uppercase">Información general</p>
                           <p className="text-sm text-[#2a3439]"><span className="font-semibold">Cédula:</span> {selectedStaff.cedula}</p>
                           <p className="text-sm text-[#2a3439]"><span className="font-semibold">Teléfono:</span> {selectedStaff.telefono}</p>
-                          <p className="text-sm text-[#2a3439]"><span className="font-semibold">Rol:</span> {selectedStaff.rol}</p>
+                          <p className="text-sm text-[#2a3439]"><span className="font-semibold">Rol:</span> {getDisplayRoleLabel(selectedStaff)}</p>
                           <p className="text-sm text-[#2a3439]"><span className="font-semibold">Acceso:</span> {accessRoleLabelById[(selectedStaff.roleId as StaffAccessRoleId) ?? 3]}</p>
                           <p className="text-sm text-[#2a3439]"><span className="font-semibold">Contrato:</span> {selectedStaff.tipoContrato}</p>
                           <p className="text-sm text-[#2a3439]"><span className="font-semibold">Carrera:</span> {selectedStaff.carrera}</p>
@@ -4308,33 +4657,7 @@ export default function StaffPage() {
                       </>
                     ) : null}
 
-                    {mobileDetailTab === "tasks" ? (
-                      <section className="rounded-2xl bg-[#e8eff3] p-4">
-                        <div className="mb-3 flex items-center justify-between">
-                          <h3 className="flex items-center gap-2 text-sm font-black text-[#153f73]">
-                            <span className="material-symbols-outlined">assignment</span>
-                            Tareas asignadas: {selectedStaff.nombres}
-                          </h3>
-                          <span className="text-[11px] font-bold text-[#566166]">2 pendientes</span>
-                        </div>
-                        <div className="space-y-2">
-                          <div className="flex items-center gap-3 rounded-lg bg-white p-3 shadow-sm">
-                            <input checked className="rounded border-slate-300 text-[#3a5f94] focus:ring-[#3a5f94]" type="checkbox" readOnly />
-                            <div className="flex-1">
-                              <p className="text-xs font-bold text-[#566166] line-through">Pasillo 3 limpio (ala norte)</p>
-                              <p className="text-[10px] text-slate-400">Completado a las 08:30</p>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-3 rounded-lg border-l-4 border-amber-400 bg-white p-3 shadow-sm">
-                            <input className="rounded border-slate-300 text-[#3a5f94] focus:ring-[#3a5f94]" type="checkbox" />
-                            <div className="flex-1">
-                              <p className="text-xs font-bold text-[#2a3439]">Preparar salón 101 (rack AV)</p>
-                              <p className="text-[10px] text-[#566166]">Prioridad: alta • Vence a las 11:00</p>
-                            </div>
-                          </div>
-                        </div>
-                      </section>
-                    ) : null}
+                    {mobileDetailTab === "tasks" ? renderAssignedTasksPanel(`Tareas asignadas: ${selectedStaff.nombres}`) : null}
 
                     {mobileDetailTab === "daily" ? (
                       <section className="rounded-2xl border border-slate-200 bg-white p-4">
