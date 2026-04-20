@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { fetchApiJson } from "@/lib/api-client";
+import { readAuthSession } from "@/lib/auth-session";
+import { getDisabledRoomKeys, isRoomDisabled, loadSharedScheduleState, setSharedRoomDisabledState } from "@/lib/disabled-rooms";
 
 type RoomStatus = "Available" | "Occupied" | "Starting Soon";
 
@@ -270,6 +272,31 @@ export default function RoomsPage() {
   const [error, setError] = useState<string | null>(null);
   const [selectedRoom, setSelectedRoom] = useState<string | null>(null);
   const [isRoomModalOpen, setIsRoomModalOpen] = useState(false);
+  const [disabledRoomNames, setDisabledRoomNames] = useState<string[]>([]);
+  const authSession = useMemo(() => readAuthSession(), []);
+  const canManageRoomState = authSession?.role === "admin";
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadState = async () => {
+      try {
+        const state = await loadSharedScheduleState();
+        if (cancelled) return;
+        setDisabledRoomNames(state.disabledRooms);
+      } catch {
+        if (!cancelled) {
+          setDisabledRoomNames([]);
+        }
+      }
+    };
+
+    void loadState();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const cached = readRoomsCache();
@@ -472,6 +499,8 @@ export default function RoomsPage() {
     [allRoomsData, selectedRoom]
   );
   const selectedStatusMeta = selectedInfo ? getStatusMeta(selectedInfo.status) : getStatusMeta("Available");
+  const disabledRoomKeys = useMemo(() => getDisabledRoomKeys(disabledRoomNames), [disabledRoomNames]);
+  const isSelectedRoomDisabled = selectedInfo ? isRoomDisabled(selectedInfo.nombre, disabledRoomKeys) : false;
 
   if (loading) {
     return (
@@ -516,6 +545,7 @@ export default function RoomsPage() {
                     room={room.nombre}
                     status={room.status}
                     detail={room.cardDetail}
+                    disabled={isRoomDisabled(room.nombre, disabledRoomKeys)}
                     selected={selectedRoom === room.id}
                     onSelect={() => {
                       setSelectedRoom(room.id);
@@ -597,6 +627,24 @@ export default function RoomsPage() {
             </div>
 
             <div className="pt-4 sm:pt-6">
+              {canManageRoomState ? (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!selectedInfo) return;
+                    const next = await setSharedRoomDisabledState(selectedInfo.nombre, !isSelectedRoomDisabled);
+                    setDisabledRoomNames(next.disabledRooms);
+                  }}
+                  className={`mb-3 flex w-full items-center justify-center gap-2 rounded-xl py-3 text-sm font-bold text-white shadow-lg transition-all ${
+                    isSelectedRoomDisabled
+                      ? "bg-emerald-600 shadow-emerald-500/20 hover:bg-emerald-700"
+                      : "bg-red-600 shadow-red-500/20 hover:bg-red-700"
+                  }`}
+                >
+                  <span className="material-symbols-outlined text-sm">block</span>
+                  {isSelectedRoomDisabled ? "Habilitar Salón" : "Inhabilitar Salón"}
+                </button>
+              ) : null}
               <button className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-white shadow-lg shadow-primary/20 transition-all hover:bg-primary/90">
                 <span className="material-symbols-outlined text-sm">edit</span>
                 Administrar Horario
@@ -688,6 +736,24 @@ export default function RoomsPage() {
               </div>
 
               <div className="pt-3 pb-2">
+                {canManageRoomState ? (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (!selectedInfo) return;
+                      const next = await setSharedRoomDisabledState(selectedInfo.nombre, !isSelectedRoomDisabled);
+                      setDisabledRoomNames(next.disabledRooms);
+                    }}
+                    className={`mb-3 flex w-full items-center justify-center gap-2 rounded-xl py-3 text-sm font-bold text-white shadow-lg transition-all ${
+                      isSelectedRoomDisabled
+                        ? "bg-emerald-600 shadow-emerald-500/20 hover:bg-emerald-700"
+                        : "bg-red-600 shadow-red-500/20 hover:bg-red-700"
+                    }`}
+                  >
+                    <span className="material-symbols-outlined text-sm">block</span>
+                    {isSelectedRoomDisabled ? "Habilitar Salón" : "Inhabilitar Salón"}
+                  </button>
+                ) : null}
                 <button className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-white shadow-lg shadow-primary/20 transition-all hover:bg-primary/90">
                   <span className="material-symbols-outlined text-sm">edit</span>
                   Administrar Horario
@@ -708,32 +774,48 @@ type RoomCardProps = {
   room: string;
   status: RoomStatus;
   detail: string;
+  disabled?: boolean;
   selected?: boolean;
   onSelect: () => void;
 };
 
-function RoomCard({ room, status, detail, selected, onSelect }: RoomCardProps) {
-  const selectedStyles = selected ? "border-2 border-primary relative" : "border border-slate-200 dark:border-slate-700";
+function RoomCard({ room, status, detail, disabled = false, selected, onSelect }: RoomCardProps) {
+  const selectedStyles = selected
+    ? "border-2 border-primary relative"
+    : "border border-slate-200 dark:border-slate-700";
+  const disabledStyles = disabled ? "border-2 border-red-500 bg-red-50 dark:bg-red-950/30" : selectedStyles;
   const statusMeta = getStatusMeta(status);
 
   return (
     <button
       type="button"
       onClick={onSelect}
-      className={`group relative w-full cursor-pointer rounded-xl bg-white p-3 text-left transition-all hover:shadow-lg sm:p-4 dark:bg-slate-800 ${selectedStyles}`}
+      className={`group relative w-full cursor-pointer rounded-xl p-3 text-left transition-all hover:shadow-lg sm:p-4 ${disabled ? "dark:bg-red-950/20" : "bg-white dark:bg-slate-800"} ${disabledStyles}`}
     >
       <div className="mb-3">
         <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-bold tracking-wide uppercase ${statusMeta.pillClass}`}>
           <span className="material-symbols-outlined text-xs">{statusMeta.icon}</span>
           {statusMeta.label}
         </span>
+        {disabled ? (
+          <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-1 text-[10px] font-bold tracking-wide text-red-700 uppercase dark:bg-red-900/60 dark:text-red-100">
+            <span className="material-symbols-outlined text-xs">warning</span>
+            Inhabilitado
+          </span>
+        ) : null}
       </div>
       <div className="mb-4 flex items-start justify-between gap-2">
         <span className="flex-1 whitespace-normal text-base font-bold sm:text-lg">{room}</span>
       </div>
-      <p className={`text-[10px] font-bold tracking-widest uppercase ${selected ? "font-black text-primary" : "text-slate-400"}`}>
-        {detail}
-      </p>
+      {disabled ? (
+        <p className="rounded-md border border-red-200 bg-red-100 px-2 py-1 text-[10px] font-black tracking-widest text-red-700 uppercase dark:border-red-800 dark:bg-red-900/40 dark:text-red-100">
+          Inhabilitado
+        </p>
+      ) : (
+        <p className={`text-[10px] font-bold tracking-widest uppercase ${selected ? "font-black text-primary" : "text-slate-400"}`}>
+          {detail}
+        </p>
+      )}
       {selected && (
         <div className="absolute -top-2 -right-2 rounded-full bg-primary p-1 text-[10px] text-white">
           <span className="material-symbols-outlined text-xs">check</span>

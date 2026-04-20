@@ -35,11 +35,26 @@ type UpcomingAuditorioNotification = {
   nombreEvento: string;
   organizador: string;
   estado: "Pendiente" | "Aprobada" | "Cancelada";
+  fechaInicioPeriodo?: string;
+  fechaFinPeriodo?: string;
+  numeroAsistentes?: number;
+  requierePantalla?: boolean;
+  requiereSonido?: boolean;
+  requiereMonitor?: boolean;
+  requiereProyector?: boolean;
+  requiereFiltroAgua?: boolean;
+  observaciones?: string | null;
   fechaEspecifica: string;
   horaInicio: string;
   horaFin: string;
   startsAt: string;
   notificationType: "en_curso" | "proximo";
+  horarios?: Array<{
+    id: string;
+    fechaEspecifica: string;
+    horaInicio: string;
+    horaFin: string;
+  }>;
   assignedWorkers: Array<{
     staffId: string;
     cedula: string;
@@ -106,6 +121,47 @@ function formatDateLong(value: string): string {
     month: "long",
     day: "numeric",
   });
+}
+
+function formatDateShort(value: string): string {
+  const [year, month, day] = value.split("-").map(Number);
+  const parsed = new Date(year ?? 0, (month ?? 1) - 1, day ?? 1);
+
+  const dayText = String(parsed.getDate());
+  const monthText = parsed.toLocaleDateString("es-CO", { month: "long" });
+  const monthCapitalized = monthText.charAt(0).toUpperCase() + monthText.slice(1);
+  const yearText = String(parsed.getFullYear());
+
+  return `${dayText} ${monthCapitalized} ${yearText}`;
+}
+
+function getDurationInDays(startDate?: string, endDate?: string): number {
+  if (!startDate || !endDate) {
+    return 1;
+  }
+
+  const [sy, sm, sd] = startDate.split("-").map(Number);
+  const [ey, em, ed] = endDate.split("-").map(Number);
+  const start = new Date(sy ?? 0, (sm ?? 1) - 1, sd ?? 1);
+  const end = new Date(ey ?? 0, (em ?? 1) - 1, ed ?? 1);
+
+  const diffMs = end.getTime() - start.getTime();
+  const days = Math.floor(diffMs / (1000 * 60 * 60 * 24)) + 1;
+  return Number.isFinite(days) && days > 0 ? days : 1;
+}
+
+function buildResourcesLabel(event: UpcomingAuditorioNotification): string {
+  const resources: string[] = [];
+  if (event.requierePantalla) resources.push("Pantalla");
+  if (event.requiereSonido) resources.push("Sonido");
+  if (event.requiereMonitor) resources.push("Monitor");
+  if (event.requiereProyector) resources.push("Proyector");
+  if (event.requiereFiltroAgua) resources.push("Filtro de agua");
+
+  if (resources.length === 0) return "Sin recursos solicitados";
+  if (resources.length === 1) return resources[0];
+  if (resources.length === 2) return `${resources[0]} y ${resources[1]}`;
+  return `${resources.slice(0, -1).join(", ")} y ${resources[resources.length - 1]}`;
 }
 
 function getStaffInitials(fullName: string): string {
@@ -456,7 +512,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
             </button>
 
             {isNotificationsOpen ? (
-              <div className="absolute right-0 top-12 z-50 w-80 rounded-xl border border-slate-200 bg-white p-4 shadow-xl dark:border-slate-700 dark:bg-slate-900">
+              <div className="absolute right-0 top-12 z-50 max-h-[85vh] w-80 overflow-y-auto rounded-xl border border-slate-200 bg-white p-4 shadow-xl dark:border-slate-700 dark:bg-slate-900">
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <p className="text-sm font-bold text-slate-900 dark:text-white">Notificaciones</p>
@@ -761,13 +817,85 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
                             </div>
 
                             {isExpanded ? (
-                              <div className="mt-3 space-y-2 rounded-lg border border-slate-200 bg-white p-3 text-xs dark:border-slate-700 dark:bg-slate-900/60">
-                                <p className="text-slate-700 dark:text-slate-200"><span className="font-semibold">Organiza:</span> {event.organizador}</p>
-                                <p className="text-slate-700 dark:text-slate-200"><span className="font-semibold">Estado:</span> {event.estado}</p>
-                                <p className="text-slate-700 dark:text-slate-200"><span className="font-semibold">Encargados:</span> {(event.assignedWorkers ?? []).map((worker) => worker.nombreCompleto).join(", ") || "No asignado"}</p>
-                                <p className="pt-1 text-[11px] font-medium text-[#295786] dark:text-slate-300">
-                                  Esta es la informacion del evento asignado para ti.
-                                </p>
+                              <div className="mt-3 space-y-3 rounded-lg border border-slate-200 bg-white p-3 text-xs dark:border-slate-700 dark:bg-slate-900/60">
+                                <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Detalle del evento</p>
+
+                                <div className="space-y-1 text-slate-700 dark:text-slate-200">
+                                  <p><span className="font-semibold">Titulo:</span> {event.nombreEvento}</p>
+                                  <p><span className="font-semibold">Organiza:</span> {event.organizador}</p>
+                                  <p><span className="font-semibold">Duracion:</span> {getDurationInDays(event.fechaInicioPeriodo, event.fechaFinPeriodo)} dia(s)</p>
+                                  <p><span className="font-semibold">Asistentes:</span> {event.numeroAsistentes ?? "No disponible"}</p>
+                                  <p><span className="font-semibold">Recursos:</span> {buildResourcesLabel(event)}</p>
+                                </div>
+
+                                <div>
+                                  <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Encargado(s)</p>
+                                  {(event.assignedWorkers ?? []).length > 0 ? (
+                                    <div className="space-y-2">
+                                      {(event.assignedWorkers ?? []).map((worker) => (
+                                        <div
+                                          key={`${event.id}-${worker.staffId}`}
+                                          className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 dark:border-slate-700 dark:bg-slate-900"
+                                        >
+                                          <div className="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[#295786] text-[10px] font-bold text-white">
+                                            <img
+                                              src={getStaffPhotoUrl(worker.cedula)}
+                                              alt={`Foto de ${worker.nombreCompleto}`}
+                                              className="h-full w-full object-cover"
+                                              onError={(event) => {
+                                                const image = event.currentTarget;
+                                                image.style.display = "none";
+                                                const fallback = image.parentElement?.querySelector<HTMLElement>("[data-notification-worker-fallback='true']");
+                                                fallback?.classList.remove("hidden");
+                                              }}
+                                              onLoad={(event) => {
+                                                const image = event.currentTarget;
+                                                const fallback = image.parentElement?.querySelector<HTMLElement>("[data-notification-worker-fallback='true']");
+                                                fallback?.classList.add("hidden");
+                                                image.style.display = "block";
+                                              }}
+                                            />
+                                            <div data-notification-worker-fallback="true" className="hidden items-center justify-center">
+                                              {getStaffInitials(worker.nombreCompleto)}
+                                            </div>
+                                          </div>
+                                          <div className="min-w-0">
+                                            <p className="truncate text-xs font-semibold text-slate-900 dark:text-white">{worker.nombreCompleto}</p>
+                                            <p className="truncate text-[10px] text-slate-500 dark:text-slate-400">{worker.rol}</p>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800 dark:border-amber-400/30 dark:bg-amber-400/10 dark:text-amber-200">
+                                      No hay encargado asignado.
+                                    </div>
+                                  )}
+                                </div>
+
+                                <div>
+                                  <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Horarios</p>
+                                  <div className="space-y-2">
+                                    {(event.horarios ?? []).map((slot) => (
+                                      <div key={slot.id} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-900">
+                                        <div className="flex items-center gap-2 text-slate-700 dark:text-slate-200">
+                                          <span className="material-symbols-outlined text-sm">calendar_month</span>
+                                          <p>{formatDateShort(slot.fechaEspecifica)}</p>
+                                        </div>
+                                        <div className="mt-1 flex items-center gap-2 text-slate-700 dark:text-slate-200">
+                                          <span className="material-symbols-outlined text-sm">schedule</span>
+                                          <p>{formatTimeAmPm(slot.horaInicio)} - {formatTimeAmPm(slot.horaFin)}</p>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+
+                                <div>
+                                  <p className="text-slate-700 dark:text-slate-200">
+                                    <span className="font-semibold">Observaciones:</span> {event.observaciones?.trim() ? event.observaciones : "Sin observaciones"}
+                                  </p>
+                                </div>
                               </div>
                             ) : null}
                           </button>

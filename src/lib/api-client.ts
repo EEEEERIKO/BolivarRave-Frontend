@@ -29,6 +29,10 @@ const toFriendlyApiError = (path: string, message: string, status?: number) => {
     return "Este horario se cruza con otra clase en el mismo salón. Elige otro rango de hora o cambia de salón.";
   }
 
+  if (normalizedMessage.includes("conflicto de horario") || normalizedMessage.includes("se solapa")) {
+    return message;
+  }
+
   if (normalizedMessage.includes("payload de") || normalizedMessage.includes("payload invalido")) {
     return "Hay datos incompletos o con formato inválido. Revisa los campos obligatorios e inténtalo de nuevo.";
   }
@@ -43,6 +47,10 @@ const toFriendlyApiError = (path: string, message: string, status?: number) => {
 
   if (status === 403) {
     return "Esta acción fue bloqueada por seguridad. Intenta de nuevo o contacta al administrador.";
+  }
+
+  if (status === 404 && path.includes("/api/schedules/requests")) {
+    return message;
   }
 
   if (status === 404) {
