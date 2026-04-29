@@ -1,76 +1,399 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-type ProductGroup = {
+import { fetchApiJson } from "@/lib/api-client";
+import { readAuthSession } from "@/lib/auth-session";
+
+type InventoryGroup = {
   id: string;
   name: string;
   icon: string;
-  badge: "Operativo" | "Revisar";
-  badgeClass: string;
+  order: number;
+  itemCount: number;
+  defectiveCount: number;
+  availableCount: number;
+  fixedCount: number;
 };
 
 type InventoryItem = {
   id: string;
   groupId: string;
-  itemName: string;
-  model: string;
-  location: string;
-  status: "Disponible" | "Defectuoso";
+  groupName: string;
+  groupIcon: string;
+  name: string;
+  code: string;
+  room: string;
+  status: "Disponible" | "Fijo";
+  defective: boolean;
+  order: number;
 };
 
-const PRODUCT_GROUPS: ProductGroup[] = [
-  { id: "televisores", name: "Televisores", icon: "tv", badge: "Operativo", badgeClass: "bg-[#d5e3ff] text-[#2c5287]" },
-  { id: "hdmi", name: "Cables HDMI", icon: "cable", badge: "Operativo", badgeClass: "bg-[#d5e3ff] text-[#2c5287]" },
-  { id: "svg", name: "Cables SVG", icon: "settings_ethernet", badge: "Revisar", badgeClass: "bg-[#fe8983]/20 text-[#752121]" },
-  { id: "poder", name: "Cables de Poder", icon: "power", badge: "Operativo", badgeClass: "bg-[#d5e3ff] text-[#2c5287]" },
-  { id: "altavoces", name: "Altavoces", icon: "speaker", badge: "Revisar", badgeClass: "bg-[#fe8983]/20 text-[#752121]" },
-  { id: "microfonos", name: "Microfonos", icon: "mic", badge: "Operativo", badgeClass: "bg-[#d5e3ff] text-[#2c5287]" },
-  { id: "mesas", name: "Mesas de Sonido", icon: "graphic_eq", badge: "Operativo", badgeClass: "bg-[#d5e3ff] text-[#2c5287]" },
-  { id: "adaptadores", name: "Adaptadores", icon: "settings_input_component", badge: "Revisar", badgeClass: "bg-[#fe8983]/20 text-[#752121]" },
-  { id: "rtc", name: "RTC", icon: "router", badge: "Operativo", badgeClass: "bg-[#d5e3ff] text-[#2c5287]" },
+type InventoryGroupFormState = {
+  name: string;
+  icon: string;
+};
+
+type InventoryItemFormState = {
+  groupId: string;
+  name: string;
+  code: string;
+  room: string;
+  status: "Disponible" | "Fijo";
+  defective: boolean;
+};
+
+type InventoryModalState =
+  | { kind: "group"; mode: "create" | "edit"; groupId?: string }
+  | { kind: "item"; mode: "create" | "edit"; itemId?: string }
+  | { kind: "delete-group"; groupId: string }
+  | { kind: "delete-item"; itemId: string }
+  | null;
+
+const INVENTORY_ICON_OPTIONS = [
+  { value: "inventory_2", label: "Inventario" },
+  { value: "tv", label: "Televisor" },
+  { value: "cable", label: "Cable" },
+  { value: "settings_ethernet", label: "Ethernet" },
+  { value: "power", label: "Energía" },
+  { value: "speaker", label: "Audio" },
+  { value: "mic", label: "Micrófono" },
+  { value: "graphic_eq", label: "Mezcla" },
+  { value: "settings_input_component", label: "Adaptador" },
+  { value: "router", label: "Red" },
+  { value: "computer", label: "Computador" },
+  { value: "school", label: "Académico" },
 ];
 
-const INVENTORY_ITEMS: InventoryItem[] = [
-  { id: "tv-1", groupId: "televisores", itemName: "Samsung 65 4K", model: "Series 8", location: "Piso 3 - Salon 302", status: "Disponible" },
-  { id: "tv-2", groupId: "televisores", itemName: "Sony Bravia 55", model: "BX-500", location: "Piso 2 - Salon 201", status: "Defectuoso" },
-  { id: "hdmi-1", groupId: "hdmi", itemName: "HDMI 2.1 15ft", model: "Shielded", location: "Bodega A", status: "Disponible" },
-  { id: "hdmi-2", groupId: "hdmi", itemName: "HDMI 2.0 10ft", model: "Campus Pro", location: "Bodega A", status: "Disponible" },
-  { id: "svg-1", groupId: "svg", itemName: "Cable SVG 3m", model: "Legacy Line", location: "Soporte TI", status: "Defectuoso" },
-  { id: "pwr-1", groupId: "poder", itemName: "Cable Poder 1.5m", model: "3 Prong", location: "Piso 1 - Cuarto Electrico", status: "Disponible" },
-  { id: "spk-1", groupId: "altavoces", itemName: "JBL Ceiling A1", model: "Control Series", location: "Auditorio", status: "Defectuoso" },
-  { id: "mic-1", groupId: "microfonos", itemName: "Shure SM58", model: "Wireless", location: "Cabina Audio", status: "Disponible" },
-  { id: "mix-1", groupId: "mesas", itemName: "Yamaha MG16", model: "Mix Console", location: "Cabina Audio", status: "Disponible" },
-  { id: "adp-1", groupId: "adaptadores", itemName: "HDMI a VGA", model: "Multiport", location: "Soporte TI", status: "Defectuoso" },
-  { id: "rtc-1", groupId: "rtc", itemName: "RTC Router Core", model: "Campus R1", location: "NOC", status: "Disponible" },
-];
+const getGroupBadge = (group: InventoryGroup) => {
+  if (group.defectiveCount > 0) {
+    return {
+      label: "Revisar",
+      className: "bg-[#fe8983]/20 text-[#752121]",
+    };
+  }
+
+  return {
+    label: "Operativo",
+    className: "bg-[#d5e3ff] text-[#2c5287]",
+  };
+};
+
+const normalizeStatus = (value: string | null | undefined): "Disponible" | "Fijo" => {
+  if (value === "Fijo") {
+    return "Fijo";
+  }
+
+  return "Disponible";
+};
 
 export default function InventoryPage() {
-  const [selectedGroupId, setSelectedGroupId] = useState<string>(PRODUCT_GROUPS[0].id);
+  const [inventoryGroups, setInventoryGroups] = useState<InventoryGroup[]>([]);
+  const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
+  const [roomCatalog, setRoomCatalog] = useState<string[]>([]);
+  const [selectedGroupId, setSelectedGroupId] = useState<string>("");
+  const [isLoadingInventory, setIsLoadingInventory] = useState(true);
+  const [inventoryError, setInventoryError] = useState<string | null>(null);
+  const [activeModal, setActiveModal] = useState<InventoryModalState>(null);
+  const [groupForm, setGroupForm] = useState<InventoryGroupFormState>({
+    name: "",
+    icon: "inventory_2",
+  });
+  const [itemForm, setItemForm] = useState<InventoryItemFormState>({
+    groupId: "",
+    name: "",
+    code: "",
+    room: "",
+    status: "Disponible",
+    defective: false,
+  });
+  const [modalError, setModalError] = useState<string | null>(null);
+  const [isModalSubmitting, setIsModalSubmitting] = useState(false);
   const groupsScrollRef = useRef<HTMLDivElement | null>(null);
 
+  const authSession = useMemo(() => readAuthSession(), []);
+  const canManageInventory = authSession?.role === "admin";
+
+  const loadInventory = async () => {
+    setIsLoadingInventory(true);
+    setInventoryError(null);
+
+    try {
+      const [groupsResponse, itemsResponse, roomsResponse] = await Promise.allSettled([
+        fetchApiJson<{ groups?: InventoryGroup[] }>("/api/inventory/groups", { cache: "no-store" }),
+        fetchApiJson<{ items?: InventoryItem[] }>("/api/inventory/items", { cache: "no-store" }),
+        fetchApiJson<{ rooms?: string[] }>("/api/schedules/rooms", { cache: "no-store" }),
+      ]);
+
+      const nextGroups = groupsResponse.status === "fulfilled" ? groupsResponse.value.groups ?? [] : [];
+      const nextItems = itemsResponse.status === "fulfilled" ? itemsResponse.value.items ?? [] : [];
+      const nextRooms =
+        roomsResponse.status === "fulfilled"
+          ? Array.from(new Set((roomsResponse.value.rooms ?? []).filter((room) => typeof room === "string" && room.trim().length > 0)))
+          : [];
+
+      setInventoryGroups(nextGroups);
+      setInventoryItems(nextItems);
+      setRoomCatalog(nextRooms.length > 0 ? nextRooms : Array.from(new Set(nextItems.map((item) => item.room).filter((room) => room.trim().length > 0))));
+
+      setSelectedGroupId((current) => {
+        if (current && nextGroups.some((group) => group.id === current)) {
+          return current;
+        }
+
+        return nextGroups[0]?.id ?? "";
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "No se pudo cargar el inventario";
+      setInventoryError(message);
+      setInventoryGroups([]);
+      setInventoryItems([]);
+      setRoomCatalog([]);
+      setSelectedGroupId("");
+    } finally {
+      setIsLoadingInventory(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadInventory();
+  }, []);
+
   const selectedGroup = useMemo(
-    () => PRODUCT_GROUPS.find((group) => group.id === selectedGroupId) ?? PRODUCT_GROUPS[0],
-    [selectedGroupId],
+    () => inventoryGroups.find((group) => group.id === selectedGroupId) ?? inventoryGroups[0] ?? null,
+    [inventoryGroups, selectedGroupId],
   );
 
   const selectedItems = useMemo(
-    () => INVENTORY_ITEMS.filter((item) => item.groupId === selectedGroupId),
-    [selectedGroupId],
+    () => inventoryItems.filter((item) => item.groupId === selectedGroup?.id),
+    [inventoryItems, selectedGroup],
+  );
+
+  const selectedGroupItemCount = useMemo(
+    () => selectedGroup?.itemCount ?? selectedItems.length,
+    [selectedGroup, selectedItems.length],
   );
 
   const defectiveCount = useMemo(
-    () => selectedItems.filter((item) => item.status === "Defectuoso").length,
+    () => selectedItems.filter((item) => item.defective).length,
     [selectedItems],
   );
 
+  const roomOptions = useMemo(() => {
+    const options = [...roomCatalog];
+    if (itemForm.room && !options.includes(itemForm.room)) {
+      options.unshift(itemForm.room);
+    }
+    return options;
+  }, [itemForm.room, roomCatalog]);
+
   const countByGroup = useMemo(() => {
     const map = new Map<string, number>();
-    INVENTORY_ITEMS.forEach((item) => {
+    inventoryItems.forEach((item) => {
       map.set(item.groupId, (map.get(item.groupId) ?? 0) + 1);
     });
     return map;
-  }, []);
+  }, [inventoryItems]);
+
+  const modalGroup =
+    activeModal?.kind === "group"
+      ? inventoryGroups.find((group) => group.id === activeModal.groupId) ?? selectedGroup ?? null
+      : null;
+
+  const modalItem =
+    activeModal?.kind === "item"
+      ? inventoryItems.find((item) => item.id === activeModal.itemId) ?? null
+      : null;
+
+  const modalDeleteGroup =
+    activeModal?.kind === "delete-group"
+      ? inventoryGroups.find((group) => group.id === activeModal.groupId) ?? null
+      : null;
+
+  const modalDeleteItem =
+    activeModal?.kind === "delete-item"
+      ? inventoryItems.find((item) => item.id === activeModal.itemId) ?? null
+      : null;
+
+  const refreshInventory = async () => {
+    await loadInventory();
+  };
+
+  const closeModal = () => {
+    setActiveModal(null);
+    setModalError(null);
+    setIsModalSubmitting(false);
+  };
+
+  const openGroupModal = (mode: "create" | "edit") => {
+    if (!canManageInventory) return;
+
+    const currentGroup = selectedGroup;
+    setModalError(null);
+    setIsModalSubmitting(false);
+    setGroupForm({
+      name: mode === "edit" && currentGroup ? currentGroup.name : "",
+      icon: mode === "edit" && currentGroup ? currentGroup.icon : "inventory_2",
+    });
+    setActiveModal({ kind: "group", mode, groupId: currentGroup?.id });
+  };
+
+  const openItemModal = (mode: "create" | "edit", item?: InventoryItem) => {
+    if (!canManageInventory) return;
+
+    const defaultGroupId = selectedGroup?.id ?? inventoryGroups[0]?.id ?? "";
+    setModalError(null);
+    setIsModalSubmitting(false);
+    setItemForm({
+      groupId: mode === "edit" && item ? item.groupId : defaultGroupId,
+      name: mode === "edit" && item ? item.name : "",
+      code: mode === "edit" && item ? item.code : "",
+      room: mode === "edit" && item ? item.room : "",
+      status: mode === "edit" && item ? item.status : "Disponible",
+      defective: mode === "edit" && item ? item.defective : false,
+    });
+    setActiveModal({ kind: "item", mode, itemId: item?.id });
+  };
+
+  const openDeleteGroupModal = () => {
+    if (!canManageInventory || !selectedGroup) return;
+    setModalError(null);
+    setIsModalSubmitting(false);
+    setActiveModal({ kind: "delete-group", groupId: selectedGroup.id });
+  };
+
+  const openDeleteItemModal = (item: InventoryItem) => {
+    if (!canManageInventory) return;
+    setModalError(null);
+    setIsModalSubmitting(false);
+    setActiveModal({ kind: "delete-item", itemId: item.id });
+  };
+
+  const createGroup = () => openGroupModal("create");
+
+  const editGroup = () => openGroupModal("edit");
+
+  const deleteGroup = () => openDeleteGroupModal();
+
+  const createItem = () => openItemModal("create");
+
+  const editItem = (item: InventoryItem) => openItemModal("edit", item);
+
+  const deleteItem = (item: InventoryItem) => openDeleteItemModal(item);
+
+  const submitInventoryModal = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!activeModal) return;
+
+    setModalError(null);
+    setIsModalSubmitting(true);
+
+    try {
+      if (activeModal.kind === "group") {
+        if (!groupForm.name.trim()) {
+          throw new Error("Debes ingresar el nombre del grupo.");
+        }
+
+        const payload = {
+          name: groupForm.name.trim(),
+          icon: groupForm.icon.trim() || "inventory_2",
+        };
+
+        if (activeModal.mode === "create") {
+          const response = await fetchApiJson<{ id: string }>("/api/inventory/groups", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+
+          await refreshInventory();
+          setSelectedGroupId(response.id);
+        } else {
+          const targetGroupId = activeModal.groupId ?? selectedGroup?.id;
+          if (!targetGroupId) {
+            throw new Error("No se encontró el grupo a editar.");
+          }
+
+          await fetchApiJson<{ id: string }>(`/api/inventory/groups/${targetGroupId}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+
+          await refreshInventory();
+        }
+
+        closeModal();
+        return;
+      }
+
+      if (activeModal.kind === "item") {
+        if (!itemForm.groupId) {
+          throw new Error("Debes seleccionar un grupo para el elemento.");
+        }
+
+        if (!itemForm.name.trim() || !itemForm.code.trim() || !itemForm.room.trim()) {
+          throw new Error("Completa nombre, código y salón del elemento.");
+        }
+
+        const payload = {
+          groupId: itemForm.groupId,
+          name: itemForm.name.trim(),
+          code: itemForm.code.trim(),
+          room: itemForm.room.trim(),
+          status: itemForm.status,
+          defective: itemForm.defective,
+        };
+
+        if (activeModal.mode === "create") {
+          await fetchApiJson<{ id: string }>("/api/inventory/items", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+        } else {
+          const targetItemId = activeModal.itemId;
+          if (!targetItemId) {
+            throw new Error("No se encontró el elemento a editar.");
+          }
+
+          await fetchApiJson<{ id: string }>(`/api/inventory/items/${targetItemId}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+        }
+
+        await refreshInventory();
+        closeModal();
+        return;
+      }
+
+      if (activeModal.kind === "delete-group") {
+        await fetchApiJson<{ id: string }>(`/api/inventory/groups/${activeModal.groupId}`, {
+          method: "DELETE",
+        });
+
+        await refreshInventory();
+        closeModal();
+        return;
+      }
+
+      if (activeModal.kind === "delete-item") {
+        await fetchApiJson<{ id: string }>(`/api/inventory/items/${activeModal.itemId}`, {
+          method: "DELETE",
+        });
+
+        await refreshInventory();
+        closeModal();
+      }
+    } catch (error) {
+      setModalError(error instanceof Error ? error.message : "No se pudo completar la acción");
+    } finally {
+      setIsModalSubmitting(false);
+    }
+  };
 
   const scrollGroups = (direction: "left" | "right") => {
     const container = groupsScrollRef.current;
@@ -85,6 +408,10 @@ export default function InventoryPage() {
 
   return (
     <div className="w-full max-w-full min-w-0 flex-1 space-y-8 overflow-x-hidden p-4 md:p-8">
+      {inventoryError ? (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{inventoryError}</div>
+      ) : null}
+
       <section className="grid grid-cols-1 gap-6 md:grid-cols-3">
         <div className="rounded-xl border border-slate-200/60 bg-white p-6 shadow-[0_10px_40px_rgba(42,52,57,0.06)]">
           <div className="mb-4 flex items-start justify-between">
@@ -92,7 +419,7 @@ export default function InventoryPage() {
             <span className="text-[10px] font-bold tracking-widest text-[#3a5f94] uppercase">Live Status</span>
           </div>
           <h4 className="mb-1 text-sm font-medium text-[#566166]">Grupos Activos</h4>
-          <div className="text-3xl font-extrabold tracking-tight text-[#2a3439]">{PRODUCT_GROUPS.length}</div>
+          <div className="text-3xl font-extrabold tracking-tight text-[#2a3439]">{inventoryGroups.length}</div>
           <div className="mt-2 flex items-center text-[11px] text-[#566166]">Categorias de inventario registradas</div>
         </div>
 
@@ -103,7 +430,7 @@ export default function InventoryPage() {
           </div>
           <h4 className="mb-1 text-sm font-medium text-[#566166]">Elementos Defectuosos</h4>
           <div className="text-3xl font-extrabold tracking-tight text-[#2a3439]">
-            {INVENTORY_ITEMS.filter((item) => item.status === "Defectuoso").length}
+            {inventoryItems.filter((item) => item.defective).length}
           </div>
           <div className="mt-2 flex items-center text-[11px] text-[#566166]">Pendientes por mantenimiento</div>
         </div>
@@ -114,8 +441,8 @@ export default function InventoryPage() {
             <span className="text-[10px] font-bold tracking-widest text-[#506076] uppercase">Inventory</span>
           </div>
           <h4 className="mb-1 text-sm font-medium text-[#566166]">Total de Elementos</h4>
-          <div className="text-3xl font-extrabold tracking-tight text-[#2a3439]">{INVENTORY_ITEMS.length}</div>
-          <div className="mt-2 flex items-center text-[11px] text-[#566166]">Datos demo (quemados)</div>
+          <div className="text-3xl font-extrabold tracking-tight text-[#2a3439]">{inventoryItems.length}</div>
+          <div className="mt-2 flex items-center text-[11px] text-[#566166]">Datos persistidos en base de datos</div>
         </div>
       </section>
 
@@ -126,6 +453,15 @@ export default function InventoryPage() {
             <p className="text-sm text-[#566166]">Desliza horizontalmente y haz click para cargar Asset Details abajo</p>
           </div>
           <div className="flex items-center gap-2">
+            {canManageInventory ? (
+              <button
+                className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-[#3a5f94] transition hover:bg-slate-50"
+                onClick={createGroup}
+                type="button"
+              >
+                Nuevo grupo
+              </button>
+            ) : null}
             <button
               aria-label="Desplazar grupos a la izquierda"
               className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-[#3a5f94] transition hover:bg-slate-50"
@@ -151,8 +487,9 @@ export default function InventoryPage() {
             ref={groupsScrollRef}
           >
             <div className="flex w-max flex-nowrap gap-4 pr-1">
-              {PRODUCT_GROUPS.map((group) => {
+              {inventoryGroups.map((group) => {
                 const groupCount = countByGroup.get(group.id) ?? 0;
+                const badge = getGroupBadge(group);
                 return (
                   <div
                     className={`group w-32 shrink-0 cursor-pointer rounded-xl border bg-white p-4 transition-all hover:shadow-lg sm:w-36 ${
@@ -173,8 +510,8 @@ export default function InventoryPage() {
                       <span className="material-symbols-outlined rounded-lg p-2 text-4xl text-[#3a5f94]/40 transition-transform duration-300 group-hover:scale-110">
                         {group.icon}
                       </span>
-                      <div className={`absolute top-2 right-2 rounded-full px-2 py-0.5 text-[9px] font-bold tracking-tight uppercase ${group.badgeClass}`}>
-                        {group.badge}
+                      <div className={`absolute top-2 right-2 rounded-full px-2 py-0.5 text-[9px] font-bold tracking-tight uppercase ${badge.className}`}>
+                        {badge.label}
                       </div>
                     </div>
                     <h5 className="mb-0.5 text-sm font-bold text-[#2a3439]">{group.name}</h5>
@@ -190,53 +527,98 @@ export default function InventoryPage() {
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-[0_10px_40px_rgba(42,52,57,0.06)]">
         <div className="mb-6 flex items-center justify-between">
           <h3 className="text-xl font-extrabold tracking-tight text-[#1A365D]">Asset Details</h3>
-          <button className="material-symbols-outlined text-lg text-[#566166]">more_vert</button>
+          {canManageInventory ? (
+            <button
+              className="material-symbols-outlined text-lg text-[#566166]"
+              onClick={createItem}
+              type="button"
+              title="Nuevo elemento"
+            >
+              add_circle
+            </button>
+          ) : (
+            <button className="material-symbols-outlined text-lg text-[#566166]">more_vert</button>
+          )}
         </div>
 
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
           <div className="xl:col-span-1">
-            <h2 className="text-xl font-bold text-[#2a3439]">{selectedGroup.name}</h2>
+            <h2 className="text-xl font-bold text-[#2a3439]">{selectedGroup?.name ?? "Sin grupo seleccionado"}</h2>
             <div className="mt-3 space-y-2">
               <div className="rounded-lg bg-[#f0f4f7] p-3">
                 <p className="text-[10px] font-bold tracking-widest text-[#566166] uppercase">Cantidad de Elementos</p>
-                <p className="mt-1 text-xl font-extrabold text-[#2a3439]">{selectedItems.length}</p>
+                <p className="mt-1 text-xl font-extrabold text-[#2a3439]">{selectedGroupItemCount}</p>
               </div>
               <div className="rounded-lg bg-[#f0f4f7] p-3">
                 <p className="text-[10px] font-bold tracking-widest text-[#566166] uppercase">Elementos Defectuosos</p>
                 <p className="mt-1 text-xl font-extrabold text-[#9f403d]">{defectiveCount}</p>
               </div>
             </div>
-            <button className="mt-3 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-[#566166] hover:bg-slate-50" type="button">
-              Editar
-            </button>
-            <p className="mt-2 text-[10px] text-[#566166]">Estos datos estan quemados por ahora, luego iran conectados a la base de datos.</p>
+            {canManageInventory && selectedGroup ? (
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-[#566166] hover:bg-slate-50" type="button" onClick={editGroup}>
+                  Editar grupo
+                </button>
+                <button className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-[#566166] hover:bg-slate-50" type="button" onClick={deleteGroup}>
+                  Eliminar grupo
+                </button>
+                <button className="rounded-md border border-[#3a5f94] bg-[#3a5f94] px-3 py-1.5 text-xs font-bold text-white hover:bg-[#2f4f7a]" type="button" onClick={createItem}>
+                  Nuevo elemento
+                </button>
+              </div>
+            ) : null}
+            <p className="mt-2 text-[10px] text-[#566166]">Estos datos ahora vienen desde la base de datos.</p>
           </div>
 
           <div className="xl:col-span-2">
-            <h4 className="mb-3 text-sm font-bold text-[#2a3439]">Lista de Elementos</h4>
-            {selectedItems.length > 0 ? (
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <h4 className="text-sm font-bold text-[#2a3439]">Lista de Elementos</h4>
+              {canManageInventory && selectedGroup ? (
+                <button className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-[#566166] hover:bg-slate-50" type="button" onClick={createItem}>
+                  Crear elemento
+                </button>
+              ) : null}
+            </div>
+            {isLoadingInventory ? (
+              <p className="text-xs text-[#566166]">Cargando inventario...</p>
+            ) : selectedItems.length > 0 ? (
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 {selectedItems.map((item) => (
                   <div className="rounded-lg bg-[#f0f4f7]/60 p-3" key={item.id}>
                     <div className="flex items-center gap-2">
                       <div className="flex h-8 w-8 items-center justify-center rounded-md bg-[#e8eff3] text-[#3a5f94]">
-                        <span className="material-symbols-outlined text-base">{selectedGroup.icon}</span>
+                        <span className="material-symbols-outlined text-base">{selectedGroup?.icon ?? item.groupIcon}</span>
                       </div>
                       <div className="min-w-0 flex-1">
-                        <p className="truncate text-xs font-bold text-[#2a3439]">{item.itemName}</p>
-                        <p className="truncate text-[10px] text-[#566166]">{item.model}</p>
+                        <p className="truncate text-xs font-bold text-[#2a3439]">{item.name}</p>
+                        <p className="truncate text-[10px] text-[#566166]">Código: {item.code}</p>
                       </div>
                     </div>
-                    <div className="mt-2 flex items-center justify-between">
-                      <p className="text-[10px] text-[#566166]">{item.location}</p>
-                      <span
-                        className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                          item.status === "Defectuoso" ? "bg-[#fe8983]/20 text-[#752121]" : "bg-[#d5e3ff] text-[#2c5287]"
-                        }`}
-                      >
-                        {item.status}
-                      </span>
+                    <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-[10px] text-[#566166]">{item.room}</p>
+                      <div className="flex flex-wrap items-center gap-1">
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                            item.status === "Fijo" ? "bg-[#d9d7f8]/40 text-[#5d5d78]" : "bg-[#d5e3ff] text-[#2c5287]"
+                          }`}
+                        >
+                          {item.status}
+                        </span>
+                        {item.defective ? (
+                          <span className="rounded-full bg-[#fe8983]/20 px-2 py-0.5 text-[10px] font-bold text-[#752121]">Defectuoso</span>
+                        ) : null}
+                      </div>
                     </div>
+                    {canManageInventory ? (
+                      <div className="mt-3 flex items-center justify-end gap-2">
+                        <button className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[10px] font-bold text-[#566166] hover:bg-slate-50" type="button" onClick={() => editItem(item)}>
+                          Editar
+                        </button>
+                        <button className="rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-[10px] font-bold text-rose-700 hover:bg-rose-100" type="button" onClick={() => deleteItem(item)}>
+                          Eliminar
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
                 ))}
               </div>
@@ -246,6 +628,255 @@ export default function InventoryPage() {
           </div>
         </div>
       </section>
+
+      {activeModal ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-[2px]">
+          <form className="w-full max-w-2xl rounded-3xl border border-slate-200 bg-white shadow-[0_30px_80px_rgba(15,23,42,0.2)]" onSubmit={submitInventoryModal}>
+            <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-6 py-5">
+              <div>
+                <p className="text-[10px] font-bold tracking-[0.3em] text-[#3a5f94] uppercase">
+                  {activeModal.kind === "group"
+                    ? activeModal.mode === "create"
+                      ? "Nuevo grupo"
+                      : "Editar grupo"
+                    : activeModal.kind === "item"
+                      ? activeModal.mode === "create"
+                        ? "Nuevo elemento"
+                        : "Editar elemento"
+                      : activeModal.kind === "delete-group"
+                        ? "Eliminar grupo"
+                        : "Eliminar elemento"}
+                </p>
+                <h3 className="mt-1 text-2xl font-extrabold tracking-tight text-[#1A365D]">
+                  {activeModal.kind === "group"
+                    ? activeModal.mode === "create"
+                      ? "Crear un grupo de inventario"
+                      : "Actualizar grupo de inventario"
+                    : activeModal.kind === "item"
+                      ? activeModal.mode === "create"
+                        ? "Registrar un nuevo elemento"
+                        : "Actualizar elemento"
+                      : activeModal.kind === "delete-group"
+                        ? "Confirmar eliminación"
+                        : "Confirmar eliminación"}
+                </h3>
+              </div>
+              <button
+                className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-600 transition hover:bg-slate-200"
+                onClick={closeModal}
+                type="button"
+                aria-label="Cerrar modal"
+              >
+                <span className="material-symbols-outlined text-[20px]">close</span>
+              </button>
+            </div>
+
+            <div className="space-y-5 px-6 py-5">
+              {modalError ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{modalError}</div> : null}
+
+              {activeModal.kind === "group" ? (
+                <>
+                  <div>
+                    <label className="mb-2 block text-xs font-bold tracking-widest text-[#566166] uppercase" htmlFor="inventory-group-name">
+                      Nombre del grupo
+                    </label>
+                    <input
+                      id="inventory-group-name"
+                      className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm text-[#2a3439] outline-none transition focus:border-[#3a5f94]"
+                      onChange={(event) => setGroupForm((current) => ({ ...current, name: event.target.value }))}
+                      placeholder="Por ejemplo: Audio, Laboratorio, Red"
+                      value={groupForm.name}
+                    />
+                  </div>
+
+                  <div>
+                    <p className="mb-2 text-xs font-bold tracking-widest text-[#566166] uppercase">Catálogo de iconos</p>
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                      {INVENTORY_ICON_OPTIONS.map((option) => {
+                        const isSelected = groupForm.icon === option.value;
+                        return (
+                          <button
+                            className={`flex items-center gap-2 rounded-2xl border px-3 py-2 text-left transition ${
+                              isSelected
+                                ? "border-[#3a5f94] bg-[#d5e3ff]/30 text-[#1A365D]"
+                                : "border-slate-200 bg-white text-[#566166] hover:border-slate-300 hover:bg-slate-50"
+                            }`}
+                            key={option.value}
+                            onClick={() => setGroupForm((current) => ({ ...current, icon: option.value }))}
+                            type="button"
+                          >
+                            <span className="material-symbols-outlined text-[20px]">{option.value}</span>
+                            <span className="text-xs font-semibold">{option.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl bg-[#f0f4f7] p-4">
+                    <p className="text-[10px] font-bold tracking-widest text-[#566166] uppercase">Vista previa</p>
+                    <div className="mt-3 flex items-center gap-3">
+                      <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-[#3a5f94] shadow-sm">
+                        <span className="material-symbols-outlined text-[24px]">{groupForm.icon}</span>
+                      </div>
+                      <div>
+                        <p className="text-sm font-bold text-[#2a3439]">{groupForm.name.trim() || modalGroup?.name || "Nuevo grupo"}</p>
+                        <p className="text-xs text-[#566166]">El icono seleccionado se verá en la tarjeta del grupo.</p>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              ) : activeModal.kind === "item" ? (
+                <>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div>
+                      <label className="mb-2 block text-xs font-bold tracking-widest text-[#566166] uppercase" htmlFor="inventory-item-group">
+                        Grupo
+                      </label>
+                      <select
+                        id="inventory-item-group"
+                        className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm text-[#2a3439] outline-none transition focus:border-[#3a5f94]"
+                        onChange={(event) => setItemForm((current) => ({ ...current, groupId: event.target.value }))}
+                        value={itemForm.groupId}
+                      >
+                        {inventoryGroups.map((group) => (
+                          <option key={group.id} value={group.id}>
+                            {group.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="mb-2 block text-xs font-bold tracking-widest text-[#566166] uppercase" htmlFor="inventory-item-status">
+                        Estado
+                      </label>
+                      <select
+                        id="inventory-item-status"
+                        className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm text-[#2a3439] outline-none transition focus:border-[#3a5f94]"
+                        onChange={(event) =>
+                          setItemForm((current) => ({
+                            ...current,
+                            status: normalizeStatus(event.target.value),
+                          }))
+                        }
+                        value={itemForm.status}
+                      >
+                        <option value="Disponible">Disponible</option>
+                        <option value="Fijo">Fijo</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div>
+                      <label className="mb-2 block text-xs font-bold tracking-widest text-[#566166] uppercase" htmlFor="inventory-item-name">
+                        Nombre
+                      </label>
+                      <input
+                        id="inventory-item-name"
+                        className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm text-[#2a3439] outline-none transition focus:border-[#3a5f94]"
+                        onChange={(event) => setItemForm((current) => ({ ...current, name: event.target.value }))}
+                        placeholder="Nombre del elemento"
+                        value={itemForm.name}
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-2 block text-xs font-bold tracking-widest text-[#566166] uppercase" htmlFor="inventory-item-code">
+                        Código
+                      </label>
+                      <input
+                        id="inventory-item-code"
+                        className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm text-[#2a3439] outline-none transition focus:border-[#3a5f94]"
+                        onChange={(event) => setItemForm((current) => ({ ...current, code: event.target.value }))}
+                        placeholder="Código de inventario"
+                        value={itemForm.code}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div>
+                      <label className="mb-2 block text-xs font-bold tracking-widest text-[#566166] uppercase" htmlFor="inventory-item-room">
+                        Salón
+                      </label>
+                      <select
+                        id="inventory-item-room"
+                        className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm text-[#2a3439] outline-none transition focus:border-[#3a5f94]"
+                        onChange={(event) => setItemForm((current) => ({ ...current, room: event.target.value }))}
+                        value={itemForm.room}
+                      >
+                        <option value="">Selecciona un salón</option>
+                        {roomOptions.map((room) => (
+                          <option key={room} value={room}>
+                            {room}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <label className="flex items-center gap-3 rounded-2xl border border-slate-200 px-4 py-3 text-sm text-[#2a3439]">
+                      <input
+                        checked={itemForm.defective}
+                        onChange={(event) => setItemForm((current) => ({ ...current, defective: event.target.checked }))}
+                        className="h-4 w-4 rounded border-slate-300 text-[#3a5f94] focus:ring-[#3a5f94]"
+                        type="checkbox"
+                      />
+                      <span>Marcar como defectuoso</span>
+                    </label>
+                  </div>
+
+                  <div className="rounded-2xl bg-[#f0f4f7] p-4 text-sm text-[#566166]">
+                    <p className="font-bold text-[#2a3439]">Resumen</p>
+                    <p className="mt-1">El elemento quedará vinculado al grupo seleccionado y reflejará su estado en la lista principal.</p>
+                  </div>
+                </>
+              ) : activeModal.kind === "delete-group" ? (
+                <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
+                  <p className="font-bold">{modalDeleteGroup?.name ?? "Este grupo"}</p>
+                  <p className="mt-1">Se eliminará el grupo y todos los elementos asociados.</p>
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
+                  <p className="font-bold">{modalDeleteItem?.name ?? "Este elemento"}</p>
+                  <p className="mt-1">Esta acción elimina el elemento del inventario de forma permanente.</p>
+                </div>
+              )}
+            </div>
+
+            <div className="flex flex-col-reverse gap-3 border-t border-slate-100 px-6 py-5 sm:flex-row sm:justify-end">
+              <button
+                className="rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-bold text-[#566166] transition hover:bg-slate-50"
+                onClick={closeModal}
+                type="button"
+              >
+                Cancelar
+              </button>
+              <button
+                className={`rounded-2xl px-5 py-3 text-sm font-bold text-white transition ${
+                  activeModal.kind === "delete-group" || activeModal.kind === "delete-item"
+                    ? "bg-rose-600 hover:bg-rose-700"
+                    : "bg-[#3a5f94] hover:bg-[#2f4f7a]"
+                } disabled:cursor-not-allowed disabled:opacity-70`}
+                disabled={isModalSubmitting}
+                type="submit"
+              >
+                {isModalSubmitting
+                  ? "Procesando..."
+                  : activeModal.kind === "group"
+                    ? activeModal.mode === "create"
+                      ? "Crear grupo"
+                      : "Guardar cambios"
+                    : activeModal.kind === "item"
+                      ? activeModal.mode === "create"
+                        ? "Crear elemento"
+                        : "Guardar cambios"
+                      : activeModal.kind === "delete-group"
+                        ? "Eliminar grupo"
+                        : "Eliminar elemento"}
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
     </div>
   );
 }
