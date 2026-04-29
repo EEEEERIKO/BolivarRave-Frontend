@@ -562,9 +562,6 @@ export default function InventoryPage() {
                 <button className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-[#566166] hover:bg-slate-50" type="button" onClick={deleteGroup}>
                   Eliminar grupo
                 </button>
-                <button className="rounded-md border border-[#3a5f94] bg-[#3a5f94] px-3 py-1.5 text-xs font-bold text-white hover:bg-[#2f4f7a]" type="button" onClick={createItem}>
-                  Nuevo elemento
-                </button>
               </div>
             ) : null}
             <p className="mt-2 text-[10px] text-[#566166]">Estos datos ahora vienen desde la base de datos.</p>
@@ -574,8 +571,8 @@ export default function InventoryPage() {
             <div className="mb-3 flex items-center justify-between gap-2">
               <h4 className="text-sm font-bold text-[#2a3439]">Lista de Elementos</h4>
               {canManageInventory && selectedGroup ? (
-                <button className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-[#566166] hover:bg-slate-50" type="button" onClick={createItem}>
-                  Crear elemento
+                <button className="rounded-md border border-[#3a5f94] bg-[#3a5f94] px-3 py-1.5 text-xs font-bold text-white hover:bg-[#2f4f7a]" type="button" onClick={createItem}>
+                  Nuevo elemento
                 </button>
               ) : null}
             </div>
