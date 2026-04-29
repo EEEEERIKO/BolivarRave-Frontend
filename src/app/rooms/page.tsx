@@ -49,6 +49,21 @@ type ApiResponse = {
   roomsByFloor: ApiSalon[][];
 };
 
+type InventoryEquipmentItem = {
+  id: string;
+  groupId: string;
+  groupName: string;
+  groupIcon: string;
+  name: string;
+  code: string;
+  room: string;
+  status: "Disponible" | "Fijo";
+  defective: boolean;
+  order: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
 type RoomsCachePayload = {
   timestamp: number;
   rooms: RoomData[];
@@ -268,6 +283,7 @@ function writeRoomsCache(rooms: RoomData[]) {
 
 export default function RoomsPage() {
   const [allRoomsData, setAllRoomsData] = useState<RoomData[]>([]);
+  const [roomEquipment, setRoomEquipment] = useState<InventoryEquipmentItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedRoom, setSelectedRoom] = useState<string | null>(null);
@@ -473,6 +489,32 @@ export default function RoomsPage() {
     }
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadRoomEquipment = async () => {
+      try {
+        const data = await fetchApiJson<{ items?: InventoryEquipmentItem[] }>("/api/inventory/rooms-equipment", {
+          cache: "no-store",
+        });
+
+        if (!cancelled) {
+          setRoomEquipment(data.items ?? []);
+        }
+      } catch {
+        if (!cancelled) {
+          setRoomEquipment([]);
+        }
+      }
+    };
+
+    void loadRoomEquipment();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Agrupar salas por piso y ordenarlas por número
   const roomsByFloor = useMemo(() => {
     const floors = new Map<number, RoomData[]>();
@@ -501,6 +543,13 @@ export default function RoomsPage() {
   const selectedStatusMeta = selectedInfo ? getStatusMeta(selectedInfo.status) : getStatusMeta("Available");
   const disabledRoomKeys = useMemo(() => getDisabledRoomKeys(disabledRoomNames), [disabledRoomNames]);
   const isSelectedRoomDisabled = selectedInfo ? isRoomDisabled(selectedInfo.nombre, disabledRoomKeys) : false;
+  const selectedRoomEquipment = useMemo(() => {
+    if (!selectedInfo) return [];
+
+    return roomEquipment
+      .filter((item) => roomMatches(selectedInfo.nombre, item.room))
+      .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
+  }, [roomEquipment, selectedInfo]);
 
   if (loading) {
     return (
@@ -618,12 +667,23 @@ export default function RoomsPage() {
 
             <div className="border-t border-slate-100 pt-5 dark:border-slate-800 sm:pt-6">
               <p className="mb-4 text-[10px] font-bold tracking-widest text-slate-400 uppercase">Equipamiento del Salón</p>
-              <div className="grid grid-cols-2 gap-3 sm:gap-4">
-                <Equip icon="videocam" label="Proyector" />
-                <Equip icon="wifi" label="Wi-Fi de Alta Velocidad" />
-                <Equip icon="tv" label="Smart TV" />
-                <Equip icon="volume_up" label="Sistema de Sonido" />
-              </div>
+              {selectedRoomEquipment.length > 0 ? (
+                <div className="grid grid-cols-2 gap-3 sm:gap-4">
+                  {selectedRoomEquipment.map((item) => (
+                    <Equip
+                      key={item.id}
+                      icon={item.groupIcon}
+                      label={item.name}
+                      caption={item.groupName}
+                      defective={item.defective}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-800/40 dark:text-slate-400">
+                  No hay equipamiento registrado para este salón.
+                </div>
+              )}
             </div>
 
             <div className="pt-4 sm:pt-6">
@@ -727,12 +787,23 @@ export default function RoomsPage() {
 
               <div className="border-t border-slate-100 pt-5 dark:border-slate-800">
                 <p className="mb-4 text-[10px] font-bold tracking-widest text-slate-400 uppercase">Equipamiento del Salón</p>
-                <div className="grid grid-cols-2 gap-3">
-                  <Equip icon="videocam" label="Proyector" />
-                  <Equip icon="wifi" label="Wi-Fi de Alta Velocidad" />
-                  <Equip icon="tv" label="Smart TV" />
-                  <Equip icon="volume_up" label="Sistema de Sonido" />
-                </div>
+                {selectedRoomEquipment.length > 0 ? (
+                  <div className="grid grid-cols-2 gap-3">
+                    {selectedRoomEquipment.map((item) => (
+                      <Equip
+                        key={item.id}
+                        icon={item.groupIcon}
+                        label={item.name}
+                        caption={item.groupName}
+                        defective={item.defective}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-800/40 dark:text-slate-400">
+                    No hay equipamiento registrado para este salón.
+                  </div>
+                )}
               </div>
 
               <div className="pt-3 pb-2">
@@ -825,11 +896,41 @@ function RoomCard({ room, status, detail, disabled = false, selected, onSelect }
   );
 }
 
-function Equip({ icon, label }: { icon: string; label: string }) {
+function Equip({
+  icon,
+  label,
+  caption,
+  defective = false,
+}: {
+  icon: string;
+  label: string;
+  caption?: string;
+  defective?: boolean;
+}) {
   return (
-    <div className="flex flex-col items-center rounded-lg border border-slate-100 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-800/50">
-      <span className="material-symbols-outlined mb-2 text-primary">{icon}</span>
-      <span className="text-[10px] font-medium">{label}</span>
+    <div
+      className={`flex flex-col items-center rounded-lg border p-3 ${
+        defective
+          ? "border-rose-200 bg-rose-50 dark:border-rose-900/50 dark:bg-rose-950/20"
+          : "border-slate-100 bg-slate-50 dark:border-slate-800 dark:bg-slate-800/50"
+      }`}
+    >
+      <span className={`material-symbols-outlined mb-2 ${defective ? "text-rose-600" : "text-primary"}`}>{icon}</span>
+      <span className="text-center text-[10px] font-semibold">{label}</span>
+      {caption ? <span className="mt-1 text-center text-[9px] text-slate-400">{caption}</span> : null}
     </div>
   );
+}
+
+function roomMatches(roomName: string, inventoryRoom: string) {
+  const selected = normalizeRoomName(roomName);
+  const stored = normalizeRoomName(inventoryRoom);
+
+  if (selected === stored) return true;
+
+  const selectedNumber = extractRoomNumber(roomName);
+  const storedNumber = extractRoomNumber(inventoryRoom);
+  if (selectedNumber !== 9999 && selectedNumber === storedNumber) return true;
+
+  return selected.includes(stored) || stored.includes(selected);
 }

@@ -526,7 +526,7 @@ export default function InventoryPage() {
 
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-[0_10px_40px_rgba(42,52,57,0.06)]">
         <div className="mb-6 flex items-center justify-between">
-          <h3 className="text-xl font-extrabold tracking-tight text-[#1A365D]">Asset Details</h3>
+          <h3 className="text-xl font-extrabold tracking-tight text-[#1A365D]">Detalles del Grupo</h3>
           {canManageInventory ? (
             <button
               className="material-symbols-outlined text-lg text-[#566166]"
