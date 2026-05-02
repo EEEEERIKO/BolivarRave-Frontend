@@ -26,6 +26,7 @@ type InventoryItem = {
   room: string;
   status: "Disponible" | "Fijo";
   defective: boolean;
+  motivo: string | null;
   order: number;
 };
 
@@ -41,11 +42,13 @@ type InventoryItemFormState = {
   room: string;
   status: "Disponible" | "Fijo";
   defective: boolean;
+  motivo: string;
 };
 
 type InventoryModalState =
   | { kind: "group"; mode: "create" | "edit"; groupId?: string }
   | { kind: "item"; mode: "create" | "edit"; itemId?: string }
+  | { kind: "defective-item"; itemId: string }
   | { kind: "delete-group"; groupId: string }
   | { kind: "delete-item"; itemId: string }
   | null;
@@ -87,6 +90,16 @@ const normalizeStatus = (value: string | null | undefined): "Disponible" | "Fijo
   return "Disponible";
 };
 
+function getLocationSortKey(room: string): { floor: number; label: string } {
+  const normalized = room.trim().toLowerCase();
+  const floorMatch = normalized.match(/piso\s*(\d+)/i);
+
+  return {
+    floor: floorMatch ? Number.parseInt(floorMatch[1], 10) : 99,
+    label: normalized,
+  };
+}
+
 export default function InventoryPage() {
   const [inventoryGroups, setInventoryGroups] = useState<InventoryGroup[]>([]);
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
@@ -95,6 +108,7 @@ export default function InventoryPage() {
   const [isLoadingInventory, setIsLoadingInventory] = useState(true);
   const [inventoryError, setInventoryError] = useState<string | null>(null);
   const [activeModal, setActiveModal] = useState<InventoryModalState>(null);
+  const [activeItemMenuId, setActiveItemMenuId] = useState<string | null>(null);
   const [groupForm, setGroupForm] = useState<InventoryGroupFormState>({
     name: "",
     icon: "inventory_2",
@@ -106,7 +120,9 @@ export default function InventoryPage() {
     room: "",
     status: "Disponible",
     defective: false,
+    motivo: "",
   });
+  const [defectiveReason, setDefectiveReason] = useState<string>("");
   const [modalError, setModalError] = useState<string | null>(null);
   const [isModalSubmitting, setIsModalSubmitting] = useState(false);
   const groupsScrollRef = useRef<HTMLDivElement | null>(null);
@@ -165,7 +181,23 @@ export default function InventoryPage() {
   );
 
   const selectedItems = useMemo(
-    () => inventoryItems.filter((item) => item.groupId === selectedGroup?.id),
+    () =>
+      inventoryItems
+        .filter((item) => item.groupId === selectedGroup?.id)
+        .sort((a, b) => {
+          const locationA = getLocationSortKey(a.room);
+          const locationB = getLocationSortKey(b.room);
+
+          if (locationA.floor !== locationB.floor) {
+            return locationA.floor - locationB.floor;
+          }
+
+          if (locationA.label !== locationB.label) {
+            return locationA.label.localeCompare(locationB.label);
+          }
+
+          return a.name.localeCompare(b.name);
+        }),
     [inventoryItems, selectedGroup],
   );
 
@@ -223,6 +255,7 @@ export default function InventoryPage() {
     setActiveModal(null);
     setModalError(null);
     setIsModalSubmitting(false);
+    setDefectiveReason("");
   };
 
   const openGroupModal = (mode: "create" | "edit") => {
@@ -250,9 +283,19 @@ export default function InventoryPage() {
       code: mode === "edit" && item ? item.code : "",
       room: mode === "edit" && item ? item.room : "",
       status: mode === "edit" && item ? item.status : "Disponible",
-      defective: mode === "edit" && item ? item.defective : false,
+      defective: false,
+      motivo: "",
     });
     setActiveModal({ kind: "item", mode, itemId: item?.id });
+  };
+
+  const openDefectiveModal = (item: InventoryItem) => {
+    if (!canManageInventory) return;
+
+    setModalError(null);
+    setIsModalSubmitting(false);
+    setDefectiveReason(item.motivo ?? "");
+    setActiveModal({ kind: "defective-item", itemId: item.id });
   };
 
   const openDeleteGroupModal = () => {
@@ -280,6 +323,37 @@ export default function InventoryPage() {
   const editItem = (item: InventoryItem) => openItemModal("edit", item);
 
   const deleteItem = (item: InventoryItem) => openDeleteItemModal(item);
+
+  const markAsFixed = async (item: InventoryItem) => {
+    if (!canManageInventory) return;
+
+    try {
+      setIsModalSubmitting(true);
+      setModalError(null);
+
+      await fetchApiJson<{ id: string }>(`/api/inventory/items/${item.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          groupId: item.groupId,
+          name: item.name,
+          code: item.code,
+          room: item.room,
+          status: item.status,
+          defective: false,
+          motivo: null,
+        }),
+      });
+
+      setActiveItemMenuId(null);
+      await refreshInventory();
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Error al marcar como arreglado";
+      setModalError(errorMessage);
+    } finally {
+      setIsModalSubmitting(false);
+    }
+  };
 
   const submitInventoryModal = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -344,6 +418,7 @@ export default function InventoryPage() {
           room: itemForm.room.trim(),
           status: itemForm.status,
           defective: itemForm.defective,
+          motivo: itemForm.defective ? itemForm.motivo.trim() || null : null,
         };
 
         if (activeModal.mode === "create") {
@@ -383,6 +458,36 @@ export default function InventoryPage() {
       if (activeModal.kind === "delete-item") {
         await fetchApiJson<{ id: string }>(`/api/inventory/items/${activeModal.itemId}`, {
           method: "DELETE",
+        });
+
+        await refreshInventory();
+        closeModal();
+        return;
+      }
+
+      if (activeModal.kind === "defective-item") {
+        const targetItem = inventoryItems.find((item) => item.id === activeModal.itemId);
+        if (!targetItem) {
+          throw new Error("No se encontró el elemento a actualizar.");
+        }
+
+        const reason = defectiveReason.trim();
+        if (!reason) {
+          throw new Error("Debes ingresar un motivo para marcar el elemento como defectuoso.");
+        }
+
+        await fetchApiJson<{ id: string }>(`/api/inventory/items/${targetItem.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            groupId: targetItem.groupId,
+            name: targetItem.name,
+            code: targetItem.code,
+            room: targetItem.room,
+            status: targetItem.status,
+            defective: true,
+            motivo: reason,
+          }),
         });
 
         await refreshInventory();
@@ -581,40 +686,115 @@ export default function InventoryPage() {
             ) : selectedItems.length > 0 ? (
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 {selectedItems.map((item) => (
-                  <div className="rounded-lg bg-[#f0f4f7]/60 p-3" key={item.id}>
-                    <div className="flex items-center gap-2">
-                      <div className="flex h-8 w-8 items-center justify-center rounded-md bg-[#e8eff3] text-[#3a5f94]">
-                        <span className="material-symbols-outlined text-base">{selectedGroup?.icon ?? item.groupIcon}</span>
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-xs font-bold text-[#2a3439]">{item.name}</p>
-                        <p className="truncate text-[10px] text-[#566166]">Código: {item.code}</p>
-                      </div>
-                    </div>
-                    <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                      <p className="text-[10px] text-[#566166]">{item.room}</p>
-                      <div className="flex flex-wrap items-center gap-1">
-                        <span
-                          className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                            item.status === "Fijo" ? "bg-[#d9d7f8]/40 text-[#5d5d78]" : "bg-[#d5e3ff] text-[#2c5287]"
-                          }`}
-                        >
-                          {item.status}
-                        </span>
-                        {item.defective ? (
-                          <span className="rounded-full bg-[#fe8983]/20 px-2 py-0.5 text-[10px] font-bold text-[#752121]">Defectuoso</span>
-                        ) : null}
-                      </div>
-                    </div>
+                  <div
+                    className={`relative overflow-visible rounded-lg border p-3 ${
+                      item.defective ? "border-rose-200 bg-rose-50" : "border-transparent bg-[#f0f4f7]/60"
+                    }`}
+                    key={item.id}
+                  >
                     {canManageInventory ? (
-                      <div className="mt-3 flex items-center justify-end gap-2">
-                        <button className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[10px] font-bold text-[#566166] hover:bg-slate-50" type="button" onClick={() => editItem(item)}>
+                      <button
+                        className="absolute top-2 right-2 rounded-full p-1 text-[#566166] transition hover:bg-white hover:text-[#2a3439]"
+                        onClick={() => setActiveItemMenuId((current) => (current === item.id ? null : item.id))}
+                        type="button"
+                        aria-label="Abrir menú de acciones"
+                      >
+                        <span className="material-symbols-outlined text-lg">more_vert</span>
+                      </button>
+                    ) : null}
+
+                    {activeItemMenuId === item.id && canManageInventory ? (
+                      <div className="absolute top-9 right-2 z-20 w-48 rounded-xl border border-slate-200 bg-white shadow-xl">
+                        <button
+                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-semibold text-[#566166] hover:bg-slate-50"
+                          onClick={() => {
+                            setActiveItemMenuId(null);
+                            editItem(item);
+                          }}
+                          type="button"
+                        >
+                          <span className="material-symbols-outlined text-base">edit</span>
                           Editar
                         </button>
-                        <button className="rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-[10px] font-bold text-rose-700 hover:bg-rose-100" type="button" onClick={() => deleteItem(item)}>
+                        <button
+                          className="flex w-full items-center gap-2 border-t border-slate-100 px-3 py-2 text-left text-xs font-semibold text-[#566166] hover:bg-slate-50"
+                          onClick={() => {
+                            setActiveItemMenuId(null);
+                            openDefectiveModal(item);
+                          }}
+                          type="button"
+                        >
+                          <span className="material-symbols-outlined text-base text-rose-600">{item.defective ? "edit" : "error"}</span>
+                          {item.defective ? "Actualizar motivo" : "Marcar como defectuoso"}
+                        </button>
+                        {item.defective && (
+                          <button
+                            className="flex w-full items-center gap-2 border-t border-slate-100 px-3 py-2 text-left text-xs font-semibold text-green-600 hover:bg-green-50"
+                            onClick={() => {
+                              markAsFixed(item);
+                            }}
+                            type="button"
+                          >
+                            <span className="material-symbols-outlined text-base">check_circle</span>
+                            Marcar como arreglado
+                          </button>
+                        )}
+                        <button
+                          className="flex w-full items-center gap-2 border-t border-slate-100 px-3 py-2 text-left text-xs font-semibold text-rose-600 hover:bg-rose-50"
+                          onClick={() => {
+                            setActiveItemMenuId(null);
+                            deleteItem(item);
+                          }}
+                          type="button"
+                        >
+                          <span className="material-symbols-outlined text-base">delete</span>
                           Eliminar
                         </button>
                       </div>
+                    ) : null}
+
+                    <div className="flex items-center gap-2 pr-8">
+                      <div className={`flex h-9 w-9 items-center justify-center rounded-md ${item.defective ? "bg-rose-100 text-rose-700" : "bg-[#e8eff3] text-[#3a5f94]"}`}>
+                        <span className="material-symbols-outlined text-base">{item.defective ? "warning" : (selectedGroup?.icon ?? item.groupIcon)}</span>
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <p className="truncate text-xs font-bold text-[#2a3439]">{item.name}</p>
+                          <p className="inline-flex shrink-0 rounded-full bg-white px-2 py-0.5 text-[10px] font-bold tracking-wide text-[#566166] shadow-sm">
+                            {item.code}
+                          </p>
+                        </div>
+                        {item.defective ? (
+                          <div className="mt-1 flex items-center gap-1 text-[10px] font-bold text-rose-700">
+                            <span className="material-symbols-outlined text-sm">error</span>
+                            {item.motivo || "Sin motivo"}
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+
+                    <div className="mt-2 flex flex-wrap items-center justify-between gap-2 pr-8">
+                      <p className="text-xs font-semibold text-[#2a3439]">{item.room}</p>
+                      <div className="flex flex-wrap items-center gap-1">
+                        <span
+                          className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                            item.defective
+                              ? "bg-rose-100 text-rose-700"
+                              : item.status === "Fijo"
+                                ? "bg-[#d9d7f8]/40 text-[#5d5d78]"
+                                : "bg-[#d5e3ff] text-[#2c5287]"
+                          }`}
+                        >
+                          {item.defective ? <span className="material-symbols-outlined text-[12px]">warning</span> : null}
+                          {item.defective ? (item.motivo || "Sin motivo") : item.status}
+                        </span>
+                      </div>
+                    </div>
+
+                    {item.defective && item.motivo ? (
+                      <p className="mt-2 rounded-lg bg-white/80 px-2 py-1 text-[10px] text-rose-700">
+                        <span className="font-bold">Motivo:</span> {item.motivo}
+                      </p>
                     ) : null}
                   </div>
                 ))}
@@ -640,6 +820,8 @@ export default function InventoryPage() {
                       ? activeModal.mode === "create"
                         ? "Nuevo elemento"
                         : "Editar elemento"
+                      : activeModal.kind === "defective-item"
+                        ? "Marcar como defectuoso"
                       : activeModal.kind === "delete-group"
                         ? "Eliminar grupo"
                         : "Eliminar elemento"}
@@ -653,6 +835,8 @@ export default function InventoryPage() {
                       ? activeModal.mode === "create"
                         ? "Registrar un nuevo elemento"
                         : "Actualizar elemento"
+                      : activeModal.kind === "defective-item"
+                        ? "Registrar motivo del defecto"
                       : activeModal.kind === "delete-group"
                         ? "Confirmar eliminación"
                         : "Confirmar eliminación"}
@@ -721,6 +905,26 @@ export default function InventoryPage() {
                         <p className="text-xs text-[#566166]">El icono seleccionado se verá en la tarjeta del grupo.</p>
                       </div>
                     </div>
+                  </div>
+                </>
+              ) : activeModal.kind === "defective-item" ? (
+                <>
+                  <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
+                    <p className="font-bold">{inventoryItems.find((item) => item.id === activeModal.itemId)?.name ?? "Este elemento"}</p>
+                    <p className="mt-1">Indica por qué el elemento está defectuoso para dejarlo registrado.</p>
+                  </div>
+
+                  <div>
+                    <label className="mb-2 block text-xs font-bold tracking-widest text-[#566166] uppercase" htmlFor="inventory-defective-reason">
+                      Motivo
+                    </label>
+                    <textarea
+                      id="inventory-defective-reason"
+                      className="min-h-28 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm text-[#2a3439] outline-none transition focus:border-[#3a5f94]"
+                      onChange={(event) => setDefectiveReason(event.target.value)}
+                      placeholder="Describe la falla, daño o problema detectado"
+                      value={defectiveReason}
+                    />
                   </div>
                 </>
               ) : activeModal.kind === "item" ? (
@@ -810,15 +1014,6 @@ export default function InventoryPage() {
                         ))}
                       </select>
                     </div>
-                    <label className="flex items-center gap-3 rounded-2xl border border-slate-200 px-4 py-3 text-sm text-[#2a3439]">
-                      <input
-                        checked={itemForm.defective}
-                        onChange={(event) => setItemForm((current) => ({ ...current, defective: event.target.checked }))}
-                        className="h-4 w-4 rounded border-slate-300 text-[#3a5f94] focus:ring-[#3a5f94]"
-                        type="checkbox"
-                      />
-                      <span>Marcar como defectuoso</span>
-                    </label>
                   </div>
 
                   <div className="rounded-2xl bg-[#f0f4f7] p-4 text-sm text-[#566166]">
@@ -862,6 +1057,8 @@ export default function InventoryPage() {
                     ? activeModal.mode === "create"
                       ? "Crear grupo"
                       : "Guardar cambios"
+                    : activeModal.kind === "defective-item"
+                      ? "Guardar motivo"
                     : activeModal.kind === "item"
                       ? activeModal.mode === "create"
                         ? "Crear elemento"

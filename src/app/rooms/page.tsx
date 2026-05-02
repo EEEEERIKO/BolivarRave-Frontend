@@ -59,6 +59,7 @@ type InventoryEquipmentItem = {
   room: string;
   status: "Disponible" | "Fijo";
   defective: boolean;
+  motivo: string | null;
   order: number;
   createdAt: string;
   updatedAt: string;
@@ -551,6 +552,63 @@ export default function RoomsPage() {
       .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
   }, [roomEquipment, selectedInfo]);
 
+  const toggleItemDefective = async (item: InventoryEquipmentItem) => {
+    if (authSession?.role !== "admin") return;
+
+    const nextDefective = !item.defective;
+    const motivo = nextDefective
+      ? window.prompt(`Motivo para marcar "${item.name}" como defectuoso`, item.motivo ?? "")?.trim() ?? null
+      : item.motivo ?? null;
+
+    if (nextDefective && !motivo) {
+      return;
+    }
+
+    try {
+      await fetchApiJson<{ id: string }>(`/api/inventory/items/${item.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          groupId: item.groupId,
+          name: item.name,
+          code: item.code,
+          room: item.room,
+          status: item.status,
+          defective: nextDefective,
+          motivo,
+        }),
+      });
+
+      const updatedEquipment = roomEquipment.map((eq) =>
+        eq.id === item.id ? { ...eq, defective: nextDefective, motivo } : eq
+      );
+      setRoomEquipment(updatedEquipment);
+    } catch (error) {
+      console.error("Error toggling defect status:", error);
+    }
+  };
+
+  const handleDeleteItem = async (itemId: string) => {
+    if (authSession?.role !== "admin") return;
+
+    try {
+      await fetchApiJson(`/api/inventory/items/${itemId}`, {
+        method: "DELETE",
+      });
+
+      const updatedEquipment = roomEquipment.filter((eq) => eq.id !== itemId);
+      setRoomEquipment(updatedEquipment);
+    } catch (error) {
+      console.error("Error deleting item:", error);
+    }
+  };
+
+  const handleMoveRoom = (itemId: string) => {
+    // This would require opening an edit dialog or modal
+    // For now, we'll show an alert
+    alert("Editar sala: Esta función aún no está implementada. Dirígete a Inventario para editar el salón del elemento.");
+  };
+
   if (loading) {
     return (
       <div className="flex min-h-[calc(100vh-4rem)] items-center justify-center p-4">
@@ -672,10 +730,16 @@ export default function RoomsPage() {
                   {selectedRoomEquipment.map((item) => (
                     <Equip
                       key={item.id}
+                      item={item}
                       icon={item.groupIcon}
                       label={item.name}
                       caption={item.groupName}
                       defective={item.defective}
+                      code={item.code}
+                      onToggleDefect={toggleItemDefective}
+                      onMoveRoom={handleMoveRoom}
+                      onDelete={handleDeleteItem}
+                      canManageInventory={authSession?.role === "admin"}
                     />
                   ))}
                 </div>
@@ -792,10 +856,16 @@ export default function RoomsPage() {
                     {selectedRoomEquipment.map((item) => (
                       <Equip
                         key={item.id}
+                        item={item}
                         icon={item.groupIcon}
                         label={item.name}
                         caption={item.groupName}
                         defective={item.defective}
+                        code={item.code}
+                        onToggleDefect={toggleItemDefective}
+                        onMoveRoom={handleMoveRoom}
+                        onDelete={handleDeleteItem}
+                        canManageInventory={authSession?.role === "admin"}
                       />
                     ))}
                   </div>
@@ -897,27 +967,113 @@ function RoomCard({ room, status, detail, disabled = false, selected, onSelect }
 }
 
 function Equip({
+  item,
   icon,
   label,
   caption,
   defective = false,
+  code,
+  onToggleDefect,
+  onMoveRoom,
+  onDelete,
+  canManageInventory = false,
 }: {
+  item: InventoryEquipmentItem;
   icon: string;
   label: string;
   caption?: string;
   defective?: boolean;
+  code?: string;
+  onToggleDefect?: (item: InventoryEquipmentItem) => Promise<void>;
+  onMoveRoom?: (itemId: string) => void;
+  onDelete?: (itemId: string) => void;
+  canManageInventory?: boolean;
 }) {
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+
+  const handleToggleDefect = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!onToggleDefect) return;
+
+    await onToggleDefect(item);
+    setIsMenuOpen(false);
+  };
+
+  const handleMoveRoom = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!onMoveRoom) return;
+    onMoveRoom(item.id);
+    setIsMenuOpen(false);
+  };
+
+  const handleDelete = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!onDelete) return;
+    if (confirm("¿Estás seguro de que deseas eliminar este elemento?")) {
+      onDelete(item.id);
+    }
+    setIsMenuOpen(false);
+  };
+
   return (
     <div
-      className={`flex flex-col items-center rounded-lg border p-3 ${
+      className={`relative flex flex-col items-center rounded-lg border p-3 ${
         defective
           ? "border-rose-200 bg-rose-50 dark:border-rose-900/50 dark:bg-rose-950/20"
           : "border-slate-100 bg-slate-50 dark:border-slate-800 dark:bg-slate-800/50"
       }`}
     >
+      {canManageInventory ? (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setIsMenuOpen(!isMenuOpen);
+          }}
+          className="absolute top-1 right-1 p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
+        >
+          <span className="material-symbols-outlined text-lg">more_vert</span>
+        </button>
+      ) : null}
+
+      {isMenuOpen && canManageInventory ? (
+        <div className="absolute top-8 right-0 z-10 w-40 rounded-lg border border-slate-200 bg-white shadow-lg dark:border-slate-700 dark:bg-slate-900">
+          <button
+            type="button"
+            onClick={handleToggleDefect}
+            className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+          >
+            <span className="material-symbols-outlined text-base">
+              {defective ? "check_circle" : "error"}
+            </span>
+            {defective ? "Marcar como Reparado" : "Marcar como Defectuoso"}
+          </button>
+          <button
+            type="button"
+            onClick={handleMoveRoom}
+            className="flex w-full items-center gap-2 border-t border-slate-200 px-4 py-2 text-sm text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+          >
+            <span className="material-symbols-outlined text-base">meeting_room</span>
+            Mover de Salón
+          </button>
+          <button
+            type="button"
+            onClick={handleDelete}
+            className="flex w-full items-center gap-2 border-t border-slate-200 px-4 py-2 text-sm text-rose-600 hover:bg-rose-50 dark:border-slate-700 dark:hover:bg-rose-900/20"
+          >
+            <span className="material-symbols-outlined text-base">delete</span>
+            Eliminar
+          </button>
+        </div>
+      ) : null}
+
       <span className={`material-symbols-outlined mb-2 ${defective ? "text-rose-600" : "text-primary"}`}>{icon}</span>
-      <span className="text-center text-[10px] font-semibold">{label}</span>
+      <div className="flex items-center justify-center gap-2">
+        <span className="text-center text-[10px] font-semibold">{label}</span>
+        {code ? <span className="rounded bg-slate-200 px-1.5 py-0.5 text-[7px] font-bold text-slate-700 dark:bg-slate-700 dark:text-slate-200">{code}</span> : null}
+      </div>
       {caption ? <span className="mt-1 text-center text-[9px] text-slate-400">{caption}</span> : null}
+      {item.motivo ? <span className="mt-1 text-center text-[9px] font-medium text-rose-700">Motivo: {item.motivo}</span> : null}
     </div>
   );
 }
