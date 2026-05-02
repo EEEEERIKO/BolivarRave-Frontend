@@ -49,6 +49,22 @@ type ApiResponse = {
   roomsByFloor: ApiSalon[][];
 };
 
+type InventoryEquipmentItem = {
+  id: string;
+  groupId: string;
+  groupName: string;
+  groupIcon: string;
+  name: string;
+  code: string;
+  room: string;
+  status: "Disponible" | "Fijo";
+  defective: boolean;
+  motivo: string | null;
+  order: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
 type RoomsCachePayload = {
   timestamp: number;
   rooms: RoomData[];
@@ -268,6 +284,7 @@ function writeRoomsCache(rooms: RoomData[]) {
 
 export default function RoomsPage() {
   const [allRoomsData, setAllRoomsData] = useState<RoomData[]>([]);
+  const [roomEquipment, setRoomEquipment] = useState<InventoryEquipmentItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedRoom, setSelectedRoom] = useState<string | null>(null);
@@ -473,6 +490,32 @@ export default function RoomsPage() {
     }
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadRoomEquipment = async () => {
+      try {
+        const data = await fetchApiJson<{ items?: InventoryEquipmentItem[] }>("/api/inventory/rooms-equipment", {
+          cache: "no-store",
+        });
+
+        if (!cancelled) {
+          setRoomEquipment(data.items ?? []);
+        }
+      } catch {
+        if (!cancelled) {
+          setRoomEquipment([]);
+        }
+      }
+    };
+
+    void loadRoomEquipment();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Agrupar salas por piso y ordenarlas por número
   const roomsByFloor = useMemo(() => {
     const floors = new Map<number, RoomData[]>();
@@ -501,6 +544,70 @@ export default function RoomsPage() {
   const selectedStatusMeta = selectedInfo ? getStatusMeta(selectedInfo.status) : getStatusMeta("Available");
   const disabledRoomKeys = useMemo(() => getDisabledRoomKeys(disabledRoomNames), [disabledRoomNames]);
   const isSelectedRoomDisabled = selectedInfo ? isRoomDisabled(selectedInfo.nombre, disabledRoomKeys) : false;
+  const selectedRoomEquipment = useMemo(() => {
+    if (!selectedInfo) return [];
+
+    return roomEquipment
+      .filter((item) => roomMatches(selectedInfo.nombre, item.room))
+      .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
+  }, [roomEquipment, selectedInfo]);
+
+  const toggleItemDefective = async (item: InventoryEquipmentItem) => {
+    if (authSession?.role !== "admin") return;
+
+    const nextDefective = !item.defective;
+    const motivo = nextDefective
+      ? window.prompt(`Motivo para marcar "${item.name}" como defectuoso`, item.motivo ?? "")?.trim() ?? null
+      : item.motivo ?? null;
+
+    if (nextDefective && !motivo) {
+      return;
+    }
+
+    try {
+      await fetchApiJson<{ id: string }>(`/api/inventory/items/${item.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          groupId: item.groupId,
+          name: item.name,
+          code: item.code,
+          room: item.room,
+          status: item.status,
+          defective: nextDefective,
+          motivo,
+        }),
+      });
+
+      const updatedEquipment = roomEquipment.map((eq) =>
+        eq.id === item.id ? { ...eq, defective: nextDefective, motivo } : eq
+      );
+      setRoomEquipment(updatedEquipment);
+    } catch (error) {
+      console.error("Error toggling defect status:", error);
+    }
+  };
+
+  const handleDeleteItem = async (itemId: string) => {
+    if (authSession?.role !== "admin") return;
+
+    try {
+      await fetchApiJson(`/api/inventory/items/${itemId}`, {
+        method: "DELETE",
+      });
+
+      const updatedEquipment = roomEquipment.filter((eq) => eq.id !== itemId);
+      setRoomEquipment(updatedEquipment);
+    } catch (error) {
+      console.error("Error deleting item:", error);
+    }
+  };
+
+  const handleMoveRoom = (itemId: string) => {
+    // This would require opening an edit dialog or modal
+    // For now, we'll show an alert
+    alert("Editar sala: Esta función aún no está implementada. Dirígete a Inventario para editar el salón del elemento.");
+  };
 
   if (loading) {
     return (
@@ -618,12 +725,29 @@ export default function RoomsPage() {
 
             <div className="border-t border-slate-100 pt-5 dark:border-slate-800 sm:pt-6">
               <p className="mb-4 text-[10px] font-bold tracking-widest text-slate-400 uppercase">Equipamiento del Salón</p>
-              <div className="grid grid-cols-2 gap-3 sm:gap-4">
-                <Equip icon="videocam" label="Proyector" />
-                <Equip icon="wifi" label="Wi-Fi de Alta Velocidad" />
-                <Equip icon="tv" label="Smart TV" />
-                <Equip icon="volume_up" label="Sistema de Sonido" />
-              </div>
+              {selectedRoomEquipment.length > 0 ? (
+                <div className="grid grid-cols-2 gap-3 sm:gap-4">
+                  {selectedRoomEquipment.map((item) => (
+                    <Equip
+                      key={item.id}
+                      item={item}
+                      icon={item.groupIcon}
+                      label={item.name}
+                      caption={item.groupName}
+                      defective={item.defective}
+                      code={item.code}
+                      onToggleDefect={toggleItemDefective}
+                      onMoveRoom={handleMoveRoom}
+                      onDelete={handleDeleteItem}
+                      canManageInventory={authSession?.role === "admin"}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-800/40 dark:text-slate-400">
+                  No hay equipamiento registrado para este salón.
+                </div>
+              )}
             </div>
 
             <div className="pt-4 sm:pt-6">
@@ -727,12 +851,29 @@ export default function RoomsPage() {
 
               <div className="border-t border-slate-100 pt-5 dark:border-slate-800">
                 <p className="mb-4 text-[10px] font-bold tracking-widest text-slate-400 uppercase">Equipamiento del Salón</p>
-                <div className="grid grid-cols-2 gap-3">
-                  <Equip icon="videocam" label="Proyector" />
-                  <Equip icon="wifi" label="Wi-Fi de Alta Velocidad" />
-                  <Equip icon="tv" label="Smart TV" />
-                  <Equip icon="volume_up" label="Sistema de Sonido" />
-                </div>
+                {selectedRoomEquipment.length > 0 ? (
+                  <div className="grid grid-cols-2 gap-3">
+                    {selectedRoomEquipment.map((item) => (
+                      <Equip
+                        key={item.id}
+                        item={item}
+                        icon={item.groupIcon}
+                        label={item.name}
+                        caption={item.groupName}
+                        defective={item.defective}
+                        code={item.code}
+                        onToggleDefect={toggleItemDefective}
+                        onMoveRoom={handleMoveRoom}
+                        onDelete={handleDeleteItem}
+                        canManageInventory={authSession?.role === "admin"}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-800/40 dark:text-slate-400">
+                    No hay equipamiento registrado para este salón.
+                  </div>
+                )}
               </div>
 
               <div className="pt-3 pb-2">
@@ -825,11 +966,127 @@ function RoomCard({ room, status, detail, disabled = false, selected, onSelect }
   );
 }
 
-function Equip({ icon, label }: { icon: string; label: string }) {
+function Equip({
+  item,
+  icon,
+  label,
+  caption,
+  defective = false,
+  code,
+  onToggleDefect,
+  onMoveRoom,
+  onDelete,
+  canManageInventory = false,
+}: {
+  item: InventoryEquipmentItem;
+  icon: string;
+  label: string;
+  caption?: string;
+  defective?: boolean;
+  code?: string;
+  onToggleDefect?: (item: InventoryEquipmentItem) => Promise<void>;
+  onMoveRoom?: (itemId: string) => void;
+  onDelete?: (itemId: string) => void;
+  canManageInventory?: boolean;
+}) {
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+
+  const handleToggleDefect = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!onToggleDefect) return;
+
+    await onToggleDefect(item);
+    setIsMenuOpen(false);
+  };
+
+  const handleMoveRoom = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!onMoveRoom) return;
+    onMoveRoom(item.id);
+    setIsMenuOpen(false);
+  };
+
+  const handleDelete = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!onDelete) return;
+    if (confirm("¿Estás seguro de que deseas eliminar este elemento?")) {
+      onDelete(item.id);
+    }
+    setIsMenuOpen(false);
+  };
+
   return (
-    <div className="flex flex-col items-center rounded-lg border border-slate-100 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-800/50">
-      <span className="material-symbols-outlined mb-2 text-primary">{icon}</span>
-      <span className="text-[10px] font-medium">{label}</span>
+    <div
+      className={`relative flex flex-col items-center rounded-lg border p-3 ${
+        defective
+          ? "border-rose-200 bg-rose-50 dark:border-rose-900/50 dark:bg-rose-950/20"
+          : "border-slate-100 bg-slate-50 dark:border-slate-800 dark:bg-slate-800/50"
+      }`}
+    >
+      {canManageInventory ? (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setIsMenuOpen(!isMenuOpen);
+          }}
+          className="absolute top-1 right-1 p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
+        >
+          <span className="material-symbols-outlined text-lg">more_vert</span>
+        </button>
+      ) : null}
+
+      {isMenuOpen && canManageInventory ? (
+        <div className="absolute top-8 right-0 z-10 w-40 rounded-lg border border-slate-200 bg-white shadow-lg dark:border-slate-700 dark:bg-slate-900">
+          <button
+            type="button"
+            onClick={handleToggleDefect}
+            className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+          >
+            <span className="material-symbols-outlined text-base">
+              {defective ? "check_circle" : "error"}
+            </span>
+            {defective ? "Marcar como Reparado" : "Marcar como Defectuoso"}
+          </button>
+          <button
+            type="button"
+            onClick={handleMoveRoom}
+            className="flex w-full items-center gap-2 border-t border-slate-200 px-4 py-2 text-sm text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+          >
+            <span className="material-symbols-outlined text-base">meeting_room</span>
+            Mover de Salón
+          </button>
+          <button
+            type="button"
+            onClick={handleDelete}
+            className="flex w-full items-center gap-2 border-t border-slate-200 px-4 py-2 text-sm text-rose-600 hover:bg-rose-50 dark:border-slate-700 dark:hover:bg-rose-900/20"
+          >
+            <span className="material-symbols-outlined text-base">delete</span>
+            Eliminar
+          </button>
+        </div>
+      ) : null}
+
+      <span className={`material-symbols-outlined mb-2 ${defective ? "text-rose-600" : "text-primary"}`}>{icon}</span>
+      <div className="flex items-center justify-center gap-2">
+        <span className="text-center text-[10px] font-semibold">{label}</span>
+        {code ? <span className="rounded bg-slate-200 px-1.5 py-0.5 text-[7px] font-bold text-slate-700 dark:bg-slate-700 dark:text-slate-200">{code}</span> : null}
+      </div>
+      {caption ? <span className="mt-1 text-center text-[9px] text-slate-400">{caption}</span> : null}
+      {item.motivo ? <span className="mt-1 text-center text-[9px] font-medium text-rose-700">Motivo: {item.motivo}</span> : null}
     </div>
   );
+}
+
+function roomMatches(roomName: string, inventoryRoom: string) {
+  const selected = normalizeRoomName(roomName);
+  const stored = normalizeRoomName(inventoryRoom);
+
+  if (selected === stored) return true;
+
+  const selectedNumber = extractRoomNumber(roomName);
+  const storedNumber = extractRoomNumber(inventoryRoom);
+  if (selectedNumber !== 9999 && selectedNumber === storedNumber) return true;
+
+  return selected.includes(stored) || stored.includes(selected);
 }

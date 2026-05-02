@@ -18,7 +18,7 @@ type ScheduleItem = {
   subject: string;
   professor: string;
   room: string;
-  day: "Monday" | "Tuesday" | "Wednesday" | "Thursday" | "Friday";
+  day: "Monday" | "Tuesday" | "Wednesday" | "Thursday" | "Friday" | "Saturday" | "Sunday";
   dayEs: string;
   start: string;
   end: string;
@@ -41,6 +41,12 @@ type ApiScheduleEvent = {
   teacher: string;
   startDate: string;
   endDate: string;
+  reservationType?: "normal" | "momentanea" | "iglesia";
+  color?: string;
+  overrides?: Array<{ date: string; day: string; room: string; start: string; end: string }>;
+  requestId?: string;
+  requestedByStaffId?: string;
+  requestStatus?: string;
 };
 
 type ScheduleEventsResponse = {
@@ -131,6 +137,8 @@ const DAY_COLORS: Record<ScheduleItem["day"], string> = {
   Wednesday: "#c7801d",
   Thursday: "#7c4d9e",
   Friday: "#cd3f3f",
+  Saturday: "#0f766e",
+  Sunday: "#374151",
 };
 
 const DAY_LABELS: Record<ScheduleItem["day"], string> = {
@@ -139,9 +147,11 @@ const DAY_LABELS: Record<ScheduleItem["day"], string> = {
   Wednesday: "Mié",
   Thursday: "Jue",
   Friday: "Vie",
+  Saturday: "Sáb",
+  Sunday: "Dom",
 };
 
-const ALL_DAYS: ScheduleItem["day"][] = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+const ALL_DAYS: ScheduleItem["day"][] = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 const HOURS = Array.from({ length: 17 }, (_, idx) => 6 + idx);
 const OCCUPANCY_CHART_Y_AXIS_WIDTH = 30;
 const OCCUPANCY_CHART_RIGHT_MARGIN = 8;
@@ -165,8 +175,8 @@ const toAmPmLabel = (value: string) => {
   const normalizedHour = hour % 12 === 0 ? 12 : hour % 12;
   return `${normalizedHour}:${String(minute).padStart(2, "0")} ${suffix}`;
 };
-const DASHBOARD_CACHE_KEY = "dashboard_cache_v1";
-const DASHBOARD_CACHE_TTL_MS = 5 * 60 * 1000;
+const DASHBOARD_CACHE_KEY = "dashboard_cache_v2"; // Bumped version to invalidate old cache without iglesia events
+const DASHBOARD_CACHE_TTL_MS = 30 * 1000; // 30 seconds - keep short to catch updates to all reservation types
 
 let inMemoryDashboardCache: DashboardCachePayload | null = null;
 
@@ -177,6 +187,9 @@ const DAY_ES_TO_EN: Record<string, ScheduleItem["day"]> = {
   miércoles: "Wednesday",
   jueves: "Thursday",
   viernes: "Friday",
+  sabado: "Saturday",
+  sábado: "Saturday",
+  domingo: "Sunday",
 };
 
 const DAY_EN_TO_ES: Record<ScheduleItem["day"], string> = {
@@ -185,6 +198,8 @@ const DAY_EN_TO_ES: Record<ScheduleItem["day"], string> = {
   Wednesday: "Miércoles",
   Thursday: "Jueves",
   Friday: "Viernes",
+  Saturday: "Sábado",
+  Sunday: "Domingo",
 };
 
 const FLOOR_ONE_ALLOWED = new Set([
@@ -354,7 +369,13 @@ const getBogotaNow = () => {
   const weekday = timeParts.find((part) => part.type === "weekday")?.value ?? "";
 
   const dayEn =
-    weekday === "Monday" || weekday === "Tuesday" || weekday === "Wednesday" || weekday === "Thursday" || weekday === "Friday"
+    weekday === "Monday" ||
+    weekday === "Tuesday" ||
+    weekday === "Wednesday" ||
+    weekday === "Thursday" ||
+    weekday === "Friday" ||
+    weekday === "Saturday" ||
+    weekday === "Sunday"
       ? (weekday as ScheduleItem["day"])
       : null;
 
@@ -566,6 +587,7 @@ export default function Home() {
   const activeRoomsNow = useMemo(() => {
     if (!todayDay) return new Set<string>();
 
+    // Count rooms with any active class regardless of reservation type (normal, momentanea, iglesia)
     return new Set(
       scheduleItems
         .filter(
