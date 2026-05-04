@@ -2772,46 +2772,131 @@ export default function TasksPage() {
                       </summary>
 
                       <div className="space-y-1.5 border-t border-slate-200 px-2.5 py-2">
-                        {group.tasks.map((task) => (
-                          <div key={`${group.staffId}-${task.id}`} className="rounded-lg border border-slate-200 bg-white p-2">
-                            <div className="flex items-start justify-between gap-2">
-                              <div className="min-w-0">
-                                <p className="truncate text-[13px] font-black text-slate-900">{task.nombre}</p>
-                                <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
-                                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">{task.sector}</span>
-                                  <span className="rounded-full bg-[#dce8f7] px-2 py-0.5 text-[10px] font-semibold text-[#284e7a]">{task.tipo}</span>
-                                </div>
-                                <p className="mt-1 text-[10px] font-semibold text-[#355b8e]">
-                                  Programación: {assignedTaskScheduleLabel(task)}
-                                </p>
-                                <p className="mt-0.5 text-[10px] font-semibold text-slate-600">
-                                  Horario: {assignedTaskTimeWindowLabel(task)}
-                                </p>
-                              </div>
-                            </div>
+                        {(() => {
+                          // Agrupar por lugar/sector
+                          const buckets = new Map<string, TaskCatalogItem[]>();
+                          group.tasks.forEach((task) => {
+                            const place = (task.sector ?? "Sin lugar").trim() || "Sin lugar";
+                            const bucket = buckets.get(place) ?? [];
+                            bucket.push(task);
+                            buckets.set(place, bucket);
+                          });
 
-                            <div className="mt-2 flex flex-wrap gap-1.5">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  beginEditCatalog(task);
-                                  setTasksSubtab("gestion");
-                                }}
-                                className="rounded-md bg-[#3a5f94] px-2.5 py-1 text-[10px] font-bold tracking-[0.14em] text-white uppercase transition hover:brightness-110"
-                              >
-                                Editar
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => void deleteCatalog(task.id)}
-                                disabled={deletingCatalogId === task.id || busyAction === `catalog-delete-${task.id}`}
-                                className="rounded-md border border-red-200 bg-red-50 px-2.5 py-1 text-[10px] font-bold tracking-[0.14em] text-red-600 uppercase transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
-                              >
-                                {deletingCatalogId === task.id ? "Eliminando..." : "Eliminar"}
-                              </button>
-                            </div>
-                          </div>
-                        ))}
+                          // Helper para obtener clave de orden: día (si aplica) y minutos de inicio
+                          const getSortKey = (task: TaskCatalogItem) => {
+                            // DiasSemana usa índices 0..6 (Dom..Sab) según la definición en este módulo
+                            const dayIndex = (task.diasSemana && task.diasSemana.length > 0) ? Math.min(...task.diasSemana) : 7;
+                            const timeValue = task.tipo === "Recurrente" ? (task.horaProgramada ?? "00:00") : (task.horaEsporadica ?? "00:00");
+                            const minutes = parseTimeToMinutes(timeValue) ?? 0;
+                            return `${String(dayIndex).padStart(2, "0")}:${String(minutes).padStart(5, "0")}`;
+                          };
+
+                          const sortedPlaces = Array.from(buckets.entries()).sort((a, b) => a[0].localeCompare(b[0], "es"));
+
+                          return sortedPlaces.map(([place, tasks]) => {
+                            tasks.sort((a, b) => {
+                              const ka = getSortKey(a);
+                              const kb = getSortKey(b);
+                              return ka.localeCompare(kb);
+                            });
+
+                            // Build a compact combined label for the place: union of days and full time range
+                            const combinedDays = new Set<number>();
+                            let earliestStart: number | null = null;
+                            let latestEnd: number | null = null;
+
+                            tasks.forEach((t) => {
+                              if (t.diasSemana && t.diasSemana.length > 0) {
+                                t.diasSemana.forEach((d) => combinedDays.add(d));
+                              }
+
+                              const startTime = t.tipo === "Recurrente" ? t.horaProgramada ?? null : t.horaEsporadica ?? null;
+                              const startMinutes = startTime ? parseTimeToMinutes(startTime) ?? null : null;
+                              const duration = Number.isFinite(Number(t.tiempoEstimadoMin)) ? Number(t.tiempoEstimadoMin) : 0;
+                              const endMinutes = startMinutes !== null ? (startMinutes + duration) : null;
+
+                              if (startMinutes !== null) {
+                                earliestStart = earliestStart === null ? startMinutes : Math.min(earliestStart, startMinutes);
+                              }
+
+                              if (endMinutes !== null) {
+                                latestEnd = latestEnd === null ? endMinutes : Math.max(latestEnd, endMinutes);
+                              }
+                            });
+
+                            const combinedDaysLabel = (() => {
+                              if (combinedDays.size === 0) return null;
+                              const sorted = Array.from(combinedDays).sort((a, b) => a - b);
+                              return sorted.map((d) => dayLabels[d] ?? String(d)).join("/");
+                            })();
+
+                            const combinedTimeLabel = (() => {
+                              if (earliestStart === null || latestEnd === null) return null;
+                              const startStr = minutesToHHMM(earliestStart);
+                              const endStr = minutesToHHMM(latestEnd);
+                              return `Inicio ${toAmPmLabel(startStr)} · Fin ${toAmPmLabel(endStr)}`;
+                            })();
+
+                            return (
+                              <details key={`${group.staffId}-place-${place}`} className="rounded-md border border-slate-100 bg-white">
+                                <summary className="flex cursor-pointer items-center justify-between gap-2 px-3 py-2">
+                                  <div className="min-w-0">
+                                    <p className="truncate text-sm font-bold text-slate-900">{place}</p>
+                                    <p className="text-[11px] text-slate-500">{tasks.length} tarea(s)</p>
+                                  </div>
+                                  <div className="flex items-center gap-3">
+                                    {combinedDaysLabel || combinedTimeLabel ? (
+                                      <div className="text-right text-[11px] text-slate-600">
+                                        {combinedDaysLabel ? <div className="font-semibold">{combinedDaysLabel}</div> : null}
+                                        {combinedTimeLabel ? <div className="text-[10px]">{combinedTimeLabel}</div> : null}
+                                      </div>
+                                    ) : null}
+                                    <span className="text-slate-400">▸</span>
+                                  </div>
+                                </summary>
+
+                                <div className="px-3 pb-3 pt-0 space-y-2">
+                                  {tasks.map((task) => (
+                                    <div key={`${group.staffId}-${task.id}`} className="rounded-lg border border-slate-200 bg-white p-2">
+                                      <div className="flex items-start justify-between gap-2">
+                                        <div className="min-w-0">
+                                          <p className="truncate text-[13px] font-black text-slate-900">{task.nombre}</p>
+                                          <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+                                            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">{task.sector}</span>
+                                            <span className="rounded-full bg-[#dce8f7] px-2 py-0.5 text-[10px] font-semibold text-[#284e7a]">{task.tipo}</span>
+                                          </div>
+                                          <p className="mt-1 text-[10px] font-semibold text-[#355b8e]">Programación: {assignedTaskScheduleLabel(task)}</p>
+                                          <p className="mt-0.5 text-[10px] font-semibold text-slate-600">Horario: {assignedTaskTimeWindowLabel(task)}</p>
+                                        </div>
+                                      </div>
+
+                                      <div className="mt-2 flex flex-wrap gap-1.5">
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            beginEditCatalog(task);
+                                            setTasksSubtab("gestion");
+                                          }}
+                                          className="rounded-md bg-[#3a5f94] px-2.5 py-1 text-[10px] font-bold tracking-[0.14em] text-white uppercase transition hover:brightness-110"
+                                        >
+                                          Editar
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => void deleteCatalog(task.id)}
+                                          disabled={deletingCatalogId === task.id || busyAction === `catalog-delete-${task.id}`}
+                                          className="rounded-md border border-red-200 bg-red-50 px-2.5 py-1 text-[10px] font-bold tracking-[0.14em] text-red-600 uppercase transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                        >
+                                          {deletingCatalogId === task.id ? "Eliminando..." : "Eliminar"}
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </details>
+                            );
+                          });
+                        })()}
                       </div>
                     </details>
                   ))
