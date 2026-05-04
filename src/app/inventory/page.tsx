@@ -998,7 +998,7 @@ export default function InventoryPage() {
                   <div className="grid gap-4 md:grid-cols-2">
                     <div>
                       <label className="mb-2 block text-xs font-bold tracking-widest text-[#566166] uppercase" htmlFor="inventory-item-room">
-                        Salón
+                        Lugar
                       </label>
                       <select
                         id="inventory-item-room"
@@ -1007,6 +1007,7 @@ export default function InventoryPage() {
                         value={itemForm.room}
                       >
                         <option value="">Selecciona un salón</option>
+                        <option value="Monitoría">Monitoría</option>
                         {roomOptions.map((room) => (
                           <option key={room} value={room}>
                             {room}
