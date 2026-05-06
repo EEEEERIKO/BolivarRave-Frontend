@@ -1385,10 +1385,14 @@ export default function SchedulesPage() {
               start: nextUpdate.updatedEvent.start,
               end: nextUpdate.updatedEvent.end,
               updateScope: "always",
+              targetDate: nextUpdate.targetDate,
             }),
             },
             { maxRetries: 3, baseDelayMs: 500 }
           );
+          // After a successful "always" update, reload authoritative events so
+          // server-created exceptions (preserving past dates) are reflected in UI.
+          await syncSchedulesFromApi();
         } catch (error) {
           const message = error instanceof Error ? error.message : "No se pudo aplicar la actualización";
           window.alert(message);
@@ -1418,6 +1422,18 @@ export default function SchedulesPage() {
     const { id, eventId, slotId, targetDate, source, updatedEvent } = pendingScopedUpdate;
     setIsApplyingScopedUpdate(true);
 
+    console.log("🧭 [ScopedUpdate] Confirmando cambio:", {
+      id,
+      eventId,
+      slotId,
+      updateScope,
+      targetDate,
+      day: updatedEvent.day,
+      room: updatedEvent.room,
+      start: updatedEvent.start,
+      end: updatedEvent.end,
+    });
+
     try {
       await fetchApiJsonWithRetry<{ message: string }>(`/api/schedules/events/${eventId}/${slotId}`, {
         method: "PUT",
@@ -1443,11 +1459,10 @@ export default function SchedulesPage() {
             );
 
       // For week-scoped updates, refresh from API to ensure UI mirrors persisted overrides.
-      if (updateScope === "week") {
-        await syncSchedulesFromApi();
-      } else {
-        applyLocalScopedUpdate(id, updatedEvent, targetDate, updateScope);
-      }
+      // Always refresh from API after write. For `week` updates we reload to
+      // pick up the persisted override. For `always` we must also reload so
+      // the server-side exceptions that preserve past dates become visible.
+      await syncSchedulesFromApi();
       setRemoteLoadError(null);
       setPendingScopedUpdate(null);
     } catch (error) {
@@ -1578,6 +1593,8 @@ export default function SchedulesPage() {
       newStart: updatedEvent.start,
       newEnd: updatedEvent.end,
       targetDate: selectedDayDateIso,
+      selectedDay,
+      currentWeekStart: toIsoLocalDate(currentWeekStart),
       source: "drag",
     });
 
