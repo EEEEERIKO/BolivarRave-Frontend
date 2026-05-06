@@ -261,9 +261,9 @@ export default function ReservasPage() {
                         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
                             <div className="max-w-2xl">
                                 <p className="text-[9px] font-bold tracking-[0.28em] text-slate-500 uppercase">Apartado de Reservas</p>
-                                <h1 className="mt-1 text-3xl font-black tracking-tight text-[#2a3439] sm:text-4xl">Resource Booking</h1>
+                                <h1 className="mt-1 text-3xl font-black tracking-tight text-[#2a3439] sm:text-4xl">Registro de Reservas</h1>
                                 <p className="mt-2 max-w-xl text-sm leading-6 text-slate-600">
-                                    Solicita salones o equipos con una vista clara, compacta y consistente con el sistema existente.
+                                    Esta página es para registrar las reservas de salones (durante el sábado) y equipos (durante la semana) del edificio académico Bolivar Rave.
                                 </p>
                             </div>
 
@@ -344,7 +344,7 @@ export default function ReservasPage() {
                             ) : (
                                 <div className="space-y-3">
                                     <div className="mb-3">
-                                        <label className="mb-2 block text-xs font-bold text-slate-500 uppercase">Grupo de equipo</label>
+                                        <label className="mb-2 block text-xs font-bold text-slate-500 uppercase">Grupo de equipos</label>
                                         {inventoryGroups.length > 0 ? (
                                             <div className="relative">
                                                 <select
@@ -354,7 +354,7 @@ export default function ReservasPage() {
                                                 >
                                                     {inventoryGroups.map((g) => (
                                                         <option key={g.id} value={g.id}>
-                                                            {g.name} {g.itemCount ? `(${g.itemCount})` : ""}
+                                                            {g.name} 
                                                         </option>
                                                     ))}
                                                 </select>
