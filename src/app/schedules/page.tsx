@@ -3,7 +3,7 @@
 import { FormEvent, Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Rnd, RndDragCallback, RndResizeCallback } from "react-rnd";
-import { fetchApiJson } from "@/lib/api-client";
+import { fetchApiJson, fetchApiJsonWithRetry } from "@/lib/api-client";
 import { readAuthSession } from "@/lib/auth-session";
 import { getDisabledRoomKeys, isRoomDisabled, loadSharedScheduleState, setSharedVisualRoomAssignment } from "@/lib/disabled-rooms";
 import { useWebSocketSchedules } from "@/lib/use-websocket-schedules";
@@ -207,7 +207,6 @@ const normalizeLoadedEvents = (events: ScheduleEvent[], normalizeColor: (color: 
       ...override,
       room: canonicalizeRoomName(override.room),
     })),
-    color: normalizeColor(event.color),
   }));
 
 const normalizeLoadedRooms = (incomingRooms: string[]) => {
@@ -663,6 +662,14 @@ const dateRangesOverlap = (aStart: string, aEnd: string, bStart: string, bEnd: s
   return rangesOverlap(aStartValue, aEndValue, bStartValue, bEndValue);
 };
 
+const maxIsoDate = (left: string, right: string) => (left >= right ? left : right);
+
+const isPastScheduleEventBeforeDate = (event: { startDate: string; endDate: string }, referenceDateIso: string) => {
+  const referenceDateValue = dateValue(parseIsoDateToLocal(referenceDateIso));
+  const eventEndValue = dateValue(parseIsoDateToLocal(event.endDate));
+  return eventEndValue < referenceDateValue;
+};
+
 const startOfMonth = (date: Date) => new Date(date.getFullYear(), date.getMonth(), 1);
 
 const endOfMonth = (date: Date) => new Date(date.getFullYear(), date.getMonth() + 1, 0);
@@ -741,7 +748,6 @@ const writeSchedulesCache = (events: ScheduleEvent[], cachedRooms: string[]) => 
     events,
     rooms: cachedRooms,
   };
-
   inMemorySchedulesCache = payload;
 
   if (typeof window === "undefined") return;
@@ -1100,6 +1106,8 @@ export default function SchedulesPage() {
   }, [selectedEventId, selectedDay, currentWeekStart, events]);
 
   const requestedEventId = searchParams.get("eventId")?.trim() || null;
+  const requestedDateParam = searchParams.get("date")?.trim() || null;
+  const handledSearchDateRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!requestedEventId) return;
@@ -1111,9 +1119,30 @@ export default function SchedulesPage() {
     handledSearchEventIdRef.current = requestedEventId;
     setSelectedEventId(targetEvent.id);
     setSelectedDay(targetEvent.day);
-    setCurrentWeekStart(startOfWeekMonday(parseIsoDateToLocal(targetEvent.startDate)));
+    // If the URL supplied an explicit date, prefer that date for centering the week.
+    const dateParam = searchParams.get("date")?.trim();
+    if (dateParam) {
+      setCurrentWeekStart(startOfWeekMonday(parseIsoDateToLocal(dateParam)));
+    } else {
+      setCurrentWeekStart(startOfWeekMonday(parseIsoDateToLocal(targetEvent.startDate)));
+    }
     pendingCenterEventIdRef.current = targetEvent.id;
   }, [events, requestedEventId]);
+
+  // If a `date` query param exists without an eventId, or to force centering on a specific
+  // date even when navigating from notifications, honor it once.
+  useEffect(() => {
+    if (!requestedDateParam) return;
+    if (handledSearchDateRef.current === requestedDateParam) return;
+
+    // Validate basic ISO YYYY-MM-DD format
+    const isoRe = /^\d{4}-\d{2}-\d{2}$/;
+    if (!isoRe.test(requestedDateParam)) return;
+
+    handledSearchDateRef.current = requestedDateParam;
+    setCurrentWeekStart(startOfWeekMonday(parseIsoDateToLocal(requestedDateParam)));
+    setSelectedDay(getWeekdayName(parseIsoDateToLocal(requestedDateParam)));
+  }, [requestedDateParam]);
 
   const filteredRooms = useMemo(() => {
     const query = roomQuery.trim().toLowerCase();
@@ -1339,7 +1368,7 @@ export default function SchedulesPage() {
         applyLocalScopedUpdate(nextUpdate.id, nextUpdate.updatedEvent, nextUpdate.targetDate, "always");
         setIsApplyingScopedUpdate(true);
         try {
-          await fetchApiJson<{ message: string }>(`/api/schedules/events/${nextUpdate.eventId}/${nextUpdate.slotId}`, {
+          await fetchApiJsonWithRetry<{ message: string }>(`/api/schedules/events/${nextUpdate.eventId}/${nextUpdate.slotId}`, {
             method: "PUT",
             headers: {
               "Content-Type": "application/json",
@@ -1357,7 +1386,9 @@ export default function SchedulesPage() {
               end: nextUpdate.updatedEvent.end,
               updateScope: "always",
             }),
-          });
+            },
+            { maxRetries: 3, baseDelayMs: 500 }
+          );
         } catch (error) {
           const message = error instanceof Error ? error.message : "No se pudo aplicar la actualización";
           window.alert(message);
@@ -1388,7 +1419,7 @@ export default function SchedulesPage() {
     setIsApplyingScopedUpdate(true);
 
     try {
-      await fetchApiJson<{ message: string }>(`/api/schedules/events/${eventId}/${slotId}`, {
+      await fetchApiJsonWithRetry<{ message: string }>(`/api/schedules/events/${eventId}/${slotId}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -1407,7 +1438,9 @@ export default function SchedulesPage() {
           updateScope,
           targetDate,
         }),
-      });
+          },
+          { maxRetries: 3, baseDelayMs: 500 }
+            );
 
       // For week-scoped updates, refresh from API to ensure UI mirrors persisted overrides.
       if (updateScope === "week") {
@@ -1725,6 +1758,11 @@ export default function SchedulesPage() {
           return false;
         }
 
+        const conflictFloorDate = maxIsoDate(candidateStartDate ?? getColombiaTodayIsoDate(), getColombiaTodayIsoDate());
+        if (isPastScheduleEventBeforeDate(existing, conflictFloorDate)) {
+          return false;
+        }
+
         if (
           candidateStartDate &&
           candidateEndDate &&
@@ -1742,7 +1780,7 @@ export default function SchedulesPage() {
       });
 
       if (overlappingClass) {
-        const message = `Conflicto detectado: ya existe "${overlappingClass.code} | ${overlappingClass.subject}" en ${slot.room} (${effectiveDay}) para ese horario.`;
+        const message = `❌ Conflicto de salón: "${newEvent.code || "Clase"}" (${slot.start}-${slot.end}) NO se puede agregar en ${slot.room}\nFecha: ${effectiveDay}\nYa existe: "${overlappingClass.code} | ${overlappingClass.subject}" (${overlappingClass.start}-${overlappingClass.end}) en ese mismo horario.`;
         setCreateError(message);
         return;
       }
@@ -2038,6 +2076,11 @@ export default function SchedulesPage() {
       if (existing.id === selectedEvent.id) return false;
       if (existing.day !== editEvent.day || existing.room !== resolvedEditRoom) return false;
 
+      const conflictFloorDate = maxIsoDate(editEvent.startDate, getColombiaTodayIsoDate());
+      if (isPastScheduleEventBeforeDate(existing, conflictFloorDate)) {
+        return false;
+      }
+
       if (!dateRangesOverlap(editEvent.startDate, editEvent.endDate, existing.startDate, existing.endDate)) {
         return false;
       }
@@ -2050,7 +2093,7 @@ export default function SchedulesPage() {
     });
 
     if (overlappingClass) {
-      const message = `Conflicto detectado: ya existe "${overlappingClass.code} | ${overlappingClass.subject}" en ${resolvedEditRoom} para ese horario.`;
+      const message = `❌ Conflicto de salón: "${selectedEvent.code || "Clase"}" (${selectedEvent.start}-${selectedEvent.end}) NO se puede mover a ${resolvedEditRoom}\nFecha: ${selectedEvent.day} → ${editEvent.startDate}\nYa existe: "${overlappingClass.code} | ${overlappingClass.subject}" (${overlappingClass.start}-${overlappingClass.end}) en ese mismo horario y fecha.`;
       setEditError(message);
       window.alert(message);
       return;
@@ -2185,7 +2228,7 @@ export default function SchedulesPage() {
       });
 
       if (conflict) {
-        const message = `Conflicto detectado: ya existe "${conflict.code} | ${conflict.subject}" en ${resolvedSlotRoom} para ese horario.`;
+        const message = `❌ Conflicto de salón: "${editModalForm.code || "Clase"}" (${slot.start}-${slot.end}) NO se puede guardar en ${resolvedSlotRoom}\nFecha: ${slot.day}\nYa existe: "${conflict.code} | ${conflict.subject}" (${conflict.start}-${conflict.end}) en ese mismo horario.`;
         setEditError(message);
         window.alert(message);
         return;
@@ -2310,9 +2353,11 @@ export default function SchedulesPage() {
     void (async () => {
       setIsDeletingEvent(true);
       try {
-        await fetchApiJson<{ message: string }>(`/api/schedules/events/${eventId}/${slotId}`, {
+        await fetchApiJsonWithRetry<{ message: string }>(`/api/schedules/events/${eventId}/${slotId}`, {
           method: "DELETE",
-        });
+        },
+        { maxRetries: 3, baseDelayMs: 500 }
+      );
 
         const normalizeColor = (value: string): ScheduleEvent["color"] => {
           if (value === "blue" || value === "emerald" || value === "amber" || value === "violet" || value === "red") {
@@ -2392,12 +2437,14 @@ export default function SchedulesPage() {
 
         for (const [index, endpoint] of endpoints.entries()) {
           try {
-            await fetchApiJson<{ message: string }>(endpoint, {
+            await fetchApiJsonWithRetry<{ message: string }>(endpoint, {
               method: "DELETE",
               headers: {
                 "Content-Type": "application/json",
               },
-            });
+            },
+            { maxRetries: 3, baseDelayMs: 500 }
+          );
             lastError = null;
             break;
           } catch (error) {
@@ -2472,9 +2519,11 @@ export default function SchedulesPage() {
     setDeleteAllError(null);
 
     try {
-      await fetchApiJson<{ message: string }>("/api/schedules/all", {
+      await fetchApiJsonWithRetry<{ message: string }>("/api/schedules/all", {
         method: "DELETE",
-      });
+      },
+      { maxRetries: 3, baseDelayMs: 500 }
+    );
 
       setEvents([]);
       setSelectedEventId(null);

@@ -6,6 +6,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
+import { CalendarRange } from "lucide-react";
 import { readAuthSession, type AuthSession } from "@/lib/auth-session";
 import { fetchApiJson } from "@/lib/api-client";
 import { useWebSocketSchedules } from "@/lib/use-websocket-schedules";
@@ -71,6 +72,7 @@ type NavItem = {
   href: string;
   isRoute?: boolean;
   allowedRoles?: Array<AuthSession["role"]>;
+  iconElement?: React.ReactNode;
 };
 
 const navItems: NavItem[] = [
@@ -78,6 +80,7 @@ const navItems: NavItem[] = [
   { label: "Horarios", icon: "calendar_today", href: "/schedules", isRoute: true },
   { label: "Salones", icon: "meeting_room", href: "/rooms", isRoute: true },
   { label: "Auditorio", icon: "theater_comedy", href: "/auditorio", isRoute: true, allowedRoles: ["admin", "monitor"] },
+  { label: "Reservas", icon: "", iconElement: <CalendarRange size={18} strokeWidth={2.2} />, href: "/reservas", isRoute: true },
   { label: "Personal", icon: "groups", href: "/staff", isRoute: true },
   { label: "Tareas", icon: "assignment_turned_in", href: "/tasks", isRoute: true, allowedRoles: ["admin", "monitor"] },
   { label: "Inventario", icon: "inventory_2", href: "/inventory", isRoute: true, allowedRoles: ["admin", "monitor"] },
@@ -410,7 +413,11 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
             if (item.isRoute) {
               return (
                 <Link key={item.label} className={navClasses(isActive)} href={item.href} onClick={(event) => handleSidebarRouteClick(event, item.href)}>
-                  <span className="material-symbols-outlined">{item.icon}</span>
+                  {item.iconElement ? (
+                    <span className="inline-flex items-center justify-center">{item.iconElement}</span>
+                  ) : (
+                    <span className="material-symbols-outlined">{item.icon}</span>
+                  )}
                   <span>{item.label}</span>
                 </Link>
               );
@@ -642,7 +649,12 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
                             type="button"
                             onClick={() => {
                               setIsNotificationsOpen(false);
-                              router.push(`/schedules?eventId=${encodeURIComponent(request.eventId)}&requestId=${encodeURIComponent(request.id)}`);
+                              // Include the request start date so schedules can open the correct week/day
+                              router.push(
+                                `/schedules?eventId=${encodeURIComponent(request.eventId)}&requestId=${encodeURIComponent(
+                                  request.id
+                                )}&date=${encodeURIComponent(request.startDate)}`
+                              );
                             }}
                             className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-left text-sm text-slate-700 transition hover:border-[#295786]/30 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
                           >

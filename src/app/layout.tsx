@@ -28,6 +28,10 @@ const routeMetadata: Record<string, { title: string; description: string }> = {
     title: "UNAC Bolivar | Reservas de Espacios",
     description: "Reserva y administra los espacios del Auditorio Bolivar.",
   },
+  "/reservas": {
+    title: "UNAC Bolivar | Reservas",
+    description: "Solicita salones y equipos con el sistema visual de UNAC Bolivar.",
+  },
   "/rooms": {
     title: "UNAC Bolivar | Salones y Espacios",
     description: "Consulta la disponibilidad de salones en el Auditorio Bolivar.",
