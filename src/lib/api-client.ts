@@ -17,6 +17,10 @@ const isSessionExpiredMessage = (message: string) => {
 const toFriendlyApiError = (path: string, message: string, status?: number) => {
   const normalizedMessage = message.toLowerCase();
 
+  if (normalizedMessage.includes("transaction api error") || normalizedMessage.includes("unable to start a transaction")) {
+    return "El servidor está procesando muchas solicitudes. Se está reintentando automáticamente. Por favor, espera unos segundos.";
+  }
+
   if (normalizedMessage.includes("no se encontraron hojas validas con nombre de dia para importar")) {
     return "No pudimos leer el Excel porque las hojas no tienen nombre de día válido. Renómbralas como Lunes, Martes, Miércoles/Miercoles, Jueves y Viernes.";
   }
@@ -64,7 +68,9 @@ const toFriendlyApiError = (path: string, message: string, status?: number) => {
   }
 
   if (status === 500) {
-    return "El servidor tuvo un problema al procesar la solicitud. Inténtalo de nuevo en unos segundos.";
+    return normalizedMessage.includes("transaction")
+      ? "El servidor está bajo carga. Se está reintentando automáticamente."
+      : "El servidor tuvo un problema al procesar la solicitud. Inténtalo de nuevo en unos segundos.";
   }
 
   if (normalizedMessage.includes("failed to fetch") || normalizedMessage.includes("load failed")) {
@@ -118,6 +124,46 @@ const getCandidates = () => {
 };
 
 export async function fetchApiJson<T>(path: string, init?: RequestInit): Promise<T> {
+  return fetchApiJsonWithOptions<T>(path, init);
+}
+
+export async function fetchApiJsonWithRetry<T>(
+  path: string,
+  init?: RequestInit,
+  options?: FetchApiOptions & { maxRetries?: number; baseDelayMs?: number }
+): Promise<T> {
+  const maxRetries = options?.maxRetries ?? 3;
+  const baseDelayMs = options?.baseDelayMs ?? 500;
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fetchApiJsonWithOptions<T>(path, init, options);
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const isTransactionError =
+        errorMessage.includes("Transaction") ||
+        errorMessage.includes("transaction") ||
+        errorMessage.includes("Unable to start a transaction");
+
+      if (!isTransactionError || attempt >= maxRetries) {
+        throw error;
+      }
+
+      // Exponential backoff: 500ms, 1000ms, 2000ms, etc.
+      const delayMs = baseDelayMs * Math.pow(2, attempt);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+
+  throw lastError || new Error("Retry exhausted");
+}
+type FetchApiOptions = {
+  suppressExpectedStatuses?: number[];
+};
+
+export async function fetchApiJsonWithOptions<T>(path: string, init?: RequestInit, options?: FetchApiOptions): Promise<T> {
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
   const candidates = getCandidates();
   let lastError: Error | null = null;
@@ -198,7 +244,11 @@ export async function fetchApiJson<T>(path: string, init?: RequestInit): Promise
     }
   }
 
-  if (process.env.NODE_ENV !== "production") {
+  const shouldSuppressDevLog =
+    lastError instanceof HttpResponseError &&
+    !!options?.suppressExpectedStatuses?.includes(lastError.status);
+
+  if (process.env.NODE_ENV !== "production" && !shouldSuppressDevLog) {
     const details = attemptDetails.join(" | ");
     console.error(
       `[API] Request failed path=${normalizedPath} lastUrl=${lastUrl} message=${lastError?.message ?? "Load failed"} attempts=${attempts} details=${details}`,

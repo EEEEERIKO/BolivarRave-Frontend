@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { fetchApiJson } from "@/lib/api-client";
+import { fetchApiJson, fetchApiJsonWithOptions } from "@/lib/api-client";
 import { readAuthSession } from "@/lib/auth-session";
 
 type InventoryGroup = {
@@ -101,8 +101,12 @@ function getLocationSortKey(room: string): { floor: number; label: string } {
 }
 
 export default function InventoryPage() {
+  const LOCAL_DEFECTIVE_REASON_KEY = "inventory_defective_reason_overrides_v1";
+
   const [inventoryGroups, setInventoryGroups] = useState<InventoryGroup[]>([]);
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
+  const [defectiveReasonOverrides, setDefectiveReasonOverrides] = useState<Record<string, string>>({});
+  const defectiveReasonOverridesRef = useRef<Record<string, string>>({});
   const [roomCatalog, setRoomCatalog] = useState<string[]>([]);
   const [selectedGroupId, setSelectedGroupId] = useState<string>("");
   const [isLoadingInventory, setIsLoadingInventory] = useState(true);
@@ -128,7 +132,36 @@ export default function InventoryPage() {
   const groupsScrollRef = useRef<HTMLDivElement | null>(null);
 
   const authSession = useMemo(() => readAuthSession(), []);
-  const canManageInventory = authSession?.role === "admin";
+  const canManageInventory = authSession?.role === "admin" || authSession?.role === "monitor";
+  const canDeleteGroup = authSession?.role === "admin";
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    try {
+      const raw = window.localStorage.getItem(LOCAL_DEFECTIVE_REASON_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as Record<string, string>;
+      if (parsed && typeof parsed === "object") {
+        defectiveReasonOverridesRef.current = parsed;
+        setDefectiveReasonOverrides(parsed);
+      }
+    } catch {
+      // Ignore invalid local cache
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    defectiveReasonOverridesRef.current = defectiveReasonOverrides;
+
+    try {
+      window.localStorage.setItem(LOCAL_DEFECTIVE_REASON_KEY, JSON.stringify(defectiveReasonOverrides));
+    } catch {
+      // Ignore storage failures
+    }
+  }, [defectiveReasonOverrides]);
 
   const loadInventory = async () => {
     setIsLoadingInventory(true);
@@ -149,7 +182,18 @@ export default function InventoryPage() {
           : [];
 
       setInventoryGroups(nextGroups);
-      setInventoryItems(nextItems);
+      const currentOverrides = defectiveReasonOverridesRef.current;
+      const hydratedItems = nextItems.map((item) => {
+        if (item.defective && (!item.motivo || item.motivo.trim().length === 0)) {
+          const fallbackReason = currentOverrides[item.id];
+          if (fallbackReason) {
+            return { ...item, motivo: fallbackReason };
+          }
+        }
+        return item;
+      });
+
+      setInventoryItems(hydratedItems);
       setRoomCatalog(nextRooms.length > 0 ? nextRooms : Array.from(new Set(nextItems.map((item) => item.room).filter((room) => room.trim().length > 0))));
 
       setSelectedGroupId((current) => {
@@ -213,7 +257,11 @@ export default function InventoryPage() {
 
   const roomOptions = useMemo(() => {
     const options = [...roomCatalog];
+    if (!options.includes("Monitoría")) {
+      options.unshift("Monitoría");
+    }
     if (itemForm.room && !options.includes(itemForm.room)) {
+      // keep the current edited value first so the select shows it when editing
       options.unshift(itemForm.room);
     }
     return options;
@@ -249,6 +297,23 @@ export default function InventoryPage() {
 
   const refreshInventory = async () => {
     await loadInventory();
+  };
+
+  const upsertDefectiveReasonOverride = (itemId: string, reason: string) => {
+    const next = {
+      ...defectiveReasonOverridesRef.current,
+      [itemId]: reason,
+    };
+    defectiveReasonOverridesRef.current = next;
+    setDefectiveReasonOverrides(next);
+  };
+
+  const removeDefectiveReasonOverride = (itemId: string) => {
+    if (!(itemId in defectiveReasonOverridesRef.current)) return;
+    const next = { ...defectiveReasonOverridesRef.current };
+    delete next[itemId];
+    defectiveReasonOverridesRef.current = next;
+    setDefectiveReasonOverrides(next);
   };
 
   const closeModal = () => {
@@ -299,7 +364,7 @@ export default function InventoryPage() {
   };
 
   const openDeleteGroupModal = () => {
-    if (!canManageInventory || !selectedGroup) return;
+    if (!canDeleteGroup || !selectedGroup) return;
     setModalError(null);
     setIsModalSubmitting(false);
     setActiveModal({ kind: "delete-group", groupId: selectedGroup.id });
@@ -344,6 +409,8 @@ export default function InventoryPage() {
           motivo: null,
         }),
       });
+
+      removeDefectiveReasonOverride(item.id);
 
       setActiveItemMenuId(null);
       await refreshInventory();
@@ -476,19 +543,64 @@ export default function InventoryPage() {
           throw new Error("Debes ingresar un motivo para marcar el elemento como defectuoso.");
         }
 
-        await fetchApiJson<{ id: string }>(`/api/inventory/items/${targetItem.id}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            groupId: targetItem.groupId,
-            name: targetItem.name,
-            code: targetItem.code,
-            room: targetItem.room,
-            status: targetItem.status,
-            defective: true,
-            motivo: reason,
-          }),
-        });
+        const defectivePayload = {
+          groupId: targetItem.groupId,
+          name: targetItem.name,
+          code: targetItem.code,
+          room: targetItem.room,
+          status: targetItem.status,
+          defective: true,
+          motivo: reason,
+        };
+
+        try {
+          const response = await fetchApiJsonWithOptions<{ item?: InventoryItem }>(
+            `/api/inventory/items/${targetItem.id}/defective`,
+            {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ motivo: reason }),
+            },
+            { suppressExpectedStatuses: [404] },
+          );
+
+          if (response.item) {
+            setInventoryItems((current) => current.map((item) => (item.id === response.item?.id ? (response.item as InventoryItem) : item)));
+
+            if (response.item.motivo && response.item.motivo.trim().length > 0) {
+              upsertDefectiveReasonOverride(targetItem.id, response.item.motivo);
+            }
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "";
+          const shouldFallbackToLegacyUpdate =
+            message.includes("HTTP 404") ||
+            message.includes("No encontramos el recurso solicitado") ||
+            message.includes("ya haya sido eliminado o movido");
+
+          if (!shouldFallbackToLegacyUpdate) {
+            throw error;
+          }
+
+          await fetchApiJson<{ id: string }>(`/api/inventory/items/${targetItem.id}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(defectivePayload),
+          });
+        }
+
+        upsertDefectiveReasonOverride(targetItem.id, reason);
+        setInventoryItems((current) =>
+          current.map((item) =>
+            item.id === targetItem.id
+              ? {
+                  ...item,
+                  defective: true,
+                  motivo: reason,
+                }
+              : item,
+          ),
+        );
 
         await refreshInventory();
         closeModal();
@@ -632,18 +744,7 @@ export default function InventoryPage() {
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-[0_10px_40px_rgba(42,52,57,0.06)]">
         <div className="mb-6 flex items-center justify-between">
           <h3 className="text-xl font-extrabold tracking-tight text-[#1A365D]">Detalles del Grupo</h3>
-          {canManageInventory ? (
-            <button
-              className="material-symbols-outlined text-lg text-[#566166]"
-              onClick={createItem}
-              type="button"
-              title="Nuevo elemento"
-            >
-              add_circle
-            </button>
-          ) : (
-            <button className="material-symbols-outlined text-lg text-[#566166]">more_vert</button>
-          )}
+          
         </div>
 
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
@@ -659,7 +760,7 @@ export default function InventoryPage() {
                 <p className="mt-1 text-xl font-extrabold text-[#9f403d]">{defectiveCount}</p>
               </div>
             </div>
-            {canManageInventory && selectedGroup ? (
+            {canDeleteGroup && selectedGroup ? (
               <div className="mt-3 flex flex-wrap gap-2">
                 <button className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-[#566166] hover:bg-slate-50" type="button" onClick={editGroup}>
                   Editar grupo
@@ -767,7 +868,7 @@ export default function InventoryPage() {
                         {item.defective ? (
                           <div className="mt-1 flex items-center gap-1 text-[10px] font-bold text-rose-700">
                             <span className="material-symbols-outlined text-sm">error</span>
-                            {item.motivo || "Sin motivo"}
+                            { "Defectuoso"}
                           </div>
                         ) : null}
                       </div>
@@ -785,8 +886,7 @@ export default function InventoryPage() {
                                 : "bg-[#d5e3ff] text-[#2c5287]"
                           }`}
                         >
-                          {item.defective ? <span className="material-symbols-outlined text-[12px]">warning</span> : null}
-                          {item.defective ? (item.motivo || "Sin motivo") : item.status}
+                          {item.defective ? "Defectuoso" : item.status === "Fijo" ? "Fijo" : "Disponible"}
                         </span>
                       </div>
                     </div>
@@ -998,7 +1098,7 @@ export default function InventoryPage() {
                   <div className="grid gap-4 md:grid-cols-2">
                     <div>
                       <label className="mb-2 block text-xs font-bold tracking-widest text-[#566166] uppercase" htmlFor="inventory-item-room">
-                        Salón
+                        Lugar
                       </label>
                       <select
                         id="inventory-item-room"
@@ -1006,7 +1106,7 @@ export default function InventoryPage() {
                         onChange={(event) => setItemForm((current) => ({ ...current, room: event.target.value }))}
                         value={itemForm.room}
                       >
-                        <option value="">Selecciona un salón</option>
+                        <option value="">Selecciona un salón del sistema</option>
                         {roomOptions.map((room) => (
                           <option key={room} value={room}>
                             {room}
