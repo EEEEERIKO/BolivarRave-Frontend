@@ -2217,6 +2217,11 @@ export default function SchedulesPage() {
         if (existing.id === selectedEvent.id) return false;
         if (existing.day !== slot.day || existing.room !== resolvedSlotRoom) return false;
 
+        const conflictFloorDate = maxIsoDate(editModalForm.startDate, getColombiaTodayIsoDate());
+        if (isPastScheduleEventBeforeDate(existing, conflictFloorDate)) {
+          return false;
+        }
+
         if (!dateRangesOverlap(editModalForm.startDate, editModalForm.endDate, existing.startDate, existing.endDate)) {
           return false;
         }

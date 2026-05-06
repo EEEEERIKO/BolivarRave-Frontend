@@ -140,7 +140,7 @@ export async function fetchApiJsonWithRetry<T>(
     try {
       return await fetchApiJsonWithOptions<T>(path, init, options);
     } catch (error) {
-      lastError = error;
+      lastError = error instanceof Error ? error : new Error(String(error));
       const errorMessage = error instanceof Error ? error.message : String(error);
       const isTransactionError =
         errorMessage.includes("Transaction") ||
