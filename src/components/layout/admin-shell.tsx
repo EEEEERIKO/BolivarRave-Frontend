@@ -80,7 +80,7 @@ const navItems: NavItem[] = [
   { label: "Horarios", icon: "calendar_today", href: "/schedules", isRoute: true },
   { label: "Salones", icon: "meeting_room", href: "/rooms", isRoute: true },
   { label: "Auditorio", icon: "theater_comedy", href: "/auditorio", isRoute: true, allowedRoles: ["admin", "monitor"] },
-  { label: "Reservas", icon: "", iconElement: <CalendarRange size={18} strokeWidth={2.2} />, href: "/reservas", isRoute: true },
+  { label: "Reservas", icon: "", iconElement: <CalendarRange size={18} strokeWidth={2.2} />, href: "/reservas", isRoute: true, allowedRoles: ["admin", "monitor"] },
   { label: "Personal", icon: "groups", href: "/staff", isRoute: true },
   { label: "Tareas", icon: "assignment_turned_in", href: "/tasks", isRoute: true, allowedRoles: ["admin", "monitor"] },
   { label: "Inventario", icon: "inventory_2", href: "/inventory", isRoute: true, allowedRoles: ["admin", "monitor"] },

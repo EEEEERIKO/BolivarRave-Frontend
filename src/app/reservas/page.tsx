@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { readAuthSession } from "@/lib/auth-session";
 import { fetchApiJson } from "@/lib/api-client";
 
 type ResourceType = "rooms" | "equipment";
@@ -91,11 +92,17 @@ export default function ReservasPage() {
     const [statusMessage, setStatusMessage] = useState<string | null>(null);
     const [selectedCardId, setSelectedCardId] = useState<string | null>(selectedResourceId);
     const [roomsCatalog, setRoomsCatalog] = useState<BookingResource[]>([]);
+    const [selectedDestinationRoomId, setSelectedDestinationRoomId] = useState<string>("");
     const [inventoryGroups, setInventoryGroups] = useState<InventoryGroup[]>([]);
     const [selectedGroupId, setSelectedGroupId] = useState<string>("");
     const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
 
-    const visibleResources = resourceType === "rooms" ? roomsCatalog : inventoryItems.map((it) => ({
+    const availableInventoryItems = inventoryItems.filter((it) => (it.status ?? "").toLowerCase() === "disponible");
+
+    const authSession = useMemo(() => readAuthSession(), []);
+    const canViewReservations = authSession?.role === "admin" || authSession?.role === "monitor";
+
+    const visibleResources = resourceType === "rooms" ? roomsCatalog : availableInventoryItems.map((it) => ({
         id: it.id,
         type: "equipment" as const,
         label: it.name,
@@ -223,7 +230,10 @@ export default function ReservasPage() {
         const nextDefault = visibleResources[0]?.id ?? "";
         setSelectedResourceId((current) => (visibleResources.some((resource) => resource.id === current) ? current : nextDefault));
         setSelectedCardId((current) => (visibleResources.some((resource) => resource.id === current) ? current : nextDefault));
-    }, [resourceType, visibleResources]);
+        if (!selectedDestinationRoomId && roomsCatalog.length > 0) {
+            setSelectedDestinationRoomId(roomsCatalog[0].id);
+        }
+    }, [resourceType, roomsCatalog, selectedDestinationRoomId, visibleResources]);
 
     const selectedResource = useMemo(
         () => visibleResources.find((resource) => resource.id === selectedResourceId) ?? visibleResources[0] ?? null,
@@ -252,6 +262,15 @@ export default function ReservasPage() {
 
         setStatusMessage("Solicitud preparada. Si quieres, luego la conecto al backend de reservas.");
     };
+
+    if (!canViewReservations) {
+        return (
+            <div className="mx-auto max-w-2xl p-6">
+                <h1 className="text-2xl font-bold text-[#2a3439]">Acceso denegado</h1>
+                <p className="mt-2 text-sm text-[#566166]">No tienes permiso para ver esta página. Solo usuarios con rol Monitor o Administrador pueden acceder.</p>
+            </div>
+        );
+    }
 
     return (
         <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-4 py-6 sm:px-6 sm:py-8 xl:flex-row xl:gap-8 xl:px-8">
@@ -369,7 +388,7 @@ export default function ReservasPage() {
 
                                     <div className="mb-3">
                                         <label className="mb-2 block text-xs font-bold text-slate-500 uppercase">Elemento del grupo</label>
-                                        {inventoryItems.length > 0 ? (
+                                        {availableInventoryItems.length > 0 ? (
                                             <div className="relative">
                                                 <select
                                                     value={selectedResourceId}
@@ -381,7 +400,7 @@ export default function ReservasPage() {
                                                     className="w-full appearance-none rounded-xl border border-slate-200 bg-white p-3 pr-10 text-sm text-slate-700 shadow-sm outline-none transition focus:border-[#3a5f94]"
                                                 >
                                                     <option value="">Selecciona un elemento...</option>
-                                                    {inventoryItems.map((it) => (
+                                                    {availableInventoryItems.map((it) => (
                                                         <option key={it.id} value={it.id}>
                                                             {it.name} — {it.code} {it.room ? `· ${it.room}` : ""}
                                                         </option>
@@ -392,7 +411,7 @@ export default function ReservasPage() {
                                                 </span>
                                             </div>
                                         ) : (
-                                            <div className="rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-600">No hay elementos en este grupo</div>
+                                            <div className="rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-600">No hay elementos disponibles en este grupo</div>
                                         )}
                                     </div>
                                 </div>
@@ -455,6 +474,33 @@ export default function ReservasPage() {
                                             className="w-full resize-none rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-[#3a5f94]"
                                         />
                                     </label>
+
+                                    {resourceType === "equipment" ? (
+                                        <label className="block">
+                                            <span className="mb-2 block text-xs font-bold text-slate-500 uppercase">Donde necesita el elemento</span>
+                                            {roomsCatalog.length > 0 ? (
+                                                <div className="relative">
+                                                    <select
+                                                        value={selectedDestinationRoomId}
+                                                        onChange={(event) => setSelectedDestinationRoomId(event.target.value)}
+                                                        className="w-full appearance-none rounded-xl border border-slate-200 bg-white p-3 pr-10 text-sm text-slate-700 shadow-sm outline-none transition focus:border-[#3a5f94]"
+                                                    >
+                                                        <option value="">Selecciona un salon...</option>
+                                                        {roomsCatalog.map((room) => (
+                                                            <option key={room.id} value={room.id}>
+                                                                {room.floor ? `${room.floor} - ` : ""}{room.label}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                    <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-slate-600">
+                                                        <span className="material-symbols-outlined">expand_more</span>
+                                                    </span>
+                                                </div>
+                                            ) : (
+                                                <div className="rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-600">Cargando salones...</div>
+                                            )}
+                                        </label>
+                                    ) : null}
                                 </div>
                             </section>
 
@@ -544,6 +590,7 @@ export default function ReservasPage() {
                                         setStartTime("08:00");
                                         setEndTime("10:00");
                                         setPurpose("");
+                                        setSelectedDestinationRoomId(roomsCatalog[0]?.id ?? "");
                                         setFullName("");
                                         setDocumentNumber("");
                                         setEmail("");

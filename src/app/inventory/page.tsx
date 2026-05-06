@@ -257,7 +257,11 @@ export default function InventoryPage() {
 
   const roomOptions = useMemo(() => {
     const options = [...roomCatalog];
+    if (!options.includes("Monitoría")) {
+      options.unshift("Monitoría");
+    }
     if (itemForm.room && !options.includes(itemForm.room)) {
+      // keep the current edited value first so the select shows it when editing
       options.unshift(itemForm.room);
     }
     return options;
@@ -740,18 +744,7 @@ export default function InventoryPage() {
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-[0_10px_40px_rgba(42,52,57,0.06)]">
         <div className="mb-6 flex items-center justify-between">
           <h3 className="text-xl font-extrabold tracking-tight text-[#1A365D]">Detalles del Grupo</h3>
-          {canManageInventory ? (
-            <button
-              className="material-symbols-outlined text-lg text-[#566166]"
-              onClick={createItem}
-              type="button"
-              title="Nuevo elemento"
-            >
-              add_circle
-            </button>
-          ) : (
-            <button className="material-symbols-outlined text-lg text-[#566166]">more_vert</button>
-          )}
+          
         </div>
 
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
@@ -893,7 +886,7 @@ export default function InventoryPage() {
                                 : "bg-[#d5e3ff] text-[#2c5287]"
                           }`}
                         >
-                          
+                          {item.defective ? "Defectuoso" : item.status === "Fijo" ? "Fijo" : "Disponible"}
                         </span>
                       </div>
                     </div>
