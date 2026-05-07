@@ -73,7 +73,7 @@ function resourceLabel(resource: BookingResource) {
 }
 
 function resourceTypeLabel(type: ResourceType) {
-    return type === "rooms" ? "Salones" : "Equipos";
+    return type === "rooms" ? "Clases de Sábado" : "Equipos";
 }
 
 export default function ReservasPage() {
@@ -90,6 +90,7 @@ export default function ReservasPage() {
     const [phone, setPhone] = useState("");
     const [termsAccepted, setTermsAccepted] = useState(false);
     const [statusMessage, setStatusMessage] = useState<string | null>(null);
+    const [isSubmitting, setIsSubmitting] = useState(false);
     const [selectedCardId, setSelectedCardId] = useState<string | null>(selectedResourceId);
     const [roomsCatalog, setRoomsCatalog] = useState<BookingResource[]>([]);
     const [selectedDestinationRoomId, setSelectedDestinationRoomId] = useState<string>("");
@@ -240,6 +241,21 @@ export default function ReservasPage() {
         [selectedResourceId, visibleResources],
     );
 
+    const selectedRoomResource = useMemo(
+        () => roomsCatalog.find((room) => room.id === selectedResourceId) ?? null,
+        [roomsCatalog, selectedResourceId],
+    );
+
+    const selectedEquipmentResource = useMemo(
+        () => inventoryItems.find((item) => item.id === selectedResourceId) ?? null,
+        [inventoryItems, selectedResourceId],
+    );
+
+    const selectedDestinationRoom = useMemo(
+        () => roomsCatalog.find((room) => room.id === selectedDestinationRoomId) ?? null,
+        [roomsCatalog, selectedDestinationRoomId],
+    );
+
     const requestSummary = useMemo(() => {
         return {
             resource: selectedResource ? resourceLabel(selectedResource) : "Sin recurso seleccionado",
@@ -249,10 +265,11 @@ export default function ReservasPage() {
             document: documentNumber.trim() || "Sin documento",
             contact: email.trim() || phone.trim() ? [email.trim(), phone.trim()].filter(Boolean).join(" · ") : "Sin contacto",
             purpose: purpose.trim() || "Sin propósito definido",
+            destination: resourceType === "equipment" ? selectedDestinationRoom?.label ?? "Sin salón de destino" : null,
         };
-    }, [bookingDate, documentNumber, endTime, email, fullName, phone, purpose, selectedResource, startTime]);
+    }, [bookingDate, documentNumber, endTime, email, fullName, phone, purpose, resourceType, selectedDestinationRoom, selectedResource, startTime]);
 
-    const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault();
 
         if (!termsAccepted) {
@@ -260,7 +277,47 @@ export default function ReservasPage() {
             return;
         }
 
-        setStatusMessage("Solicitud preparada. Si quieres, luego la conecto al backend de reservas.");
+        if (!selectedResourceId) {
+            setStatusMessage("Debes seleccionar un recurso para continuar.");
+            return;
+        }
+
+        if (resourceType === "equipment" && !selectedDestinationRoomId) {
+            setStatusMessage("Debes seleccionar el salón de destino para el equipo.");
+            return;
+        }
+
+        setIsSubmitting(true);
+        setStatusMessage(null);
+
+        try {
+            const payload = {
+                resourceType,
+                resourceId: selectedResourceId,
+                bookingDate,
+                startTime,
+                endTime,
+                purpose: purpose.trim(),
+                requesterName: fullName.trim(),
+                requesterDocument: documentNumber.trim(),
+                requesterEmail: email.trim() || null,
+                requesterPhone: phone.trim() || null,
+                termsAccepted,
+                destinationRoomId: resourceType === "equipment" ? selectedDestinationRoomId : null,
+            };
+
+            const response = await fetchApiJson<{ message: string; reservationId: string }>("/api/reservas", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload),
+            });
+
+            setStatusMessage(`${response.message} ID: ${response.reservationId}`);
+        } catch (error) {
+            setStatusMessage(error instanceof Error ? error.message : "No se pudo registrar la reserva.");
+        } finally {
+            setIsSubmitting(false);
+        }
     };
 
     if (!canViewReservations) {
@@ -343,10 +400,9 @@ export default function ReservasPage() {
                                                         setSelectedResourceId(resource.id);
                                                         setSelectedCardId(resource.id);
                                                     }}
-                                                    className={`flex w-full items-center justify-between gap-3 rounded-md px-3 py-2 text-left transition ${isSelected
-                                                            ? "ring-2 ring-[#3a5f94]/20 bg-[#f7f9fb]"
-                                                            : "hover:bg-slate-50"
-                                                        }`}
+                                                    className={`flex w-full items-center justify-between gap-3 rounded-md px-3 py-2 text-left transition ${
+                                                        isSelected ? "ring-2 ring-[#3a5f94]/20 bg-[#f7f9fb]" : "hover:bg-slate-50"
+                                                    }`}
                                                 >
                                                     <div className="min-w-0 flex-1">
                                                         <div className="text-[10px] font-bold uppercase text-[#3a5f94]">{resource.floor}</div>
@@ -373,7 +429,7 @@ export default function ReservasPage() {
                                                 >
                                                     {inventoryGroups.map((g) => (
                                                         <option key={g.id} value={g.id}>
-                                                            {g.name} 
+                                                            {g.name}
                                                         </option>
                                                     ))}
                                                 </select>
@@ -427,34 +483,166 @@ export default function ReservasPage() {
                                     </div>
 
                                     <label className="block">
-                                        <span className="mb-2 block text-xs font-bold text-slate-500 uppercase">Date</span>
+                                        <span className="mb-2 block text-xs font-bold text-slate-500 uppercase">Fecha</span>
                                         <input
                                             type="date"
+                                            min={todayKey}
                                             value={bookingDate}
                                             onChange={(event) => setBookingDate(event.target.value)}
                                             className="w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 shadow-sm outline-none transition focus:border-[#3a5f94]"
                                         />
                                     </label>
 
-                                    <div className="grid gap-4 sm:grid-cols-2">
-                                        <label className="block">
-                                            <span className="mb-2 block text-xs font-bold text-slate-500 uppercase">Start time</span>
-                                            <input
-                                                type="time"
-                                                value={startTime}
-                                                onChange={(event) => setStartTime(event.target.value)}
-                                                className="w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 shadow-sm outline-none transition focus:border-[#3a5f94]"
-                                            />
-                                        </label>
-                                        <label className="block">
-                                            <span className="mb-2 block text-xs font-bold text-slate-500 uppercase">End time</span>
-                                            <input
-                                                type="time"
-                                                value={endTime}
-                                                onChange={(event) => setEndTime(event.target.value)}
-                                                className="w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 shadow-sm outline-none transition focus:border-[#3a5f94]"
-                                            />
-                                        </label>
+                                    <div className="space-y-4">
+                                        {/* Time Range Picker */}
+                                        <div className="rounded-xl border border-slate-200 bg-white p-2 shadow-sm">
+                                            <div className="grid gap-2 sm:grid-cols-2">
+                                                {/* Start Time */}
+                                                <div className="space-y-1">
+                                                    <label className="text-xs font-bold text-slate-500 uppercase">Inicio</label>
+                                                    <div className="flex items-center gap-1.5">
+                                                        <div className="rounded-lg border border-slate-200 bg-slate-50 px-1 py-1 flex-1 min-w-0">
+                                                            <div className="flex items-center gap-0.5 justify-center">
+                                                                <input
+                                                                    type="number"
+                                                                    min="6"
+                                                                    max="22"
+                                                                    value={startTime.split(":")[0]}
+                                                                    onChange={(e) => {
+                                                                        const h = Math.max(6, Math.min(22, parseInt(e.target.value) || 6));
+                                                                        const m = startTime.split(":")[1] || "00";
+                                                                        setStartTime(`${String(h).padStart(2, "0")}:${m}`);
+                                                                    }}
+                                                                    className="w-6 bg-transparent text-center text-xs font-bold text-slate-900 outline-none"
+                                                                />
+                                                                <span className="text-xs font-bold text-slate-400">:</span>
+                                                                <input
+                                                                    type="number"
+                                                                    min="0"
+                                                                    max="59"
+                                                                    step="15"
+                                                                    value={startTime.split(":")[1] || "00"}
+                                                                    onChange={(e) => {
+                                                                        const h = startTime.split(":")[0] || "06";
+                                                                        const m = Math.max(0, Math.min(59, parseInt(e.target.value) || 0));
+                                                                        setStartTime(`${h}:${String(m).padStart(2, "0")}`);
+                                                                    }}
+                                                                    className="w-6 bg-transparent text-center text-xs font-bold text-slate-900 outline-none"
+                                                                />
+                                                            </div>
+                                                        </div>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                                const [h, m] = startTime.split(":").map(Number);
+                                                                let newH = h, newM = m + 15;
+                                                                if (newM >= 60) {
+                                                                    newM -= 60;
+                                                                    newH += 1;
+                                                                }
+                                                                if (newH >= 6 && newH <= 22) {
+                                                                    setStartTime(`${String(newH).padStart(2, "0")}:${String(newM).padStart(2, "0")}`);
+                                                                }
+                                                            }}
+                                                            className="flex h-4 w-4 items-center justify-center rounded bg-[#3a5f94] text-white hover:bg-[#2d5387] active:scale-95 flex-shrink-0"
+                                                        >
+                                                            <span className="material-symbols-outlined" style={{ fontSize: "10px" }}>add</span>
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                                const [h, m] = startTime.split(":").map(Number);
+                                                                let newH = h, newM = m - 15;
+                                                                if (newM < 0) {
+                                                                    newM += 60;
+                                                                    newH -= 1;
+                                                                }
+                                                                if (newH >= 6 && newH <= 22) {
+                                                                    setStartTime(`${String(newH).padStart(2, "0")}:${String(newM).padStart(2, "0")}`);
+                                                                }
+                                                            }}
+                                                            className="flex h-4 w-4 items-center justify-center rounded bg-slate-200 text-slate-600 hover:bg-slate-300 active:scale-95 flex-shrink-0"
+                                                        >
+                                                            <span className="material-symbols-outlined" style={{ fontSize: "10px" }}>remove</span>
+                                                        </button>
+                                                    </div>
+                                                </div>
+
+                                                {/* End Time */}
+                                                <div className="space-y-1">
+                                                    <label className="text-xs font-bold text-slate-500 uppercase">Fin</label>
+                                                    <div className="flex items-center gap-1.5">
+                                                        <div className="rounded-lg border border-slate-200 bg-slate-50 px-1 py-1 flex-1 min-w-0">
+                                                            <div className="flex items-center gap-0.5 justify-center">
+                                                                <input
+                                                                    type="number"
+                                                                    min="6"
+                                                                    max="22"
+                                                                    value={endTime.split(":")[0]}
+                                                                    onChange={(e) => {
+                                                                        const h = Math.max(6, Math.min(22, parseInt(e.target.value) || 6));
+                                                                        const m = endTime.split(":")[1] || "00";
+                                                                        setEndTime(`${String(h).padStart(2, "0")}:${m}`);
+                                                                    }}
+                                                                    className="w-6 bg-transparent text-center text-xs font-bold text-slate-900 outline-none"
+                                                                />
+                                                                <span className="text-xs font-bold text-slate-400">:</span>
+                                                                <input
+                                                                    type="number"
+                                                                    min="0"
+                                                                    max="59"
+                                                                    step="15"
+                                                                    value={endTime.split(":")[1] || "00"}
+                                                                    onChange={(e) => {
+                                                                        const h = endTime.split(":")[0] || "06";
+                                                                        const m = Math.max(0, Math.min(59, parseInt(e.target.value) || 0));
+                                                                        setEndTime(`${h}:${String(m).padStart(2, "0")}`);
+                                                                    }}
+                                                                    className="w-6 bg-transparent text-center text-xs font-bold text-slate-900 outline-none"
+                                                                />
+                                                            </div>
+                                                        </div>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                                const [h, m] = endTime.split(":").map(Number);
+                                                                let newH = h, newM = m + 15;
+                                                                if (newM >= 60) {
+                                                                    newM -= 60;
+                                                                    newH += 1;
+                                                                }
+                                                                if (newH >= 6 && newH <= 22) {
+                                                                    setEndTime(`${String(newH).padStart(2, "0")}:${String(newM).padStart(2, "0")}`);
+                                                                }
+                                                            }}
+                                                            className="flex h-4 w-4 items-center justify-center rounded bg-[#3a5f94] text-white hover:bg-[#2d5387] active:scale-95 flex-shrink-0"
+                                                        >
+                                                            <span className="material-symbols-outlined" style={{ fontSize: "10px" }}>add</span>
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                                const [h, m] = endTime.split(":").map(Number);
+                                                                let newH = h, newM = m - 15;
+                                                                if (newM < 0) {
+                                                                    newM += 60;
+                                                                    newH -= 1;
+                                                                }
+                                                                if (newH >= 6 && newH <= 22) {
+                                                                    setEndTime(`${String(newH).padStart(2, "0")}:${String(newM).padStart(2, "0")}`);
+                                                                }
+                                                            }}
+                                                            className="flex h-4 w-4 items-center justify-center rounded bg-slate-200 text-slate-600 hover:bg-slate-300 active:scale-95 flex-shrink-0"
+                                                        >
+                                                            <span className="material-symbols-outlined" style={{ fontSize: "10px" }}>remove</span>
+                                                        </button>
+                                                    </div>
+                                                    
+                                                </div>
+                                            </div>
+
+                                            
+                                        </div>
                                     </div>
                                 </div>
 
@@ -517,7 +705,7 @@ export default function ReservasPage() {
                                             type="text"
                                             value={fullName}
                                             onChange={(event) => setFullName(event.target.value)}
-                                            placeholder="Johnathan Doe"
+                                            placeholder="Erik Valencia Cardona"
                                             className="w-full rounded-xl border border-slate-200 bg-[#f7f9fb] p-3 text-sm text-slate-700 shadow-sm outline-none transition focus:border-[#3a5f94]"
                                         />
                                     </label>
@@ -527,7 +715,7 @@ export default function ReservasPage() {
                                             type="text"
                                             value={documentNumber}
                                             onChange={(event) => setDocumentNumber(event.target.value)}
-                                            placeholder="U-2938475"
+                                            placeholder="12938475"
                                             className="w-full rounded-xl border border-slate-200 bg-[#f7f9fb] p-3 text-sm text-slate-700 shadow-sm outline-none transition focus:border-[#3a5f94]"
                                         />
                                     </label>
@@ -537,7 +725,7 @@ export default function ReservasPage() {
                                             type="email"
                                             value={email}
                                             onChange={(event) => setEmail(event.target.value)}
-                                            placeholder="j.doe@institution.edu"
+                                            placeholder="erik@unac.edu.co"
                                             className="w-full rounded-xl border border-slate-200 bg-[#f7f9fb] p-3 text-sm text-slate-700 shadow-sm outline-none transition focus:border-[#3a5f94]"
                                         />
                                     </label>
@@ -576,9 +764,10 @@ export default function ReservasPage() {
                             <div className="flex flex-col gap-3 pt-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4">
                                 <button
                                     type="submit"
+                                    disabled={isSubmitting}
                                     className="w-full rounded-xl bg-[#3a5f94] px-8 py-3.5 text-sm font-bold text-white shadow-lg shadow-[#3a5f94]/15 transition hover:bg-[#2d5387] active:scale-[0.98] sm:w-auto"
                                 >
-                                    Submit Request
+                                    {isSubmitting ? "Guardando..." : "Submit Request"}
                                 </button>
                                 <button
                                     type="button"
@@ -649,6 +838,18 @@ export default function ReservasPage() {
                                     <p className="text-xs text-slate-500">{requestSummary.document}</p>
                                 </div>
                             </div>
+
+                            {requestSummary.destination ? (
+                                <div className="flex gap-4">
+                                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[#e8eff3]">
+                                        <span className="material-symbols-outlined text-[#3a5f94]">place</span>
+                                    </div>
+                                    <div>
+                                        <p className="text-[10px] font-bold uppercase text-slate-500">Destino del equipo</p>
+                                        <p className="text-sm font-bold text-slate-900">{requestSummary.destination}</p>
+                                    </div>
+                                </div>
+                            ) : null}
                         </div>
 
                         <div className="mt-8 rounded-2xl bg-[#d5e3ff]/40 p-4">
