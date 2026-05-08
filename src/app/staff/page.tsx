@@ -2068,9 +2068,12 @@ export default function StaffPage() {
   };
 
   const handleCancelReservation = async (id: string) => {
+    const token = authSession?.accessToken;
+    if (!token) return;
+
     setActionReservationId(id);
     try {
-      const res = await fetch(`/api/reservas/${id}/cancel`, { method: 'PATCH', headers: { Authorization: `Bearer ${authSession?.accessToken}` ?? '' } });
+      const res = await fetch(`/api/reservas/${id}/cancel`, { method: 'PATCH', headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) throw new Error('No se pudo cancelar la reserva');
       await loadMyReservations();
     } catch (e) {
@@ -2081,10 +2084,13 @@ export default function StaffPage() {
   };
 
   const handleCloseReservation = async (id: string) => {
+    const token = authSession?.accessToken;
+    if (!token) return;
+
     if (!confirm('¿Estás seguro que quieres marcar esta reserva como devuelta (en buen estado)?')) return;
     setActionReservationId(id);
     try {
-      const res = await fetch(`/api/reservas/${id}/close`, { method: 'PATCH', headers: { Authorization: `Bearer ${authSession?.accessToken}` ?? '' } });
+      const res = await fetch(`/api/reservas/${id}/close`, { method: 'PATCH', headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) throw new Error('No se pudo cerrar la reserva');
       await loadMyReservations();
     } catch (e) {
@@ -2095,10 +2101,13 @@ export default function StaffPage() {
   };
 
   const handleReportReservation = async (id: string) => {
+    const token = authSession?.accessToken;
+    if (!token) return;
+
     if (!confirm('¿Estás seguro que quieres reportar esta reserva por devolución con problema?')) return;
     setActionReservationId(id);
     try {
-      const res = await fetch(`/api/reservas/${id}/report`, { method: 'PATCH', headers: { Authorization: `Bearer ${authSession?.accessToken}` ?? '' } });
+      const res = await fetch(`/api/reservas/${id}/report`, { method: 'PATCH', headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) throw new Error('No se pudo reportar la reserva');
       await loadMyReservations();
     } catch (e) {
