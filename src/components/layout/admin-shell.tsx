@@ -201,8 +201,6 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const isLoginRoute = pathname.startsWith("/login");
-  const isConfirmRoute = pathname.startsWith("/reservas/confirm");
-  const isPublicRoute = isLoginRoute || isConfirmRoute;
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [pendingRequests, setPendingRequests] = useState<PendingScheduleRequest[]>([]);
@@ -236,7 +234,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   }, [isNotificationsOpen]);
 
   useEffect(() => {
-    if (isPublicRoute) {
+    if (isLoginRoute) {
       setIsSessionReady(true);
       return;
     }
@@ -347,7 +345,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
     }
   };
 
-  if (isPublicRoute) {
+  if (isLoginRoute) {
     return <>{children}</>;
   }
 

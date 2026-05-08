@@ -114,9 +114,8 @@ export default function ReservasPage() {
     const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
     const [reservationsFeed, setReservationsFeed] = useState<ReservationFeedItem[]>([]);
     const [reservationsLoading, setReservationsLoading] = useState(false);
+    const [returningReservationId, setReturningReservationId] = useState<string | null>(null);
     const [actionReservationId, setActionReservationId] = useState<string | null>(null);
-    const [reportingReservationId, setReportingReservationId] = useState<string | null>(null);
-    const [reportReasonById, setReportReasonById] = useState<Record<string, string>>({});
 
     const availableInventoryItems = inventoryItems.filter((it) => (it.status ?? "").toLowerCase() === "disponible");
 
@@ -298,11 +297,7 @@ export default function ReservasPage() {
 
         try {
             const response = await fetchApiJson<{ reservas?: ReservationFeedItem[] }>("/api/reservas", { cache: "no-store" });
-            setReservationsFeed(
-                (response.reservas ?? [])
-                    .filter((reservation) => (reservation.status ?? "").toLowerCase() !== "cancelada")
-                    .slice(0, 6),
-            );
+            setReservationsFeed((response.reservas ?? []).slice(0, 6));
         } catch {
             setReservationsFeed([]);
         } finally {
@@ -311,7 +306,7 @@ export default function ReservasPage() {
     };
 
     const handleReturnReservation = async (reservationId: string) => {
-        setActionReservationId(reservationId);
+        setReturningReservationId(reservationId);
         setStatusMessage(null);
 
         try {
@@ -324,71 +319,46 @@ export default function ReservasPage() {
         } catch (error) {
             setStatusMessage(error instanceof Error ? error.message : "No se pudo devolver el elemento.");
         } finally {
-            setActionReservationId(null);
+            setReturningReservationId(null);
         }
     };
 
     const handleCloseReservation = async (reservationId: string) => {
+        if (!confirm('¿Estás seguro que quieres marcar esta reserva como cerrada?')) return;
         setActionReservationId(reservationId);
         setStatusMessage(null);
 
         try {
             const response = await fetchApiJson<{ message: string; reservationId: string }>(`/api/reservas/${reservationId}/close`, {
-                method: "PATCH",
+                method: 'PATCH',
             });
 
             setStatusMessage(response.message);
             await loadReservationsFeed();
         } catch (error) {
-            setStatusMessage(error instanceof Error ? error.message : "No se pudo cerrar la reserva.");
-        } finally {
-            setActionReservationId(null);
-        }
-    };
-
-    const handleCancelReservation = async (reservationId: string) => {
-        if (!confirm("¿Deseas cancelar esta solicitud antes de que sea aceptada?")) {
-            return;
-        }
-
-        setActionReservationId(reservationId);
-        setStatusMessage(null);
-
-        try {
-            const response = await fetchApiJson<{ message: string; reservationId: string }>(`/api/reservas/${reservationId}/cancel`, {
-                method: "PATCH",
-            });
-
-            setStatusMessage(response.message);
-            await loadReservationsFeed();
-        } catch (error) {
-            setStatusMessage(error instanceof Error ? error.message : "No se pudo cancelar la reserva.");
+            setStatusMessage(error instanceof Error ? error.message : 'No se pudo cerrar la reserva.');
         } finally {
             setActionReservationId(null);
         }
     };
 
     const handleReportReservation = async (reservationId: string) => {
+        if (!confirm('¿Estás seguro que quieres reportar esta reserva?')) return;
+        const reason = window.prompt('Motivo del reporte (opcional):') ?? null;
         setActionReservationId(reservationId);
         setStatusMessage(null);
 
         try {
             const response = await fetchApiJson<{ message: string; reservationId: string }>(`/api/reservas/${reservationId}/report`, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ reportReason: reportReasonById[reservationId] ?? "" }),
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ reportReason: reason }),
             });
 
             setStatusMessage(response.message);
-            setReportingReservationId(null);
-            setReportReasonById((current) => {
-                const next = { ...current };
-                delete next[reservationId];
-                return next;
-            });
             await loadReservationsFeed();
         } catch (error) {
-            setStatusMessage(error instanceof Error ? error.message : "No se pudo reportar la reserva.");
+            setStatusMessage(error instanceof Error ? error.message : 'No se pudo reportar la reserva.');
         } finally {
             setActionReservationId(null);
         }
@@ -945,8 +915,6 @@ export default function ReservasPage() {
                                                             ? "Cancelada"
                                                             : statusLower === "devuelto"
                                                                 ? "Devuelto"
-                                                                : statusLower === "reportado"
-                                                                    ? "Reportado"
                                                                 : reservation.status;
 
                                     const statusStyles =
@@ -962,161 +930,101 @@ export default function ReservasPage() {
                                                             ? "bg-slate-100 text-slate-600 border-slate-200"
                                                             : statusLower === "devuelto"
                                                                 ? "bg-cyan-50 text-cyan-700 border-cyan-100"
-                                                                : statusLower === "reportado"
-                                                                    ? "bg-rose-50 text-rose-700 border-rose-100"
                                                                 : "bg-amber-50 text-amber-700 border-amber-100";
 
                                     return (
-                                        <article key={reservation.id} className="rounded-xl border border-slate-200 bg-[#f7f9fb] p-4">
-                                            <div className="flex items-start justify-between gap-3">
-                                                <div className="min-w-0">
-                                                    <p className="text-[10px] font-bold uppercase text-slate-500">
-                                                        {reservation.resourceType === "rooms" ? "Salón" : "Equipo"}
-                                                    </p>
-                                                    <p className="truncate text-sm font-black text-slate-900">{reservation.resourceLabel}</p>
-                                                </div>
-                                                <span className={`shrink-0 rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase ${statusStyles}`}>
-                                                    {statusDisplay}
-                                                </span>
-                                            </div>
+                                        (() => {
+                                            const now = new Date();
+                                            const endDateTime = (() => {
+                                                try {
+                                                    return new Date(`${reservation.bookingDate}T${reservation.endTime}:00`);
+                                                } catch (e) {
+                                                    return null;
+                                                }
+                                            })();
 
-                                            <div className="mt-3 grid gap-2 text-xs text-slate-600">
-                                                <div className="flex items-center gap-2">
-                                                    <span className="material-symbols-outlined text-[16px] text-[#3a5f94]">event</span>
-                                                    <span>{reservation.bookingDate}</span>
-                                                </div>
-                                                <div className="flex items-center gap-2">
-                                                    <span className="material-symbols-outlined text-[16px] text-[#3a5f94]">schedule</span>
-                                                    <span>{formatDuration(reservation.startTime, reservation.endTime)}</span>
-                                                </div>
-                                                <div className="flex items-center gap-2">
-                                                    <span className="material-symbols-outlined text-[16px] text-[#3a5f94]">person</span>
-                                                    <span className="truncate">{reservation.requesterName}</span>
-                                                </div>
-                                                {reservation.destinationRoomLabel ? (
-                                                    <div className="flex items-center gap-2">
-                                                        <span className="material-symbols-outlined text-[16px] text-[#3a5f94]">place</span>
-                                                        <span className="truncate">{reservation.destinationRoomLabel}</span>
+                                            const isLate = endDateTime ? endDateTime.getTime() < now.getTime() && reservation.status?.toLowerCase() !== 'devuelto' && reservation.status?.toLowerCase() !== 'cancelada' : false;
+
+                                            return (
+                                                <article key={reservation.id} className={`rounded-xl border ${isLate ? 'border-rose-300 bg-[#fff6f6]' : 'border-slate-200 bg-[#f7f9fb]'} p-4`}>
+                                                    {isLate ? (
+                                                        <div className="mb-3 rounded-md border border-rose-100 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700">
+                                                            Tardío — la reserva terminó el {reservation.bookingDate} a las {reservation.endTime}
+                                                        </div>
+                                                    ) : null}
+
+                                                    <div className="flex items-start justify-between gap-3">
+                                                        <div className="min-w-0">
+                                                            <p className="text-[10px] font-bold uppercase text-slate-500">
+                                                                {reservation.resourceType === "rooms" ? "Salón" : "Equipo"}
+                                                            </p>
+                                                            <p className="truncate text-sm font-black text-slate-900">{reservation.resourceLabel}</p>
+                                                        </div>
+                                                        <span className={`shrink-0 rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase ${statusStyles}`}>
+                                                            {statusDisplay}
+                                                        </span>
                                                     </div>
-                                                ) : null}
-                                                {reservation.resourceOriginalRoomLabel ? (
-                                                    <div className="flex items-center gap-2">
-                                                        <span className="material-symbols-outlined text-[16px] text-[#3a5f94]">history</span>
-                                                        <span className="truncate">Origen: {reservation.resourceOriginalRoomLabel}</span>
+
+                                                    <div className="mt-3 grid gap-2 text-xs text-slate-600">
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="material-symbols-outlined text-[16px] text-[#3a5f94]">event</span>
+                                                            <span>{reservation.bookingDate}</span>
+                                                        </div>
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="material-symbols-outlined text-[16px] text-[#3a5f94]">schedule</span>
+                                                            <span>{formatDuration(reservation.startTime, reservation.endTime)}</span>
+                                                        </div>
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="material-symbols-outlined text-[16px] text-[#3a5f94]">person</span>
+                                                            <span className="truncate">{reservation.requesterName}</span>
+                                                        </div>
+                                                        {reservation.destinationRoomLabel ? (
+                                                            <div className="flex items-center gap-2">
+                                                                <span className="material-symbols-outlined text-[16px] text-[#3a5f94]">place</span>
+                                                                <span className="truncate">{reservation.destinationRoomLabel}</span>
+                                                            </div>
+                                                        ) : null}
+                                                        {reservation.resourceOriginalRoomLabel ? (
+                                                            <div className="flex items-center gap-2">
+                                                                <span className="material-symbols-outlined text-[16px] text-[#3a5f94]">history</span>
+                                                                <span className="truncate">Origen: {reservation.resourceOriginalRoomLabel}</span>
+                                                            </div>
+                                                        ) : null}
                                                     </div>
-                                                ) : null}
-                                            </div>
 
-                                            <div className="mt-4 flex flex-col gap-2">
-                                                {statusLower === "no_aceptado" ? (
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => void handleCancelReservation(reservation.id)}
-                                                        disabled={actionReservationId === reservation.id}
-                                                        className="inline-flex w-full items-center justify-center rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm font-bold text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
-                                                    >
-                                                        {actionReservationId === reservation.id ? "Cancelando..." : "Cancelar reserva"}
-                                                    </button>
-                                                ) : null}
-
-                                                {statusLower === "confirmada" && reservation.resourceType === "equipment" ? (
-                                                    <div className="flex flex-col gap-2 sm:flex-row">
+                                                    {reservation.resourceType === "equipment" && statusLower !== "devuelto" ? (
                                                         <button
                                                             type="button"
                                                             onClick={() => void handleReturnReservation(reservation.id)}
-                                                            disabled={actionReservationId === reservation.id}
-                                                            className="inline-flex w-full items-center justify-center rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                                            disabled={returningReservationId === reservation.id}
+                                                            className="mt-4 inline-flex w-full items-center justify-center rounded-xl bg-[#3a5f94] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#2d5387] disabled:cursor-not-allowed disabled:opacity-60"
                                                         >
-                                                            {actionReservationId === reservation.id ? "Procesando..." : "Producto devuelto"}
+                                                            {returningReservationId === reservation.id ? "Devolviendo..." : "Marcar como devuelto"}
                                                         </button>
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => setReportingReservationId((current) => (current === reservation.id ? null : reservation.id))}
-                                                            disabled={actionReservationId === reservation.id}
-                                                            className="inline-flex w-full items-center justify-center rounded-xl bg-[#9f403d] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#8a3631] disabled:cursor-not-allowed disabled:opacity-60"
-                                                        >
-                                                            Reportar préstamo
-                                                        </button>
-                                                    </div>
-                                                ) : null}
-
-                                                {statusLower === "confirmada" && reservation.resourceType === "rooms" ? (
-                                                    <div className="flex flex-col gap-2">
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => void handleCloseReservation(reservation.id)}
-                                                            disabled={actionReservationId === reservation.id}
-                                                            className="inline-flex w-full items-center justify-center rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
-                                                        >
-                                                            {actionReservationId === reservation.id ? "Procesando..." : "Cerrar reserva"}
-                                                        </button>
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => setReportingReservationId((current) => (current === reservation.id ? null : reservation.id))}
-                                                            disabled={actionReservationId === reservation.id}
-                                                            className="inline-flex w-full items-center justify-center rounded-xl bg-[#9f403d] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#8a3631] disabled:cursor-not-allowed disabled:opacity-60"
-                                                        >
-                                                            Reportar préstamo
-                                                        </button>
-                                                    </div>
-                                                ) : null}
-
-                                                {reportingReservationId === reservation.id ? (
-                                                    <div className="space-y-2 rounded-xl border border-rose-200 bg-rose-50 p-3">
-                                                        <label className="block text-[11px] font-bold uppercase tracking-wide text-rose-700">
-                                                            ¿Qué sucedió mal?
-                                                        </label>
-                                                        <textarea
-                                                            value={reportReasonById[reservation.id] ?? ""}
-                                                            onChange={(event) =>
-                                                                setReportReasonById((current) => ({
-                                                                    ...current,
-                                                                    [reservation.id]: event.target.value,
-                                                                }))
-                                                            }
-                                                            rows={3}
-                                                            placeholder="Describe el daño, incumplimiento o problema detectado"
-                                                            className="w-full rounded-lg border border-rose-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none ring-0 placeholder:text-slate-400 focus:border-rose-400"
-                                                        />
-                                                        <div className="flex gap-2">
+                                                    ) : null}
+                                                    {statusLower === 'confirmada' ? (
+                                                        <div className="mt-3 grid grid-cols-2 gap-2">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => void handleCloseReservation(reservation.id)}
+                                                                disabled={actionReservationId === reservation.id}
+                                                                className="inline-flex w-full items-center justify-center rounded-xl bg-[#3a5f94] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#2d5387] disabled:cursor-not-allowed disabled:opacity-60"
+                                                            >
+                                                                {actionReservationId === reservation.id ? 'Procesando...' : 'Cerrar reserva'}
+                                                            </button>
                                                             <button
                                                                 type="button"
                                                                 onClick={() => void handleReportReservation(reservation.id)}
-                                                                disabled={actionReservationId === reservation.id || !(reportReasonById[reservation.id] ?? "").trim()}
-                                                                className="inline-flex items-center justify-center rounded-lg bg-[#9f403d] px-4 py-2 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                                                                disabled={actionReservationId === reservation.id}
+                                                                className="inline-flex w-full items-center justify-center rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
                                                             >
-                                                                {actionReservationId === reservation.id ? "Reportando..." : "Enviar reporte"}
-                                                            </button>
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => {
-                                                                    setReportingReservationId(null);
-                                                                    setReportReasonById((current) => {
-                                                                        const next = { ...current };
-                                                                        delete next[reservation.id];
-                                                                        return next;
-                                                                    });
-                                                                }}
-                                                                className="inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-600"
-                                                            >
-                                                                Cancelar
+                                                                {actionReservationId === reservation.id ? 'Procesando...' : 'Reportar préstamo'}
                                                             </button>
                                                         </div>
-                                                    </div>
-                                                ) : null}
-
-                                                {reservation.resourceType === "equipment" && statusLower !== "devuelto" && statusLower !== "confirmada" && statusLower !== "no_aceptado" ? (
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => void handleReturnReservation(reservation.id)}
-                                                        disabled={actionReservationId === reservation.id}
-                                                        className="inline-flex w-full items-center justify-center rounded-xl bg-[#3a5f94] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#2d5387] disabled:cursor-not-allowed disabled:opacity-60"
-                                                    >
-                                                        {actionReservationId === reservation.id ? "Procesando..." : "Marcar como devuelto"}
-                                                    </button>
-                                                ) : null}
-                                            </div>
-                                        </article>
+                                                    ) : null}
+                                                </article>
+                                            );
+                                        })()
                                     );
                                 })
                             ) : (
