@@ -23,6 +23,22 @@ const ROOM_RESOURCES: BookingResource[] = [];
 // Inventory integration: load groups and items from backend and map to BookingResource
 type InventoryGroup = { id: string; name: string; icon?: string; order?: number; itemCount?: number };
 type InventoryItem = { id: string; groupId: string; groupName: string; groupIcon?: string; name: string; code: string; room: string; status: string; defective: boolean; motivo?: string | null };
+type ReservationFeedItem = {
+    id: string;
+    resourceType: ResourceType;
+    resourceLabel: string;
+    resourceContext: string | null;
+    resourceOriginalRoomLabel: string | null;
+    bookingDate: string;
+    startTime: string;
+    endTime: string;
+    requesterName: string;
+    requesterDocument: string;
+    status: string;
+    destinationRoomLabel: string | null;
+    returnedAt: string | null;
+    createdAt: string;
+};
 
 // We'll populate items dynamically when user selects a group.
 
@@ -88,7 +104,6 @@ export default function ReservasPage() {
     const [documentNumber, setDocumentNumber] = useState("");
     const [email, setEmail] = useState("");
     const [phone, setPhone] = useState("");
-    const [termsAccepted, setTermsAccepted] = useState(false);
     const [statusMessage, setStatusMessage] = useState<string | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [selectedCardId, setSelectedCardId] = useState<string | null>(selectedResourceId);
@@ -97,6 +112,11 @@ export default function ReservasPage() {
     const [inventoryGroups, setInventoryGroups] = useState<InventoryGroup[]>([]);
     const [selectedGroupId, setSelectedGroupId] = useState<string>("");
     const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
+    const [reservationsFeed, setReservationsFeed] = useState<ReservationFeedItem[]>([]);
+    const [reservationsLoading, setReservationsLoading] = useState(false);
+    const [actionReservationId, setActionReservationId] = useState<string | null>(null);
+    const [reportingReservationId, setReportingReservationId] = useState<string | null>(null);
+    const [reportReasonById, setReportReasonById] = useState<Record<string, string>>({});
 
     const availableInventoryItems = inventoryItems.filter((it) => (it.status ?? "").toLowerCase() === "disponible");
 
@@ -269,13 +289,124 @@ export default function ReservasPage() {
         };
     }, [bookingDate, documentNumber, endTime, email, fullName, phone, purpose, resourceType, selectedDestinationRoom, selectedResource, startTime]);
 
+    const loadReservationsFeed = async () => {
+        if (!canViewReservations) {
+            return;
+        }
+
+        setReservationsLoading(true);
+
+        try {
+            const response = await fetchApiJson<{ reservas?: ReservationFeedItem[] }>("/api/reservas", { cache: "no-store" });
+            setReservationsFeed(
+                (response.reservas ?? [])
+                    .filter((reservation) => (reservation.status ?? "").toLowerCase() !== "cancelada")
+                    .slice(0, 6),
+            );
+        } catch {
+            setReservationsFeed([]);
+        } finally {
+            setReservationsLoading(false);
+        }
+    };
+
+    const handleReturnReservation = async (reservationId: string) => {
+        setActionReservationId(reservationId);
+        setStatusMessage(null);
+
+        try {
+            const response = await fetchApiJson<{ message: string; reservationId: string }>(`/api/reservas/${reservationId}/return`, {
+                method: "PATCH",
+            });
+
+            setStatusMessage(response.message);
+            await loadReservationsFeed();
+        } catch (error) {
+            setStatusMessage(error instanceof Error ? error.message : "No se pudo devolver el elemento.");
+        } finally {
+            setActionReservationId(null);
+        }
+    };
+
+    const handleCloseReservation = async (reservationId: string) => {
+        setActionReservationId(reservationId);
+        setStatusMessage(null);
+
+        try {
+            const response = await fetchApiJson<{ message: string; reservationId: string }>(`/api/reservas/${reservationId}/close`, {
+                method: "PATCH",
+            });
+
+            setStatusMessage(response.message);
+            await loadReservationsFeed();
+        } catch (error) {
+            setStatusMessage(error instanceof Error ? error.message : "No se pudo cerrar la reserva.");
+        } finally {
+            setActionReservationId(null);
+        }
+    };
+
+    const handleCancelReservation = async (reservationId: string) => {
+        if (!confirm("¿Deseas cancelar esta solicitud antes de que sea aceptada?")) {
+            return;
+        }
+
+        setActionReservationId(reservationId);
+        setStatusMessage(null);
+
+        try {
+            const response = await fetchApiJson<{ message: string; reservationId: string }>(`/api/reservas/${reservationId}/cancel`, {
+                method: "PATCH",
+            });
+
+            setStatusMessage(response.message);
+            await loadReservationsFeed();
+        } catch (error) {
+            setStatusMessage(error instanceof Error ? error.message : "No se pudo cancelar la reserva.");
+        } finally {
+            setActionReservationId(null);
+        }
+    };
+
+    const handleReportReservation = async (reservationId: string) => {
+        setActionReservationId(reservationId);
+        setStatusMessage(null);
+
+        try {
+            const response = await fetchApiJson<{ message: string; reservationId: string }>(`/api/reservas/${reservationId}/report`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ reportReason: reportReasonById[reservationId] ?? "" }),
+            });
+
+            setStatusMessage(response.message);
+            setReportingReservationId(null);
+            setReportReasonById((current) => {
+                const next = { ...current };
+                delete next[reservationId];
+                return next;
+            });
+            await loadReservationsFeed();
+        } catch (error) {
+            setStatusMessage(error instanceof Error ? error.message : "No se pudo reportar la reserva.");
+        } finally {
+            setActionReservationId(null);
+        }
+    };
+
+    useEffect(() => {
+        void loadReservationsFeed();
+    }, [canViewReservations]);
+
     const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault();
 
-        if (!termsAccepted) {
-            setStatusMessage("Debes aceptar la responsabilidad para continuar.");
+        if (endTime <= startTime) {
+            setStatusMessage("La hora de fin debe ser posterior a la hora de inicio.");
             return;
         }
+
+        
 
         if (!selectedResourceId) {
             setStatusMessage("Debes seleccionar un recurso para continuar.");
@@ -302,7 +433,7 @@ export default function ReservasPage() {
                 requesterDocument: documentNumber.trim(),
                 requesterEmail: email.trim() || null,
                 requesterPhone: phone.trim() || null,
-                termsAccepted,
+                
                 destinationRoomId: resourceType === "equipment" ? selectedDestinationRoomId : null,
             };
 
@@ -313,6 +444,7 @@ export default function ReservasPage() {
             });
 
             setStatusMessage(`${response.message} ID: ${response.reservationId}`);
+            void loadReservationsFeed();
         } catch (error) {
             setStatusMessage(error instanceof Error ? error.message : "No se pudo registrar la reserva.");
         } finally {
@@ -742,29 +874,10 @@ export default function ReservasPage() {
                                 </div>
                             </section>
 
-                            <section className="rounded-2xl border border-slate-200 bg-[#f0f4f7] p-6">
-                                <div className="flex items-start gap-4">
-                                    <input
-                                        id="terms"
-                                        type="checkbox"
-                                        checked={termsAccepted}
-                                        onChange={(event) => setTermsAccepted(event.target.checked)}
-                                        className="mt-1 h-5 w-5 rounded border-slate-300 text-[#3a5f94] focus:ring-[#3a5f94]"
-                                    />
-                                    <div>
-                                        <label htmlFor="terms" className="cursor-pointer text-sm font-bold text-slate-900">
-                                            Términos & Acuerdo de Responsabilidad
-                                        </label>
-                                        <p className="mt-2 text-sm leading-6 text-slate-600">
-                                            Me comprometo a responsabilizarme del uso adecuado y la devolución de los recursos solicitados. Cualquier daño o pérdida podrá dar lugar a medidas administrativas.                    </p>
-                                    </div>
-                                </div>
-                            </section>
-
                             <div className="flex flex-col gap-3 pt-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4">
                                 <button
                                     type="submit"
-                                    disabled={isSubmitting}
+                                    disabled={isSubmitting || endTime <= startTime}
                                     className="w-full rounded-xl bg-[#3a5f94] px-8 py-3.5 text-sm font-bold text-white shadow-lg shadow-[#3a5f94]/15 transition hover:bg-[#2d5387] active:scale-[0.98] sm:w-auto"
                                 >
                                     {isSubmitting ? "Guardando..." : "Submit Request"}
@@ -784,7 +897,6 @@ export default function ReservasPage() {
                                         setDocumentNumber("");
                                         setEmail("");
                                         setPhone("");
-                                        setTermsAccepted(false);
                                         setStatusMessage(null);
                                     }}
                                     className="w-full rounded-xl px-6 py-3.5 text-sm font-bold text-slate-600 transition hover:text-[#9f403d] sm:w-auto"
@@ -800,6 +912,223 @@ export default function ReservasPage() {
 
             <aside className="w-full xl:w-80">
                 <div className="space-y-6 xl:sticky xl:top-28">
+
+                    <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                        <div className="flex items-center justify-between gap-3">
+                            <div>
+                                <p className="text-[9px] font-bold tracking-[0.24em] text-slate-500 uppercase">Reservas registradas</p>
+                                <h3 className="mt-1 text-lg font-black text-slate-900">Solicitudes recientes</h3>
+                            </div>
+                            <span className="rounded-full bg-[#e8eff3] px-3 py-1 text-[11px] font-semibold text-[#3a5f94]">
+                                {reservationsFeed.length}
+                            </span>
+                        </div>
+
+                        <div className="mt-4 space-y-3">
+                            {reservationsLoading ? (
+                                <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+                                    Cargando reservas...
+                                </div>
+                            ) : reservationsFeed.length > 0 ? (
+                                reservationsFeed.map((reservation) => {
+                                    const statusLower = reservation.status.toLowerCase();
+                                    const statusDisplay =
+                                        statusLower === "no_aceptado"
+                                            ? "Aún no Aceptado"
+                                            : statusLower === "confirmada"
+                                                ? "Confirmada"
+                                                : statusLower === "aprobada"
+                                                    ? "Aprobada"
+                                                    : statusLower === "rechazada"
+                                                        ? "Rechazada"
+                                                        : statusLower === "cancelada"
+                                                            ? "Cancelada"
+                                                            : statusLower === "devuelto"
+                                                                ? "Devuelto"
+                                                                : statusLower === "reportado"
+                                                                    ? "Reportado"
+                                                                : reservation.status;
+
+                                    const statusStyles =
+                                        statusLower === "confirmada"
+                                            ? "bg-emerald-50 text-emerald-700 border-emerald-100"
+                                            : statusLower === "aprobada"
+                                                ? "bg-emerald-50 text-emerald-700 border-emerald-100"
+                                                : statusLower === "no_aceptado"
+                                                    ? "bg-amber-50 text-amber-700 border-amber-100"
+                                                    : statusLower === "rechazada"
+                                                        ? "bg-rose-50 text-rose-700 border-rose-100"
+                                                        : statusLower === "cancelada"
+                                                            ? "bg-slate-100 text-slate-600 border-slate-200"
+                                                            : statusLower === "devuelto"
+                                                                ? "bg-cyan-50 text-cyan-700 border-cyan-100"
+                                                                : statusLower === "reportado"
+                                                                    ? "bg-rose-50 text-rose-700 border-rose-100"
+                                                                : "bg-amber-50 text-amber-700 border-amber-100";
+
+                                    return (
+                                        <article key={reservation.id} className="rounded-xl border border-slate-200 bg-[#f7f9fb] p-4">
+                                            <div className="flex items-start justify-between gap-3">
+                                                <div className="min-w-0">
+                                                    <p className="text-[10px] font-bold uppercase text-slate-500">
+                                                        {reservation.resourceType === "rooms" ? "Salón" : "Equipo"}
+                                                    </p>
+                                                    <p className="truncate text-sm font-black text-slate-900">{reservation.resourceLabel}</p>
+                                                </div>
+                                                <span className={`shrink-0 rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase ${statusStyles}`}>
+                                                    {statusDisplay}
+                                                </span>
+                                            </div>
+
+                                            <div className="mt-3 grid gap-2 text-xs text-slate-600">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="material-symbols-outlined text-[16px] text-[#3a5f94]">event</span>
+                                                    <span>{reservation.bookingDate}</span>
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                    <span className="material-symbols-outlined text-[16px] text-[#3a5f94]">schedule</span>
+                                                    <span>{formatDuration(reservation.startTime, reservation.endTime)}</span>
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                    <span className="material-symbols-outlined text-[16px] text-[#3a5f94]">person</span>
+                                                    <span className="truncate">{reservation.requesterName}</span>
+                                                </div>
+                                                {reservation.destinationRoomLabel ? (
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="material-symbols-outlined text-[16px] text-[#3a5f94]">place</span>
+                                                        <span className="truncate">{reservation.destinationRoomLabel}</span>
+                                                    </div>
+                                                ) : null}
+                                                {reservation.resourceOriginalRoomLabel ? (
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="material-symbols-outlined text-[16px] text-[#3a5f94]">history</span>
+                                                        <span className="truncate">Origen: {reservation.resourceOriginalRoomLabel}</span>
+                                                    </div>
+                                                ) : null}
+                                            </div>
+
+                                            <div className="mt-4 flex flex-col gap-2">
+                                                {statusLower === "no_aceptado" ? (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => void handleCancelReservation(reservation.id)}
+                                                        disabled={actionReservationId === reservation.id}
+                                                        className="inline-flex w-full items-center justify-center rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm font-bold text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                                    >
+                                                        {actionReservationId === reservation.id ? "Cancelando..." : "Cancelar reserva"}
+                                                    </button>
+                                                ) : null}
+
+                                                {statusLower === "confirmada" && reservation.resourceType === "equipment" ? (
+                                                    <div className="flex flex-col gap-2 sm:flex-row">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => void handleReturnReservation(reservation.id)}
+                                                            disabled={actionReservationId === reservation.id}
+                                                            className="inline-flex w-full items-center justify-center rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                                        >
+                                                            {actionReservationId === reservation.id ? "Procesando..." : "Producto devuelto"}
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setReportingReservationId((current) => (current === reservation.id ? null : reservation.id))}
+                                                            disabled={actionReservationId === reservation.id}
+                                                            className="inline-flex w-full items-center justify-center rounded-xl bg-[#9f403d] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#8a3631] disabled:cursor-not-allowed disabled:opacity-60"
+                                                        >
+                                                            Reportar préstamo
+                                                        </button>
+                                                    </div>
+                                                ) : null}
+
+                                                {statusLower === "confirmada" && reservation.resourceType === "rooms" ? (
+                                                    <div className="flex flex-col gap-2">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => void handleCloseReservation(reservation.id)}
+                                                            disabled={actionReservationId === reservation.id}
+                                                            className="inline-flex w-full items-center justify-center rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                                        >
+                                                            {actionReservationId === reservation.id ? "Procesando..." : "Cerrar reserva"}
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setReportingReservationId((current) => (current === reservation.id ? null : reservation.id))}
+                                                            disabled={actionReservationId === reservation.id}
+                                                            className="inline-flex w-full items-center justify-center rounded-xl bg-[#9f403d] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#8a3631] disabled:cursor-not-allowed disabled:opacity-60"
+                                                        >
+                                                            Reportar préstamo
+                                                        </button>
+                                                    </div>
+                                                ) : null}
+
+                                                {reportingReservationId === reservation.id ? (
+                                                    <div className="space-y-2 rounded-xl border border-rose-200 bg-rose-50 p-3">
+                                                        <label className="block text-[11px] font-bold uppercase tracking-wide text-rose-700">
+                                                            ¿Qué sucedió mal?
+                                                        </label>
+                                                        <textarea
+                                                            value={reportReasonById[reservation.id] ?? ""}
+                                                            onChange={(event) =>
+                                                                setReportReasonById((current) => ({
+                                                                    ...current,
+                                                                    [reservation.id]: event.target.value,
+                                                                }))
+                                                            }
+                                                            rows={3}
+                                                            placeholder="Describe el daño, incumplimiento o problema detectado"
+                                                            className="w-full rounded-lg border border-rose-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none ring-0 placeholder:text-slate-400 focus:border-rose-400"
+                                                        />
+                                                        <div className="flex gap-2">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => void handleReportReservation(reservation.id)}
+                                                                disabled={actionReservationId === reservation.id || !(reportReasonById[reservation.id] ?? "").trim()}
+                                                                className="inline-flex items-center justify-center rounded-lg bg-[#9f403d] px-4 py-2 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                                                            >
+                                                                {actionReservationId === reservation.id ? "Reportando..." : "Enviar reporte"}
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => {
+                                                                    setReportingReservationId(null);
+                                                                    setReportReasonById((current) => {
+                                                                        const next = { ...current };
+                                                                        delete next[reservation.id];
+                                                                        return next;
+                                                                    });
+                                                                }}
+                                                                className="inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-600"
+                                                            >
+                                                                Cancelar
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                ) : null}
+
+                                                {reservation.resourceType === "equipment" && statusLower !== "devuelto" && statusLower !== "confirmada" && statusLower !== "no_aceptado" ? (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => void handleReturnReservation(reservation.id)}
+                                                        disabled={actionReservationId === reservation.id}
+                                                        className="inline-flex w-full items-center justify-center rounded-xl bg-[#3a5f94] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#2d5387] disabled:cursor-not-allowed disabled:opacity-60"
+                                                    >
+                                                        {actionReservationId === reservation.id ? "Procesando..." : "Marcar como devuelto"}
+                                                    </button>
+                                                ) : null}
+                                            </div>
+                                        </article>
+                                    );
+                                })
+                            ) : (
+                                <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+                                    Todavía no hay solicitudes registradas.
+                                </div>
+                            )}
+                        </div>
+                    </section>
+
+
+
                     <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
                         <div className="mb-6">
                             <p className="text-[9px] font-bold tracking-[0.24em] text-slate-500 uppercase">Request summary</p>
@@ -889,6 +1218,8 @@ export default function ReservasPage() {
                             </div>
                         </div>
                     </section>
+
+                    
                 </div>
             </aside>
         </div>

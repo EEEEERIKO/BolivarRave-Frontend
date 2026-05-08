@@ -27,6 +27,7 @@ type InventoryItem = {
   status: "Disponible" | "Fijo";
   defective: boolean;
   motivo: string | null;
+  price?: number;
   order: number;
 };
 
@@ -43,6 +44,7 @@ type InventoryItemFormState = {
   status: "Disponible" | "Fijo";
   defective: boolean;
   motivo: string;
+  price: string;
 };
 
 type InventoryModalState =
@@ -125,6 +127,7 @@ export default function InventoryPage() {
     status: "Disponible",
     defective: false,
     motivo: "",
+    price: "",
   });
   const [defectiveReason, setDefectiveReason] = useState<string>("");
   const [modalError, setModalError] = useState<string | null>(null);
@@ -350,6 +353,7 @@ export default function InventoryPage() {
       status: mode === "edit" && item ? item.status : "Disponible",
       defective: false,
       motivo: "",
+      price: mode === "edit" && item && typeof item.price === "number" ? String(item.price) : "",
     });
     setActiveModal({ kind: "item", mode, itemId: item?.id });
   };
@@ -486,6 +490,7 @@ export default function InventoryPage() {
           status: itemForm.status,
           defective: itemForm.defective,
           motivo: itemForm.defective ? itemForm.motivo.trim() || null : null,
+          ...(itemForm.price && itemForm.price.trim() !== "" ? { price: Number(itemForm.price) } : {}),
         };
 
         if (activeModal.mode === "create") {
@@ -551,6 +556,7 @@ export default function InventoryPage() {
           status: targetItem.status,
           defective: true,
           motivo: reason,
+          ...(typeof targetItem.price === "number" ? { price: targetItem.price } : {}),
         };
 
         try {
@@ -871,6 +877,9 @@ export default function InventoryPage() {
                             { "Defectuoso"}
                           </div>
                         ) : null}
+                        <div className="mt-1 text-sm text-[#566166]">
+                          {typeof item.price === "number" ? `Precio: $${item.price.toFixed(2)}` : null}
+                        </div>
                       </div>
                     </div>
 
@@ -1046,6 +1055,21 @@ export default function InventoryPage() {
                           </option>
                         ))}
                       </select>
+                    </div>
+                    <div>
+                      <label className="mb-2 block text-xs font-bold tracking-widest text-[#566166] uppercase" htmlFor="inventory-item-price">
+                        Precio
+                      </label>
+                      <input
+                        id="inventory-item-price"
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm text-[#2a3439] outline-none transition focus:border-[#3a5f94]"
+                        onChange={(event) => setItemForm((current) => ({ ...current, price: event.target.value }))}
+                        placeholder="0.00"
+                        value={itemForm.price}
+                      />
                     </div>
                     <div>
                       <label className="mb-2 block text-xs font-bold tracking-widest text-[#566166] uppercase" htmlFor="inventory-item-status">
