@@ -1,10 +1,9 @@
 "use client";
 
 import { useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
-import { fetchApiJson } from "@/lib/api-client";
+import { Suspense, useEffect, useState } from "react";
 
-export default function ConfirmReservationPage() {
+function ConfirmReservationContent() {
   const searchParams = useSearchParams();
   const reservationId = searchParams.get("reservationId");
   const token = searchParams.get("token");
@@ -130,5 +129,31 @@ export default function ConfirmReservationPage() {
         )}
       </div>
     </div>
+  );
+}
+
+function ConfirmReservationFallback() {
+  return (
+    <div className="mx-auto flex w-full max-w-4xl flex-1 flex-col items-center justify-center px-4 py-8 sm:px-6 sm:py-12 lg:px-8">
+      <div className="w-full space-y-6 text-center">
+        <div className="space-y-4">
+          <div className="flex justify-center">
+            <div className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-[#e8eff3] animate-pulse">
+              <span className="material-symbols-outlined text-[#3a5f94] animate-spin">hourglass_top</span>
+            </div>
+          </div>
+          <h1 className="text-2xl font-black text-[#2a3439]">Confirmando tu reserva...</h1>
+          <p className="text-sm text-slate-600">Por favor espera mientras procesamos tu solicitud.</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function ConfirmReservationPage() {
+  return (
+    <Suspense fallback={<ConfirmReservationFallback />}>
+      <ConfirmReservationContent />
+    </Suspense>
   );
 }
