@@ -23,6 +23,22 @@ const ROOM_RESOURCES: BookingResource[] = [];
 // Inventory integration: load groups and items from backend and map to BookingResource
 type InventoryGroup = { id: string; name: string; icon?: string; order?: number; itemCount?: number };
 type InventoryItem = { id: string; groupId: string; groupName: string; groupIcon?: string; name: string; code: string; room: string; status: string; defective: boolean; motivo?: string | null };
+type ReservationFeedItem = {
+    id: string;
+    resourceType: ResourceType;
+    resourceLabel: string;
+    resourceContext: string | null;
+    resourceOriginalRoomLabel: string | null;
+    bookingDate: string;
+    startTime: string;
+    endTime: string;
+    requesterName: string;
+    requesterDocument: string;
+    status: string;
+    destinationRoomLabel: string | null;
+    returnedAt: string | null;
+    createdAt: string;
+};
 
 // We'll populate items dynamically when user selects a group.
 
@@ -73,7 +89,7 @@ function resourceLabel(resource: BookingResource) {
 }
 
 function resourceTypeLabel(type: ResourceType) {
-    return type === "rooms" ? "Salones" : "Equipos";
+    return type === "rooms" ? "Clases de Sábado" : "Equipos";
 }
 
 export default function ReservasPage() {
@@ -88,14 +104,19 @@ export default function ReservasPage() {
     const [documentNumber, setDocumentNumber] = useState("");
     const [email, setEmail] = useState("");
     const [phone, setPhone] = useState("");
-    const [termsAccepted, setTermsAccepted] = useState(false);
     const [statusMessage, setStatusMessage] = useState<string | null>(null);
+    const [isSubmitting, setIsSubmitting] = useState(false);
     const [selectedCardId, setSelectedCardId] = useState<string | null>(selectedResourceId);
     const [roomsCatalog, setRoomsCatalog] = useState<BookingResource[]>([]);
     const [selectedDestinationRoomId, setSelectedDestinationRoomId] = useState<string>("");
     const [inventoryGroups, setInventoryGroups] = useState<InventoryGroup[]>([]);
     const [selectedGroupId, setSelectedGroupId] = useState<string>("");
     const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
+    const [reservationsFeed, setReservationsFeed] = useState<ReservationFeedItem[]>([]);
+    const [reservationsLoading, setReservationsLoading] = useState(false);
+    const [actionReservationId, setActionReservationId] = useState<string | null>(null);
+    const [reportingReservationId, setReportingReservationId] = useState<string | null>(null);
+    const [reportReasonById, setReportReasonById] = useState<Record<string, string>>({});
 
     const availableInventoryItems = inventoryItems.filter((it) => (it.status ?? "").toLowerCase() === "disponible");
 
@@ -240,6 +261,21 @@ export default function ReservasPage() {
         [selectedResourceId, visibleResources],
     );
 
+    const selectedRoomResource = useMemo(
+        () => roomsCatalog.find((room) => room.id === selectedResourceId) ?? null,
+        [roomsCatalog, selectedResourceId],
+    );
+
+    const selectedEquipmentResource = useMemo(
+        () => inventoryItems.find((item) => item.id === selectedResourceId) ?? null,
+        [inventoryItems, selectedResourceId],
+    );
+
+    const selectedDestinationRoom = useMemo(
+        () => roomsCatalog.find((room) => room.id === selectedDestinationRoomId) ?? null,
+        [roomsCatalog, selectedDestinationRoomId],
+    );
+
     const requestSummary = useMemo(() => {
         return {
             resource: selectedResource ? resourceLabel(selectedResource) : "Sin recurso seleccionado",
@@ -249,18 +285,171 @@ export default function ReservasPage() {
             document: documentNumber.trim() || "Sin documento",
             contact: email.trim() || phone.trim() ? [email.trim(), phone.trim()].filter(Boolean).join(" · ") : "Sin contacto",
             purpose: purpose.trim() || "Sin propósito definido",
+            destination: resourceType === "equipment" ? selectedDestinationRoom?.label ?? "Sin salón de destino" : null,
         };
-    }, [bookingDate, documentNumber, endTime, email, fullName, phone, purpose, selectedResource, startTime]);
+    }, [bookingDate, documentNumber, endTime, email, fullName, phone, purpose, resourceType, selectedDestinationRoom, selectedResource, startTime]);
 
-    const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
-        event.preventDefault();
-
-        if (!termsAccepted) {
-            setStatusMessage("Debes aceptar la responsabilidad para continuar.");
+    const loadReservationsFeed = async () => {
+        if (!canViewReservations) {
             return;
         }
 
-        setStatusMessage("Solicitud preparada. Si quieres, luego la conecto al backend de reservas.");
+        setReservationsLoading(true);
+
+        try {
+            const response = await fetchApiJson<{ reservas?: ReservationFeedItem[] }>("/api/reservas", { cache: "no-store" });
+            setReservationsFeed(
+                (response.reservas ?? [])
+                    .filter((reservation) => (reservation.status ?? "").toLowerCase() !== "cancelada")
+                    .slice(0, 6),
+            );
+        } catch {
+            setReservationsFeed([]);
+        } finally {
+            setReservationsLoading(false);
+        }
+    };
+
+    const handleReturnReservation = async (reservationId: string) => {
+        setActionReservationId(reservationId);
+        setStatusMessage(null);
+
+        try {
+            const response = await fetchApiJson<{ message: string; reservationId: string }>(`/api/reservas/${reservationId}/return`, {
+                method: "PATCH",
+            });
+
+            setStatusMessage(response.message);
+            await loadReservationsFeed();
+        } catch (error) {
+            setStatusMessage(error instanceof Error ? error.message : "No se pudo devolver el elemento.");
+        } finally {
+            setActionReservationId(null);
+        }
+    };
+
+    const handleCloseReservation = async (reservationId: string) => {
+        setActionReservationId(reservationId);
+        setStatusMessage(null);
+
+        try {
+            const response = await fetchApiJson<{ message: string; reservationId: string }>(`/api/reservas/${reservationId}/close`, {
+                method: "PATCH",
+            });
+
+            setStatusMessage(response.message);
+            await loadReservationsFeed();
+        } catch (error) {
+            setStatusMessage(error instanceof Error ? error.message : "No se pudo cerrar la reserva.");
+        } finally {
+            setActionReservationId(null);
+        }
+    };
+
+    const handleCancelReservation = async (reservationId: string) => {
+        if (!confirm("¿Deseas cancelar esta solicitud antes de que sea aceptada?")) {
+            return;
+        }
+
+        setActionReservationId(reservationId);
+        setStatusMessage(null);
+
+        try {
+            const response = await fetchApiJson<{ message: string; reservationId: string }>(`/api/reservas/${reservationId}/cancel`, {
+                method: "PATCH",
+            });
+
+            setStatusMessage(response.message);
+            await loadReservationsFeed();
+        } catch (error) {
+            setStatusMessage(error instanceof Error ? error.message : "No se pudo cancelar la reserva.");
+        } finally {
+            setActionReservationId(null);
+        }
+    };
+
+    const handleReportReservation = async (reservationId: string) => {
+        setActionReservationId(reservationId);
+        setStatusMessage(null);
+
+        try {
+            const response = await fetchApiJson<{ message: string; reservationId: string }>(`/api/reservas/${reservationId}/report`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ reportReason: reportReasonById[reservationId] ?? "" }),
+            });
+
+            setStatusMessage(response.message);
+            setReportingReservationId(null);
+            setReportReasonById((current) => {
+                const next = { ...current };
+                delete next[reservationId];
+                return next;
+            });
+            await loadReservationsFeed();
+        } catch (error) {
+            setStatusMessage(error instanceof Error ? error.message : "No se pudo reportar la reserva.");
+        } finally {
+            setActionReservationId(null);
+        }
+    };
+
+    useEffect(() => {
+        void loadReservationsFeed();
+    }, [canViewReservations]);
+
+    const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+        event.preventDefault();
+
+        if (endTime <= startTime) {
+            setStatusMessage("La hora de fin debe ser posterior a la hora de inicio.");
+            return;
+        }
+
+        
+
+        if (!selectedResourceId) {
+            setStatusMessage("Debes seleccionar un recurso para continuar.");
+            return;
+        }
+
+        if (resourceType === "equipment" && !selectedDestinationRoomId) {
+            setStatusMessage("Debes seleccionar el salón de destino para el equipo.");
+            return;
+        }
+
+        setIsSubmitting(true);
+        setStatusMessage(null);
+
+        try {
+            const payload = {
+                resourceType,
+                resourceId: selectedResourceId,
+                bookingDate,
+                startTime,
+                endTime,
+                purpose: purpose.trim(),
+                requesterName: fullName.trim(),
+                requesterDocument: documentNumber.trim(),
+                requesterEmail: email.trim() || null,
+                requesterPhone: phone.trim() || null,
+                
+                destinationRoomId: resourceType === "equipment" ? selectedDestinationRoomId : null,
+            };
+
+            const response = await fetchApiJson<{ message: string; reservationId: string }>("/api/reservas", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload),
+            });
+
+            setStatusMessage(`${response.message} ID: ${response.reservationId}`);
+            void loadReservationsFeed();
+        } catch (error) {
+            setStatusMessage(error instanceof Error ? error.message : "No se pudo registrar la reserva.");
+        } finally {
+            setIsSubmitting(false);
+        }
     };
 
     if (!canViewReservations) {
@@ -343,10 +532,9 @@ export default function ReservasPage() {
                                                         setSelectedResourceId(resource.id);
                                                         setSelectedCardId(resource.id);
                                                     }}
-                                                    className={`flex w-full items-center justify-between gap-3 rounded-md px-3 py-2 text-left transition ${isSelected
-                                                            ? "ring-2 ring-[#3a5f94]/20 bg-[#f7f9fb]"
-                                                            : "hover:bg-slate-50"
-                                                        }`}
+                                                    className={`flex w-full items-center justify-between gap-3 rounded-md px-3 py-2 text-left transition ${
+                                                        isSelected ? "ring-2 ring-[#3a5f94]/20 bg-[#f7f9fb]" : "hover:bg-slate-50"
+                                                    }`}
                                                 >
                                                     <div className="min-w-0 flex-1">
                                                         <div className="text-[10px] font-bold uppercase text-[#3a5f94]">{resource.floor}</div>
@@ -373,7 +561,7 @@ export default function ReservasPage() {
                                                 >
                                                     {inventoryGroups.map((g) => (
                                                         <option key={g.id} value={g.id}>
-                                                            {g.name} 
+                                                            {g.name}
                                                         </option>
                                                     ))}
                                                 </select>
@@ -427,34 +615,166 @@ export default function ReservasPage() {
                                     </div>
 
                                     <label className="block">
-                                        <span className="mb-2 block text-xs font-bold text-slate-500 uppercase">Date</span>
+                                        <span className="mb-2 block text-xs font-bold text-slate-500 uppercase">Fecha</span>
                                         <input
                                             type="date"
+                                            min={todayKey}
                                             value={bookingDate}
                                             onChange={(event) => setBookingDate(event.target.value)}
                                             className="w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 shadow-sm outline-none transition focus:border-[#3a5f94]"
                                         />
                                     </label>
 
-                                    <div className="grid gap-4 sm:grid-cols-2">
-                                        <label className="block">
-                                            <span className="mb-2 block text-xs font-bold text-slate-500 uppercase">Start time</span>
-                                            <input
-                                                type="time"
-                                                value={startTime}
-                                                onChange={(event) => setStartTime(event.target.value)}
-                                                className="w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 shadow-sm outline-none transition focus:border-[#3a5f94]"
-                                            />
-                                        </label>
-                                        <label className="block">
-                                            <span className="mb-2 block text-xs font-bold text-slate-500 uppercase">End time</span>
-                                            <input
-                                                type="time"
-                                                value={endTime}
-                                                onChange={(event) => setEndTime(event.target.value)}
-                                                className="w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 shadow-sm outline-none transition focus:border-[#3a5f94]"
-                                            />
-                                        </label>
+                                    <div className="space-y-4">
+                                        {/* Time Range Picker */}
+                                        <div className="rounded-xl border border-slate-200 bg-white p-2 shadow-sm">
+                                            <div className="grid gap-2 sm:grid-cols-2">
+                                                {/* Start Time */}
+                                                <div className="space-y-1">
+                                                    <label className="text-xs font-bold text-slate-500 uppercase">Inicio</label>
+                                                    <div className="flex items-center gap-1.5">
+                                                        <div className="rounded-lg border border-slate-200 bg-slate-50 px-1 py-1 flex-1 min-w-0">
+                                                            <div className="flex items-center gap-0.5 justify-center">
+                                                                <input
+                                                                    type="number"
+                                                                    min="6"
+                                                                    max="22"
+                                                                    value={startTime.split(":")[0]}
+                                                                    onChange={(e) => {
+                                                                        const h = Math.max(6, Math.min(22, parseInt(e.target.value) || 6));
+                                                                        const m = startTime.split(":")[1] || "00";
+                                                                        setStartTime(`${String(h).padStart(2, "0")}:${m}`);
+                                                                    }}
+                                                                    className="w-6 bg-transparent text-center text-xs font-bold text-slate-900 outline-none"
+                                                                />
+                                                                <span className="text-xs font-bold text-slate-400">:</span>
+                                                                <input
+                                                                    type="number"
+                                                                    min="0"
+                                                                    max="59"
+                                                                    step="15"
+                                                                    value={startTime.split(":")[1] || "00"}
+                                                                    onChange={(e) => {
+                                                                        const h = startTime.split(":")[0] || "06";
+                                                                        const m = Math.max(0, Math.min(59, parseInt(e.target.value) || 0));
+                                                                        setStartTime(`${h}:${String(m).padStart(2, "0")}`);
+                                                                    }}
+                                                                    className="w-6 bg-transparent text-center text-xs font-bold text-slate-900 outline-none"
+                                                                />
+                                                            </div>
+                                                        </div>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                                const [h, m] = startTime.split(":").map(Number);
+                                                                let newH = h, newM = m + 15;
+                                                                if (newM >= 60) {
+                                                                    newM -= 60;
+                                                                    newH += 1;
+                                                                }
+                                                                if (newH >= 6 && newH <= 22) {
+                                                                    setStartTime(`${String(newH).padStart(2, "0")}:${String(newM).padStart(2, "0")}`);
+                                                                }
+                                                            }}
+                                                            className="flex h-4 w-4 items-center justify-center rounded bg-[#3a5f94] text-white hover:bg-[#2d5387] active:scale-95 flex-shrink-0"
+                                                        >
+                                                            <span className="material-symbols-outlined" style={{ fontSize: "10px" }}>add</span>
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                                const [h, m] = startTime.split(":").map(Number);
+                                                                let newH = h, newM = m - 15;
+                                                                if (newM < 0) {
+                                                                    newM += 60;
+                                                                    newH -= 1;
+                                                                }
+                                                                if (newH >= 6 && newH <= 22) {
+                                                                    setStartTime(`${String(newH).padStart(2, "0")}:${String(newM).padStart(2, "0")}`);
+                                                                }
+                                                            }}
+                                                            className="flex h-4 w-4 items-center justify-center rounded bg-slate-200 text-slate-600 hover:bg-slate-300 active:scale-95 flex-shrink-0"
+                                                        >
+                                                            <span className="material-symbols-outlined" style={{ fontSize: "10px" }}>remove</span>
+                                                        </button>
+                                                    </div>
+                                                </div>
+
+                                                {/* End Time */}
+                                                <div className="space-y-1">
+                                                    <label className="text-xs font-bold text-slate-500 uppercase">Fin</label>
+                                                    <div className="flex items-center gap-1.5">
+                                                        <div className="rounded-lg border border-slate-200 bg-slate-50 px-1 py-1 flex-1 min-w-0">
+                                                            <div className="flex items-center gap-0.5 justify-center">
+                                                                <input
+                                                                    type="number"
+                                                                    min="6"
+                                                                    max="22"
+                                                                    value={endTime.split(":")[0]}
+                                                                    onChange={(e) => {
+                                                                        const h = Math.max(6, Math.min(22, parseInt(e.target.value) || 6));
+                                                                        const m = endTime.split(":")[1] || "00";
+                                                                        setEndTime(`${String(h).padStart(2, "0")}:${m}`);
+                                                                    }}
+                                                                    className="w-6 bg-transparent text-center text-xs font-bold text-slate-900 outline-none"
+                                                                />
+                                                                <span className="text-xs font-bold text-slate-400">:</span>
+                                                                <input
+                                                                    type="number"
+                                                                    min="0"
+                                                                    max="59"
+                                                                    step="15"
+                                                                    value={endTime.split(":")[1] || "00"}
+                                                                    onChange={(e) => {
+                                                                        const h = endTime.split(":")[0] || "06";
+                                                                        const m = Math.max(0, Math.min(59, parseInt(e.target.value) || 0));
+                                                                        setEndTime(`${h}:${String(m).padStart(2, "0")}`);
+                                                                    }}
+                                                                    className="w-6 bg-transparent text-center text-xs font-bold text-slate-900 outline-none"
+                                                                />
+                                                            </div>
+                                                        </div>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                                const [h, m] = endTime.split(":").map(Number);
+                                                                let newH = h, newM = m + 15;
+                                                                if (newM >= 60) {
+                                                                    newM -= 60;
+                                                                    newH += 1;
+                                                                }
+                                                                if (newH >= 6 && newH <= 22) {
+                                                                    setEndTime(`${String(newH).padStart(2, "0")}:${String(newM).padStart(2, "0")}`);
+                                                                }
+                                                            }}
+                                                            className="flex h-4 w-4 items-center justify-center rounded bg-[#3a5f94] text-white hover:bg-[#2d5387] active:scale-95 flex-shrink-0"
+                                                        >
+                                                            <span className="material-symbols-outlined" style={{ fontSize: "10px" }}>add</span>
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                                const [h, m] = endTime.split(":").map(Number);
+                                                                let newH = h, newM = m - 15;
+                                                                if (newM < 0) {
+                                                                    newM += 60;
+                                                                    newH -= 1;
+                                                                }
+                                                                if (newH >= 6 && newH <= 22) {
+                                                                    setEndTime(`${String(newH).padStart(2, "0")}:${String(newM).padStart(2, "0")}`);
+                                                                }
+                                                            }}
+                                                            className="flex h-4 w-4 items-center justify-center rounded bg-slate-200 text-slate-600 hover:bg-slate-300 active:scale-95 flex-shrink-0"
+                                                        >
+                                                            <span className="material-symbols-outlined" style={{ fontSize: "10px" }}>remove</span>
+                                                        </button>
+                                                    </div>
+                                                    
+                                                </div>
+                                            </div>
+
+                                            
+                                        </div>
                                     </div>
                                 </div>
 
@@ -517,7 +837,7 @@ export default function ReservasPage() {
                                             type="text"
                                             value={fullName}
                                             onChange={(event) => setFullName(event.target.value)}
-                                            placeholder="Johnathan Doe"
+                                            placeholder="Erik Valencia Cardona"
                                             className="w-full rounded-xl border border-slate-200 bg-[#f7f9fb] p-3 text-sm text-slate-700 shadow-sm outline-none transition focus:border-[#3a5f94]"
                                         />
                                     </label>
@@ -527,7 +847,7 @@ export default function ReservasPage() {
                                             type="text"
                                             value={documentNumber}
                                             onChange={(event) => setDocumentNumber(event.target.value)}
-                                            placeholder="U-2938475"
+                                            placeholder="12938475"
                                             className="w-full rounded-xl border border-slate-200 bg-[#f7f9fb] p-3 text-sm text-slate-700 shadow-sm outline-none transition focus:border-[#3a5f94]"
                                         />
                                     </label>
@@ -537,7 +857,7 @@ export default function ReservasPage() {
                                             type="email"
                                             value={email}
                                             onChange={(event) => setEmail(event.target.value)}
-                                            placeholder="j.doe@institution.edu"
+                                            placeholder="erik@unac.edu.co"
                                             className="w-full rounded-xl border border-slate-200 bg-[#f7f9fb] p-3 text-sm text-slate-700 shadow-sm outline-none transition focus:border-[#3a5f94]"
                                         />
                                     </label>
@@ -554,31 +874,13 @@ export default function ReservasPage() {
                                 </div>
                             </section>
 
-                            <section className="rounded-2xl border border-slate-200 bg-[#f0f4f7] p-6">
-                                <div className="flex items-start gap-4">
-                                    <input
-                                        id="terms"
-                                        type="checkbox"
-                                        checked={termsAccepted}
-                                        onChange={(event) => setTermsAccepted(event.target.checked)}
-                                        className="mt-1 h-5 w-5 rounded border-slate-300 text-[#3a5f94] focus:ring-[#3a5f94]"
-                                    />
-                                    <div>
-                                        <label htmlFor="terms" className="cursor-pointer text-sm font-bold text-slate-900">
-                                            Términos & Acuerdo de Responsabilidad
-                                        </label>
-                                        <p className="mt-2 text-sm leading-6 text-slate-600">
-                                            Me comprometo a responsabilizarme del uso adecuado y la devolución de los recursos solicitados. Cualquier daño o pérdida podrá dar lugar a medidas administrativas.                    </p>
-                                    </div>
-                                </div>
-                            </section>
-
                             <div className="flex flex-col gap-3 pt-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4">
                                 <button
                                     type="submit"
+                                    disabled={isSubmitting || endTime <= startTime}
                                     className="w-full rounded-xl bg-[#3a5f94] px-8 py-3.5 text-sm font-bold text-white shadow-lg shadow-[#3a5f94]/15 transition hover:bg-[#2d5387] active:scale-[0.98] sm:w-auto"
                                 >
-                                    Submit Request
+                                    {isSubmitting ? "Guardando..." : "Submit Request"}
                                 </button>
                                 <button
                                     type="button"
@@ -595,7 +897,6 @@ export default function ReservasPage() {
                                         setDocumentNumber("");
                                         setEmail("");
                                         setPhone("");
-                                        setTermsAccepted(false);
                                         setStatusMessage(null);
                                     }}
                                     className="w-full rounded-xl px-6 py-3.5 text-sm font-bold text-slate-600 transition hover:text-[#9f403d] sm:w-auto"
@@ -611,6 +912,223 @@ export default function ReservasPage() {
 
             <aside className="w-full xl:w-80">
                 <div className="space-y-6 xl:sticky xl:top-28">
+
+                    <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                        <div className="flex items-center justify-between gap-3">
+                            <div>
+                                <p className="text-[9px] font-bold tracking-[0.24em] text-slate-500 uppercase">Reservas registradas</p>
+                                <h3 className="mt-1 text-lg font-black text-slate-900">Solicitudes recientes</h3>
+                            </div>
+                            <span className="rounded-full bg-[#e8eff3] px-3 py-1 text-[11px] font-semibold text-[#3a5f94]">
+                                {reservationsFeed.length}
+                            </span>
+                        </div>
+
+                        <div className="mt-4 space-y-3">
+                            {reservationsLoading ? (
+                                <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+                                    Cargando reservas...
+                                </div>
+                            ) : reservationsFeed.length > 0 ? (
+                                reservationsFeed.map((reservation) => {
+                                    const statusLower = reservation.status.toLowerCase();
+                                    const statusDisplay =
+                                        statusLower === "no_aceptado"
+                                            ? "Aún no Aceptado"
+                                            : statusLower === "confirmada"
+                                                ? "Confirmada"
+                                                : statusLower === "aprobada"
+                                                    ? "Aprobada"
+                                                    : statusLower === "rechazada"
+                                                        ? "Rechazada"
+                                                        : statusLower === "cancelada"
+                                                            ? "Cancelada"
+                                                            : statusLower === "devuelto"
+                                                                ? "Devuelto"
+                                                                : statusLower === "reportado"
+                                                                    ? "Reportado"
+                                                                : reservation.status;
+
+                                    const statusStyles =
+                                        statusLower === "confirmada"
+                                            ? "bg-emerald-50 text-emerald-700 border-emerald-100"
+                                            : statusLower === "aprobada"
+                                                ? "bg-emerald-50 text-emerald-700 border-emerald-100"
+                                                : statusLower === "no_aceptado"
+                                                    ? "bg-amber-50 text-amber-700 border-amber-100"
+                                                    : statusLower === "rechazada"
+                                                        ? "bg-rose-50 text-rose-700 border-rose-100"
+                                                        : statusLower === "cancelada"
+                                                            ? "bg-slate-100 text-slate-600 border-slate-200"
+                                                            : statusLower === "devuelto"
+                                                                ? "bg-cyan-50 text-cyan-700 border-cyan-100"
+                                                                : statusLower === "reportado"
+                                                                    ? "bg-rose-50 text-rose-700 border-rose-100"
+                                                                : "bg-amber-50 text-amber-700 border-amber-100";
+
+                                    return (
+                                        <article key={reservation.id} className="rounded-xl border border-slate-200 bg-[#f7f9fb] p-4">
+                                            <div className="flex items-start justify-between gap-3">
+                                                <div className="min-w-0">
+                                                    <p className="text-[10px] font-bold uppercase text-slate-500">
+                                                        {reservation.resourceType === "rooms" ? "Salón" : "Equipo"}
+                                                    </p>
+                                                    <p className="truncate text-sm font-black text-slate-900">{reservation.resourceLabel}</p>
+                                                </div>
+                                                <span className={`shrink-0 rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase ${statusStyles}`}>
+                                                    {statusDisplay}
+                                                </span>
+                                            </div>
+
+                                            <div className="mt-3 grid gap-2 text-xs text-slate-600">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="material-symbols-outlined text-[16px] text-[#3a5f94]">event</span>
+                                                    <span>{reservation.bookingDate}</span>
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                    <span className="material-symbols-outlined text-[16px] text-[#3a5f94]">schedule</span>
+                                                    <span>{formatDuration(reservation.startTime, reservation.endTime)}</span>
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                    <span className="material-symbols-outlined text-[16px] text-[#3a5f94]">person</span>
+                                                    <span className="truncate">{reservation.requesterName}</span>
+                                                </div>
+                                                {reservation.destinationRoomLabel ? (
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="material-symbols-outlined text-[16px] text-[#3a5f94]">place</span>
+                                                        <span className="truncate">{reservation.destinationRoomLabel}</span>
+                                                    </div>
+                                                ) : null}
+                                                {reservation.resourceOriginalRoomLabel ? (
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="material-symbols-outlined text-[16px] text-[#3a5f94]">history</span>
+                                                        <span className="truncate">Origen: {reservation.resourceOriginalRoomLabel}</span>
+                                                    </div>
+                                                ) : null}
+                                            </div>
+
+                                            <div className="mt-4 flex flex-col gap-2">
+                                                {statusLower === "no_aceptado" ? (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => void handleCancelReservation(reservation.id)}
+                                                        disabled={actionReservationId === reservation.id}
+                                                        className="inline-flex w-full items-center justify-center rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm font-bold text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                                    >
+                                                        {actionReservationId === reservation.id ? "Cancelando..." : "Cancelar reserva"}
+                                                    </button>
+                                                ) : null}
+
+                                                {statusLower === "confirmada" && reservation.resourceType === "equipment" ? (
+                                                    <div className="flex flex-col gap-2 sm:flex-row">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => void handleReturnReservation(reservation.id)}
+                                                            disabled={actionReservationId === reservation.id}
+                                                            className="inline-flex w-full items-center justify-center rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                                        >
+                                                            {actionReservationId === reservation.id ? "Procesando..." : "Producto devuelto"}
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setReportingReservationId((current) => (current === reservation.id ? null : reservation.id))}
+                                                            disabled={actionReservationId === reservation.id}
+                                                            className="inline-flex w-full items-center justify-center rounded-xl bg-[#9f403d] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#8a3631] disabled:cursor-not-allowed disabled:opacity-60"
+                                                        >
+                                                            Reportar préstamo
+                                                        </button>
+                                                    </div>
+                                                ) : null}
+
+                                                {statusLower === "confirmada" && reservation.resourceType === "rooms" ? (
+                                                    <div className="flex flex-col gap-2">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => void handleCloseReservation(reservation.id)}
+                                                            disabled={actionReservationId === reservation.id}
+                                                            className="inline-flex w-full items-center justify-center rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                                        >
+                                                            {actionReservationId === reservation.id ? "Procesando..." : "Cerrar reserva"}
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setReportingReservationId((current) => (current === reservation.id ? null : reservation.id))}
+                                                            disabled={actionReservationId === reservation.id}
+                                                            className="inline-flex w-full items-center justify-center rounded-xl bg-[#9f403d] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#8a3631] disabled:cursor-not-allowed disabled:opacity-60"
+                                                        >
+                                                            Reportar préstamo
+                                                        </button>
+                                                    </div>
+                                                ) : null}
+
+                                                {reportingReservationId === reservation.id ? (
+                                                    <div className="space-y-2 rounded-xl border border-rose-200 bg-rose-50 p-3">
+                                                        <label className="block text-[11px] font-bold uppercase tracking-wide text-rose-700">
+                                                            ¿Qué sucedió mal?
+                                                        </label>
+                                                        <textarea
+                                                            value={reportReasonById[reservation.id] ?? ""}
+                                                            onChange={(event) =>
+                                                                setReportReasonById((current) => ({
+                                                                    ...current,
+                                                                    [reservation.id]: event.target.value,
+                                                                }))
+                                                            }
+                                                            rows={3}
+                                                            placeholder="Describe el daño, incumplimiento o problema detectado"
+                                                            className="w-full rounded-lg border border-rose-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none ring-0 placeholder:text-slate-400 focus:border-rose-400"
+                                                        />
+                                                        <div className="flex gap-2">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => void handleReportReservation(reservation.id)}
+                                                                disabled={actionReservationId === reservation.id || !(reportReasonById[reservation.id] ?? "").trim()}
+                                                                className="inline-flex items-center justify-center rounded-lg bg-[#9f403d] px-4 py-2 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                                                            >
+                                                                {actionReservationId === reservation.id ? "Reportando..." : "Enviar reporte"}
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => {
+                                                                    setReportingReservationId(null);
+                                                                    setReportReasonById((current) => {
+                                                                        const next = { ...current };
+                                                                        delete next[reservation.id];
+                                                                        return next;
+                                                                    });
+                                                                }}
+                                                                className="inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-600"
+                                                            >
+                                                                Cancelar
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                ) : null}
+
+                                                {reservation.resourceType === "equipment" && statusLower !== "devuelto" && statusLower !== "confirmada" && statusLower !== "no_aceptado" ? (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => void handleReturnReservation(reservation.id)}
+                                                        disabled={actionReservationId === reservation.id}
+                                                        className="inline-flex w-full items-center justify-center rounded-xl bg-[#3a5f94] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#2d5387] disabled:cursor-not-allowed disabled:opacity-60"
+                                                    >
+                                                        {actionReservationId === reservation.id ? "Procesando..." : "Marcar como devuelto"}
+                                                    </button>
+                                                ) : null}
+                                            </div>
+                                        </article>
+                                    );
+                                })
+                            ) : (
+                                <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+                                    Todavía no hay solicitudes registradas.
+                                </div>
+                            )}
+                        </div>
+                    </section>
+
+
+
                     <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
                         <div className="mb-6">
                             <p className="text-[9px] font-bold tracking-[0.24em] text-slate-500 uppercase">Request summary</p>
@@ -649,6 +1167,18 @@ export default function ReservasPage() {
                                     <p className="text-xs text-slate-500">{requestSummary.document}</p>
                                 </div>
                             </div>
+
+                            {requestSummary.destination ? (
+                                <div className="flex gap-4">
+                                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[#e8eff3]">
+                                        <span className="material-symbols-outlined text-[#3a5f94]">place</span>
+                                    </div>
+                                    <div>
+                                        <p className="text-[10px] font-bold uppercase text-slate-500">Destino del equipo</p>
+                                        <p className="text-sm font-bold text-slate-900">{requestSummary.destination}</p>
+                                    </div>
+                                </div>
+                            ) : null}
                         </div>
 
                         <div className="mt-8 rounded-2xl bg-[#d5e3ff]/40 p-4">
@@ -688,6 +1218,8 @@ export default function ReservasPage() {
                             </div>
                         </div>
                     </section>
+
+                    
                 </div>
             </aside>
         </div>

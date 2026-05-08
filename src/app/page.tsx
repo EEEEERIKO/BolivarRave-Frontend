@@ -815,6 +815,7 @@ export default function Home() {
         const diff = start - currentMinutes;
         const status = `Inicia en ${Math.max(diff, 0)} min`;
         return {
+          id: item.id,
           time: item.start,
           period: start < 720 ? "AM" : "PM",
           subject: item.subject,
@@ -856,6 +857,7 @@ export default function Home() {
       .sort((a, b) => a.daysAhead - b.daysAhead || a.startMinutes - b.startMinutes || a.item.subject.localeCompare(b.item.subject))
       .slice(0, 10)
       .map(({ item, daysAhead, startMinutes }) => ({
+        id: item.id,
         time: item.start,
         period: startMinutes < 720 ? "AM" : "PM",
         subject: item.subject,
@@ -1410,7 +1412,7 @@ export default function Home() {
           </div>
           <div className="divide-y divide-slate-50 dark:divide-slate-800 lg:flex-1 lg:overflow-y-auto">
             {nextClasses.map((nextClass) => (
-              <div key={`${nextClass.subject}-${nextClass.time}`} className="flex items-center justify-between p-4 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/50">
+              <div key={nextClass.id} className="flex items-center justify-between p-4 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/50">
                 <div className="flex items-center gap-4">
                   <div className="flex min-w-[60px] flex-col items-center rounded-lg bg-slate-100 px-2 py-3 dark:bg-slate-800">
                     <span className="text-xs font-bold text-slate-900 dark:text-slate-100">{nextClass.time}</span>
