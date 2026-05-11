@@ -31,6 +31,21 @@ type InventoryItem = {
   order: number;
 };
 
+const normalizeItemPrice = (value: unknown): number => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  return 0;
+};
+
 type InventoryGroupFormState = {
   name: string;
   icon: string;
@@ -178,7 +193,11 @@ export default function InventoryPage() {
       ]);
 
       const nextGroups = groupsResponse.status === "fulfilled" ? groupsResponse.value.groups ?? [] : [];
-      const nextItems = itemsResponse.status === "fulfilled" ? itemsResponse.value.items ?? [] : [];
+      const nextItemsRaw = itemsResponse.status === "fulfilled" ? itemsResponse.value.items ?? [] : [];
+      const nextItems = nextItemsRaw.map((item) => ({
+        ...item,
+        price: normalizeItemPrice(item.price),
+      }));
       const nextRooms =
         roomsResponse.status === "fulfilled"
           ? Array.from(new Set((roomsResponse.value.rooms ?? []).filter((room) => typeof room === "string" && room.trim().length > 0)))
@@ -571,7 +590,16 @@ export default function InventoryPage() {
           );
 
           if (response.item) {
-            setInventoryItems((current) => current.map((item) => (item.id === response.item?.id ? (response.item as InventoryItem) : item)));
+            setInventoryItems((current) =>
+              current.map((item) =>
+                item.id === response.item?.id
+                  ? ({
+                      ...(response.item as InventoryItem),
+                      price: normalizeItemPrice(response.item?.price),
+                    } as InventoryItem)
+                  : item,
+              ),
+            );
 
             if (response.item.motivo && response.item.motivo.trim().length > 0) {
               upsertDefectiveReasonOverride(targetItem.id, response.item.motivo);
@@ -871,12 +899,7 @@ export default function InventoryPage() {
                             {item.code}
                           </p>
                         </div>
-                        {item.defective ? (
-                          <div className="mt-1 flex items-center gap-1 text-[10px] font-bold text-rose-700">
-                            <span className="material-symbols-outlined text-sm">error</span>
-                            { "Defectuoso"}
-                          </div>
-                        ) : null}
+                        
                         <div className="mt-1 text-sm text-[#566166]">
                           {typeof item.price === "number" ? `Precio: $${item.price.toFixed(2)}` : null}
                         </div>
@@ -886,17 +909,28 @@ export default function InventoryPage() {
                     <div className="mt-2 flex flex-wrap items-center justify-between gap-2 pr-8">
                       <p className="text-xs font-semibold text-[#2a3439]">{item.room}</p>
                       <div className="flex flex-wrap items-center gap-1">
-                        <span
-                          className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                            item.defective
-                              ? "bg-rose-100 text-rose-700"
-                              : item.status === "Fijo"
+                        {!item.defective ? (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openItemModal("edit", item);
+                            }}
+                            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold transition hover:opacity-80 cursor-pointer ${
+                              item.status === "Fijo"
                                 ? "bg-[#d9d7f8]/40 text-[#5d5d78]"
                                 : "bg-[#d5e3ff] text-[#2c5287]"
-                          }`}
-                        >
-                          {item.defective ? "Defectuoso" : item.status === "Fijo" ? "Fijo" : "Disponible"}
-                        </span>
+                            }`}
+                          >
+                            {item.status === "Fijo" ? "Fijo" : "Disponible"}
+                          </button>
+                        ) : (
+                          <span
+                            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold bg-rose-100 text-rose-700`}
+                          >
+                            Defectuoso
+                          </span>
+                        )}
                       </div>
                     </div>
 
