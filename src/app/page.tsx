@@ -1410,7 +1410,7 @@ export default function Home() {
           </div>
           <div className="divide-y divide-slate-50 dark:divide-slate-800 lg:flex-1 lg:overflow-y-auto">
             {nextClasses.map((nextClass) => (
-              <div key={`${nextClass.subject}-${nextClass.time}`} className="flex items-center justify-between p-4 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/50">
+              <div key={`${nextClass.subject}-${nextClass.time}-${nextClass.room}`} className="flex items-center justify-between p-4 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/50">
                 <div className="flex items-center gap-4">
                   <div className="flex min-w-[60px] flex-col items-center rounded-lg bg-slate-100 px-2 py-3 dark:bg-slate-800">
                     <span className="text-xs font-bold text-slate-900 dark:text-slate-100">{nextClass.time}</span>
