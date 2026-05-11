@@ -909,17 +909,28 @@ export default function InventoryPage() {
                     <div className="mt-2 flex flex-wrap items-center justify-between gap-2 pr-8">
                       <p className="text-xs font-semibold text-[#2a3439]">{item.room}</p>
                       <div className="flex flex-wrap items-center gap-1">
-                        <span
-                          className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                            item.defective
-                              ? "bg-rose-100 text-rose-700"
-                              : item.status === "Fijo"
+                        {!item.defective ? (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openItemModal("edit", item);
+                            }}
+                            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold transition hover:opacity-80 cursor-pointer ${
+                              item.status === "Fijo"
                                 ? "bg-[#d9d7f8]/40 text-[#5d5d78]"
                                 : "bg-[#d5e3ff] text-[#2c5287]"
-                          }`}
-                        >
-                          {item.defective ? "Defectuoso" : item.status === "Fijo" ? "Fijo" : "Disponible"}
-                        </span>
+                            }`}
+                          >
+                            {item.status === "Fijo" ? "Fijo" : "Disponible"}
+                          </button>
+                        ) : (
+                          <span
+                            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold bg-rose-100 text-rose-700`}
+                          >
+                            Defectuoso
+                          </span>
+                        )}
                       </div>
                     </div>
 
