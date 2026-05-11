@@ -116,6 +116,11 @@ export default function ReservasPage() {
     const [reservationsLoading, setReservationsLoading] = useState(false);
     const [returningReservationId, setReturningReservationId] = useState<string | null>(null);
     const [actionReservationId, setActionReservationId] = useState<string | null>(null);
+    const [modalOpen, setModalOpen] = useState(false);
+    const [modalType, setModalType] = useState<'close' | 'report' | null>(null);
+    const [modalReservationId, setModalReservationId] = useState<string | null>(null);
+    const [reportReason, setReportReason] = useState('');
+    const [showReservationHistory, setShowReservationHistory] = useState(false);
 
     const availableInventoryItems = inventoryItems.filter((it) => (it.status ?? "").toLowerCase() === "disponible");
 
@@ -288,6 +293,20 @@ export default function ReservasPage() {
         };
     }, [bookingDate, documentNumber, endTime, email, fullName, phone, purpose, resourceType, selectedDestinationRoom, selectedResource, startTime]);
 
+    const activeReservations = useMemo(() => {
+        return reservationsFeed.filter((reservation) => {
+            const statusLower = reservation.status.toLowerCase();
+            return !['devuelto', 'reportado', 'rechazada', 'cancelada'].includes(statusLower);
+        });
+    }, [reservationsFeed]);
+
+    const closedReservations = useMemo(() => {
+        return reservationsFeed.filter((reservation) => {
+            const statusLower = reservation.status.toLowerCase();
+            return ['devuelto', 'reportado', 'rechazada', 'cancelada'].includes(statusLower);
+        });
+    }, [reservationsFeed]);
+
     const loadReservationsFeed = async () => {
         if (!canViewReservations) {
             return;
@@ -324,41 +343,65 @@ export default function ReservasPage() {
     };
 
     const handleCloseReservation = async (reservationId: string) => {
-        if (!confirm('¿Estás seguro que quieres marcar esta reserva como cerrada?')) return;
-        setActionReservationId(reservationId);
-        setStatusMessage(null);
-
-        try {
-            const response = await fetchApiJson<{ message: string; reservationId: string }>(`/api/reservas/${reservationId}/close`, {
-                method: 'PATCH',
-            });
-
-            setStatusMessage(response.message);
-            await loadReservationsFeed();
-        } catch (error) {
-            setStatusMessage(error instanceof Error ? error.message : 'No se pudo cerrar la reserva.');
-        } finally {
-            setActionReservationId(null);
-        }
+        setModalType('close');
+        setModalReservationId(reservationId);
+        setReportReason('');
+        setModalOpen(true);
     };
 
     const handleReportReservation = async (reservationId: string) => {
-        if (!confirm('¿Estás seguro que quieres reportar esta reserva?')) return;
-        const reason = window.prompt('Motivo del reporte (opcional):') ?? null;
-        setActionReservationId(reservationId);
+        setModalType('report');
+        setModalReservationId(reservationId);
+        setReportReason('');
+        setModalOpen(true);
+    };
+
+    const handleModalClose = () => {
+        setModalOpen(false);
+        setModalType(null);
+        setModalReservationId(null);
+        setReportReason('');
+    };
+
+    const handleModalConfirm = async () => {
+        if (!modalReservationId) return;
+
+        // Validate report reason if needed
+        if (modalType === 'report') {
+            const trimmed = reportReason.trim();
+            if (trimmed.length > 0 && trimmed.length < 5) {
+                setStatusMessage('El motivo debe tener al menos 5 caracteres.');
+                return;
+            }
+        }
+
+        setActionReservationId(modalReservationId);
         setStatusMessage(null);
+        handleModalClose();
 
         try {
-            const response = await fetchApiJson<{ message: string; reservationId: string }>(`/api/reservas/${reservationId}/report`, {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ reportReason: reason }),
-            });
-
-            setStatusMessage(response.message);
+            if (modalType === 'close') {
+                const response = await fetchApiJson<{ message: string; reservationId: string }>(`/api/reservas/${modalReservationId}/close`, {
+                    method: 'PATCH',
+                });
+                setStatusMessage(response.message);
+            } else if (modalType === 'report') {
+                const trimmed = reportReason.trim();
+                const response = await fetchApiJson<{ message: string; reservationId: string }>(`/api/reservas/${modalReservationId}/report`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ reportReason: trimmed.length > 0 ? trimmed : null }),
+                });
+                setStatusMessage(response.message);
+            }
             await loadReservationsFeed();
         } catch (error) {
-            setStatusMessage(error instanceof Error ? error.message : 'No se pudo reportar la reserva.');
+            const msg = error instanceof Error ? error.message : 'No se pudo procesar la acción.';
+            if (msg.toLowerCase().includes('parametros invalidos') || msg.toLowerCase().includes('too small')) {
+                setStatusMessage('El motivo proporcionado es demasiado corto (mínimo 5 caracteres).');
+            } else {
+                setStatusMessage(msg);
+            }
         } finally {
             setActionReservationId(null);
         }
@@ -889,9 +932,20 @@ export default function ReservasPage() {
                                 <p className="text-[9px] font-bold tracking-[0.24em] text-slate-500 uppercase">Reservas registradas</p>
                                 <h3 className="mt-1 text-lg font-black text-slate-900">Solicitudes recientes</h3>
                             </div>
-                            <span className="rounded-full bg-[#e8eff3] px-3 py-1 text-[11px] font-semibold text-[#3a5f94]">
-                                {reservationsFeed.length}
-                            </span>
+                            <div className="flex items-center gap-2">
+                                <span className="rounded-full bg-[#e8eff3] px-3 py-1 text-[11px] font-semibold text-[#3a5f94]">
+                                    {activeReservations.length}
+                                </span>
+                                {closedReservations.length > 0 && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowReservationHistory(!showReservationHistory)}
+                                        className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-semibold text-slate-600 transition hover:bg-slate-50"
+                                    >
+                                        {showReservationHistory ? "Ocultar" : "Ver"} historial ({closedReservations.length})
+                                    </button>
+                                )}
+                            </div>
                         </div>
 
                         <div className="mt-4 space-y-3">
@@ -899,8 +953,8 @@ export default function ReservasPage() {
                                 <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
                                     Cargando reservas...
                                 </div>
-                            ) : reservationsFeed.length > 0 ? (
-                                reservationsFeed.map((reservation) => {
+                            ) : activeReservations.length > 0 ? (
+                                activeReservations.map((reservation) => {
                                     const statusLower = reservation.status.toLowerCase();
                                     const statusDisplay =
                                         statusLower === "no_aceptado"
@@ -943,7 +997,9 @@ export default function ReservasPage() {
                                                 }
                                             })();
 
-                                            const isLate = endDateTime ? endDateTime.getTime() < now.getTime() && reservation.status?.toLowerCase() !== 'devuelto' && reservation.status?.toLowerCase() !== 'cancelada' : false;
+                                            const isLate = endDateTime
+                                                ? endDateTime.getTime() < now.getTime() && (statusLower === 'confirmada' || statusLower === 'aprobada')
+                                                : false;
 
                                             return (
                                                 <article key={reservation.id} className={`rounded-xl border ${isLate ? 'border-rose-300 bg-[#fff6f6]' : 'border-slate-200 bg-[#f7f9fb]'} p-4`}>
@@ -1035,7 +1091,72 @@ export default function ReservasPage() {
                         </div>
                     </section>
 
+                    {showReservationHistory && closedReservations.length > 0 && (
+                        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                            <div className="mb-4">
+                                <p className="text-[9px] font-bold tracking-[0.24em] text-slate-500 uppercase">Historial</p>
+                                <h3 className="mt-1 text-lg font-black text-slate-900">Reservas cerradas</h3>
+                            </div>
 
+                            <div className="space-y-3">
+                                {closedReservations.map((reservation) => {
+                                    const statusLower = reservation.status.toLowerCase();
+                                    const statusDisplay =
+                                        statusLower === "rechazada"
+                                            ? "Rechazada"
+                                            : statusLower === "cancelada"
+                                                ? "Cancelada"
+                                                : statusLower === "devuelto"
+                                                    ? "Devuelto"
+                                                    : statusLower === "reportado"
+                                                        ? "Reportado"
+                                                        : reservation.status;
+
+                                    const statusStyles =
+                                        statusLower === "rechazada"
+                                            ? "bg-rose-50 text-rose-700 border-rose-100"
+                                            : statusLower === "cancelada"
+                                                ? "bg-slate-100 text-slate-600 border-slate-200"
+                                                : statusLower === "devuelto"
+                                                    ? "bg-cyan-50 text-cyan-700 border-cyan-100"
+                                                    : statusLower === "reportado"
+                                                        ? "bg-amber-50 text-amber-700 border-amber-100"
+                                                        : "bg-slate-50 text-slate-600 border-slate-200";
+
+                                    return (
+                                        <article key={reservation.id} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                                            <div className="flex items-start justify-between gap-3">
+                                                <div className="min-w-0">
+                                                    <p className="text-[10px] font-bold uppercase text-slate-500">
+                                                        {reservation.resourceType === "rooms" ? "Salón" : "Equipo"}
+                                                    </p>
+                                                    <p className="truncate text-sm font-black text-slate-900">{reservation.resourceLabel}</p>
+                                                </div>
+                                                <span className={`shrink-0 rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase ${statusStyles}`}>
+                                                    {statusDisplay}
+                                                </span>
+                                            </div>
+
+                                            <div className="mt-2 grid gap-1 text-xs text-slate-600">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="material-symbols-outlined text-[14px] text-slate-400">event</span>
+                                                    <span>{reservation.bookingDate}</span>
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                    <span className="material-symbols-outlined text-[14px] text-slate-400">schedule</span>
+                                                    <span>{formatDuration(reservation.startTime, reservation.endTime)}</span>
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                    <span className="material-symbols-outlined text-[14px] text-slate-400">person</span>
+                                                    <span className="truncate">{reservation.requesterName}</span>
+                                                </div>
+                                            </div>
+                                        </article>
+                                    );
+                                })}
+                            </div>
+                        </section>
+                    )}
 
                     <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
                         <div className="mb-6">
@@ -1104,6 +1225,68 @@ export default function ReservasPage() {
                             Bookings should be reviewed by the coordinator before confirmation. Keep the final approval flow inside the same visual language used across the platform.
                         </p>
                     </section>
+
+                    {/* Modal for close/report confirmation */}
+                    {modalOpen && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+                            <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-lg">
+                                <div className="border-b border-slate-200 px-6 py-4">
+                                    <h2 className="text-lg font-bold text-slate-900">
+                                        {modalType === 'close' ? 'Cerrar Reserva' : 'Reportar Préstamo'}
+                                    </h2>
+                                </div>
+
+                                <div className="px-6 py-4">
+                                    {modalType === 'close' && (
+                                        <p className="text-sm text-slate-600">
+                                            ¿Estás seguro que deseas marcar esta reserva como cerrada?
+                                        </p>
+                                    )}
+
+                                    {modalType === 'report' && (
+                                        <div className="space-y-3">
+                                            <p className="text-sm text-slate-600">
+                                                Proporciona un motivo para reportar este préstamo (mínimo 5 caracteres):
+                                            </p>
+                                            <textarea
+                                                value={reportReason}
+                                                onChange={(e) => setReportReason(e.target.value)}
+                                                placeholder="Describe el problema con el préstamo..."
+                                                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm placeholder-slate-400 focus:border-[#3a5f94] focus:outline-none focus:ring-1 focus:ring-[#3a5f94]"
+                                                rows={4}
+                                            />
+                                            {reportReason.length > 0 && reportReason.length < 5 && (
+                                                <p className="text-xs text-rose-600">Mínimo 5 caracteres (escribiste {reportReason.length})</p>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div className="flex gap-3 border-t border-slate-200 px-6 py-4">
+                                    <button
+                                        type="button"
+                                        onClick={handleModalClose}
+                                        disabled={actionReservationId !== null}
+                                        className="flex-1 rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-bold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                    >
+                                        Cancelar
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={handleModalConfirm}
+                                        disabled={actionReservationId !== null || (modalType === 'report' && reportReason.trim().length < 5 && reportReason.trim().length > 0)}
+                                        className={`flex-1 rounded-lg px-4 py-2.5 text-sm font-bold text-white transition ${
+                                            modalType === 'report'
+                                                ? 'bg-rose-600 hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60'
+                                                : 'bg-[#3a5f94] hover:bg-[#2d5387] disabled:cursor-not-allowed disabled:opacity-60'
+                                        }`}
+                                    >
+                                        {actionReservationId ? 'Procesando...' : modalType === 'close' ? 'Cerrar Reserva' : 'Reportar'}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
 
                     <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
                         <h3 className="text-xs font-bold uppercase tracking-wide text-slate-500">Preview</h3>
