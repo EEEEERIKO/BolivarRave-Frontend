@@ -215,6 +215,7 @@ type ScheduleManualFormState = {
   tiempoEstimadoMin: string;
   horaProgramada: string;
   diasSemana: number[];
+  requerimientos?: string[];
 };
 
 type TasksSubtab = "gestion" | "tareas-creadas" | "tareas-asignadas" | "horario" | "habilidades" | "lugares";
@@ -707,6 +708,26 @@ function isSlotInsideJornada(dayIndex: number, slotStart: number, slotEnd: numbe
   });
 }
 
+function isRangeInsideAnyJornada(dayIndex: number, startMin: number, endMin: number, jornadas: StaffJornadaItem[]): boolean {
+  const dayName = weekDayNames[dayIndex] ?? "";
+  const normalizedDay = normalizeDayLabel(dayName);
+
+  return jornadas.some((slot) => {
+    if (normalizeDayLabel(slot.diaSemana) !== normalizedDay) {
+      return false;
+    }
+
+    const entryMin = parseTimeToMinutes(slot.horaEntrada);
+    const exitMin = parseTimeToMinutes(slot.horaSalida);
+    if (entryMin === null || exitMin === null) {
+      return false;
+    }
+
+    // Entire range must be inside the jornada slot
+    return startMin >= entryMin && endMin <= exitMin;
+  });
+}
+
 function getWorkerPreviewRange(tasks: ScheduleTaskItem[], jornadas: StaffJornadaItem[]): { start: number; end: number } {
   const starts: number[] = [];
   const ends: number[] = [];
@@ -862,6 +883,7 @@ export default function TasksPage() {
   const [spaceName, setSpaceName] = useState("");
   const [scheduleSearchQuery, setScheduleSearchQuery] = useState("");
   const [selectedScheduleCell, setSelectedScheduleCell] = useState<ScheduleCellSelection>(null);
+  const [showQuickCatalogEditor, setShowQuickCatalogEditor] = useState(false);
   const [scheduleTaskMode, setScheduleTaskMode] = useState<ScheduleTaskMode>("catalog");
   const [scheduleManualForm, setScheduleManualForm] = useState<ScheduleManualFormState>({
     nombre: "",
@@ -869,6 +891,7 @@ export default function TasksPage() {
     tiempoEstimadoMin: "25",
     horaProgramada: "08:00",
     diasSemana: [1, 2, 3, 4, 5],
+    requerimientos: [],
   });
   const [scheduleSectorSearchQuery, setScheduleSectorSearchQuery] = useState("");
   const [scheduleManualSectorSearchQuery, setScheduleManualSectorSearchQuery] = useState("");
@@ -883,6 +906,7 @@ export default function TasksPage() {
   const [editingCatalogId, setEditingCatalogId] = useState<string | null>(null);
   const [deletingCatalogId, setDeletingCatalogId] = useState<string | null>(null);
   const [requirementDraft, setRequirementDraft] = useState("");
+  const [scheduleManualRequirementDraft, setScheduleManualRequirementDraft] = useState("");
   const [selectedCatalogLocations, setSelectedCatalogLocations] = useState<string[]>([]);
   const [tasksSubtab, setTasksSubtab] = useState<TasksSubtab>("gestion");
   const [catalogSearchQuery, setCatalogSearchQuery] = useState("");
@@ -970,6 +994,7 @@ export default function TasksPage() {
       tiempoEstimadoMin: "25",
       horaProgramada: minutesToHHMM(selectedScheduleCell.slotStart),
       diasSemana: [selectedScheduleCell.dayIndex],
+      requerimientos: [],
     });
   }, [selectedScheduleCell]);
 
@@ -1101,6 +1126,25 @@ export default function TasksPage() {
     setCatalogForm((current) => ({
       ...current,
       requerimientos: current.requerimientos.filter((item) => item !== name),
+    }));
+  };
+
+  const addManualRequirement = () => {
+    const normalized = scheduleManualRequirementDraft.trim();
+    if (!normalized) return;
+    setScheduleManualForm((current) => ({
+      ...current,
+      requerimientos: current.requerimientos?.some((item) => item.toLowerCase() === normalized.toLowerCase())
+        ? current.requerimientos
+        : [...(current.requerimientos ?? []), normalized],
+    }));
+    setScheduleManualRequirementDraft("");
+  };
+
+  const removeManualRequirement = (name: string) => {
+    setScheduleManualForm((current) => ({
+      ...current,
+      requerimientos: (current.requerimientos ?? []).filter((item) => item !== name),
     }));
   };
 
@@ -1574,7 +1618,7 @@ export default function TasksPage() {
     }
   };
 
-  const submitCatalog = async (event: FormEvent<HTMLFormElement>) => {
+  const submitCatalog = async (event: FormEvent<HTMLFormElement>) : Promise<boolean> => {
     event.preventDefault();
     setCatalogSubmitErrorModalMessage(null);
 
@@ -1583,7 +1627,7 @@ export default function TasksPage() {
     if (validationFields.length > 0) {
       setCatalogSubmitErrorModalMessage(validationFields.join(" · "));
       setShowCatalogValidationModal(true);
-      return;
+      return false;
     }
 
     const nombre = catalogForm.nombre.trim();
@@ -1626,11 +1670,12 @@ export default function TasksPage() {
         });
         if (!confirmed) {
           setBusyAction(null);
-          return;
+          return false;
         }
       }
 
-      const scheduleWarnings: string[] = [];
+      const blockingWarnings: string[] = [];
+      const softWarnings: string[] = [];
       const effectiveStaffIds = selectedScheduleCell?.isEditing
         ? Array.from(new Set([...catalogForm.staffAsignadosIds, selectedScheduleCell.staffId]))
         : catalogForm.staffAsignadosIds;
@@ -1655,7 +1700,7 @@ export default function TasksPage() {
 
       if (selectedStaffMembers.length > 0 && taskStartMin !== null && taskEndMin !== null && relevantDays.length > 0) {
         if (taskEndMin > 24 * 60) {
-          scheduleWarnings.push(`La tarea termina fuera del día laboral (${toAmPmLabel(taskStartTime)} + ${taskDurationMin} min).`);
+          blockingWarnings.push(`La tarea termina fuera del día laboral (${toAmPmLabel(taskStartTime)} + ${taskDurationMin} min).`);
         }
 
         for (const member of selectedStaffMembers) {
@@ -1666,7 +1711,7 @@ export default function TasksPage() {
             const jornadasDelDia = jornadas.filter((item) => normalizeDayLabel(item.diaSemana) === dayKey);
 
             if (jornadasDelDia.length === 0) {
-              scheduleWarnings.push(`${staffLabel(member)} no tiene jornada registrada para ${dayName}.`);
+              blockingWarnings.push(`${staffLabel(member)} no tiene jornada registrada para ${dayName}.`);
               continue;
             }
 
@@ -1685,7 +1730,7 @@ export default function TasksPage() {
                 .map((slot) => `${toAmPmLabel(slot.horaEntrada)} - ${toAmPmLabel(slot.horaSalida)}`)
                 .join(" / ");
               const finalLabel = `${String(Math.floor(taskEndMin / 60)).padStart(2, "0")}:${String(taskEndMin % 60).padStart(2, "0")}`;
-              scheduleWarnings.push(
+              blockingWarnings.push(
                 `${staffLabel(member)} (${dayName}) trabaja en ${jornadaTexto}. La tarea quedaría de ${toAmPmLabel(taskStartTime)} a ${toAmPmLabel(finalLabel)}.`,
               );
             }
@@ -1693,9 +1738,17 @@ export default function TasksPage() {
         }
       }
 
-      if (scheduleWarnings.length > 0) {
-        const warningPreview = scheduleWarnings.slice(0, 8).map((line) => `• ${line}`).join("\n");
-        const extraText = scheduleWarnings.length > 8 ? `\n\nY ${scheduleWarnings.length - 8} advertencia(s) más.` : "";
+      if (blockingWarnings.length > 0) {
+        setBusyAction(null);
+        const preview = blockingWarnings.slice(0, 8).map((line) => `• ${line}`).join("\n");
+        const extra = blockingWarnings.length > 8 ? `\n\nY ${blockingWarnings.length - 8} advertencia(s) más.` : "";
+        setNotice({ kind: "error", text: `No se puede crear la tarea debido a las siguientes incompatibilidades de jornada:\n\n${preview}${extra}` });
+        return false;
+      }
+
+      if (softWarnings.length > 0) {
+        const warningPreview = softWarnings.slice(0, 8).map((line) => `• ${line}`).join("\n");
+        const extraText = softWarnings.length > 8 ? `\n\nY ${softWarnings.length - 8} advertencia(s) más.` : "";
         const proceed = await confirmToast(
           `Alerta: se detectó que esta asignación puede quedar fuera de horario laboral.\n\n${warningPreview}${extraText}\n\n¿Deseas continuar de todos modos?`,
           {
@@ -1706,7 +1759,7 @@ export default function TasksPage() {
 
         if (!proceed) {
           setBusyAction(null);
-          return;
+          return false;
         }
       }
 
@@ -1737,7 +1790,51 @@ export default function TasksPage() {
       };
 
       let createdCount = 1;
-      if (isEditing && editingCatalogId) {
+      
+      // When editing from schedule cell, create a new catalog copy and assign to staff instead of updating the global catalog
+      if (isEditing && editingCatalogId && selectedScheduleCell?.isEditing) {
+        // Create a new catalog task from the modified form
+        const createdCatalogResponse = await fetchApiJson<{ message: string; ids: string[] }>("/api/tasks/catalog", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ...basePayload,
+            sector: catalogForm.sector.trim(),
+          }),
+        });
+        
+        const newCatalogId = createdCatalogResponse.ids?.[0];
+        if (!newCatalogId) {
+          throw new Error("No se pudo crear la tarea del catálogo.");
+        }
+        
+        // If there's a selected schedule cell, also create an instance and assign to that staff
+        if (selectedScheduleCell?.staffId) {
+          const fechaProgramada = getDateForWeekday(selectedScheduleCell.dayIndex);
+          const instanceResponse = await fetchApiJson<{ message: string; id: string }>("/api/tasks/instances", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              tareaCatalogoId: newCatalogId,
+              salonId: null,
+              detalleAdicional: null,
+              prioridad: "Media",
+              fechaProgramada,
+              horaProgramada: minutesToHHMM(selectedScheduleCell.slotStart),
+              asignacionAutomatica: false,
+            }),
+          });
+          
+          await fetchApiJson<{ message: string; asignacionId: string }>("/api/tasks/assignments", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              tareaInstanciaId: instanceResponse.id,
+              staffId: selectedScheduleCell.staffId,
+            }),
+          });
+        }
+      } else if (isEditing && editingCatalogId) {
         await fetchApiJson<{ message: string; id: string }>(`/api/tasks/catalog/${editingCatalogId}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
@@ -1780,7 +1877,7 @@ export default function TasksPage() {
               kind: "error",
               text: "No alcanza el día para encadenar todas las tareas seleccionadas. Ajusta hora inicial, duración o reduce lugares.",
             });
-            return;
+            return false;
           }
 
           const previewLines = sequentialSchedule
@@ -1797,7 +1894,7 @@ export default function TasksPage() {
 
           if (!confirmSequential) {
             setBusyAction(null);
-            return;
+            return false;
           }
         }
 
@@ -1861,18 +1958,21 @@ export default function TasksPage() {
             : "Tarea de catalogo creada correctamente.",
       });
       await refresh();
+      return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : "No se pudo guardar la tarea de catalogo.";
       setNotice({ kind: "error", text: message });
       setCatalogSubmitErrorModalMessage(message);
+      return false;
     } finally {
       setBusyAction(null);
     }
   };
 
-  const beginEditCatalog = (task: TaskCatalogItem) => {
+  const beginEditCatalog = (task: TaskCatalogItem, overrides?: Partial<CatalogFormState>) => {
     setEditingCatalogId(task.id);
-    setCatalogForm({
+
+    const baseForm: CatalogFormState = {
       nombre: task.nombre,
       tipo: DEFAULT_CATALOG_TASK_TYPE,
       sector: task.sector,
@@ -1891,8 +1991,12 @@ export default function TasksPage() {
       fechaFinalizacion: task.fechaFinalizacion ?? new Date().toISOString().slice(0, 10),
       horaFinalizacion: task.horaFinalizacion ?? "09:00",
       tiempoEstimadoMin: String(task.tiempoEstimadoMin),
-    });
-    setSelectedCatalogLocations([task.sector]);
+    };
+
+    const merged = overrides ? { ...baseForm, ...overrides } : baseForm;
+
+    setCatalogForm(merged);
+    setSelectedCatalogLocations([merged.sector || task.sector]);
     setRequirementDraft("");
     setNotice(null);
   };
@@ -3630,6 +3734,20 @@ export default function TasksPage() {
                           return;
                         }
 
+                        // Validar que la tarea quepa dentro de la jornada del trabajador seleccionado
+                        const taskEndMin = slotStart + tiempoEstimadoMin;
+                        const jornadas = staffJornadasByStaffId[selectedWorker.staff.id] ?? [];
+                        const fitsJornada = isRangeInsideAnyJornada(dayIndex, slotStart, taskEndMin, jornadas);
+                        if (!fitsJornada) {
+                          const jornadaTexto = (jornadas
+                            .filter((j) => normalizeDayLabel(j.diaSemana) === normalizeDayLabel(weekDayNames[dayIndex]))
+                            .map((j) => `${toAmPmLabel(j.horaEntrada)} - ${toAmPmLabel(j.horaSalida)}`)
+                            .join(" / ")) || "sin jornada en ese día";
+
+                          setNotice({ kind: "error", text: `No se puede crear: la tarea no cabe en la jornada del trabajador (${jornadaTexto}).` });
+                          return;
+                        }
+
                         void (async () => {
                           try {
                             setBusyAction("schedule-instance-create");
@@ -3643,7 +3761,7 @@ export default function TasksPage() {
                                 modoAsignacion: "manual",
                                 cantidadPersonal: 1,
                                 habilidadesRequeridasIds: [],
-                                requerimientos: [],
+                                requerimientos: scheduleManualForm.requerimientos ?? [],
                                 programacionRecurrente: "programada",
                                 diasSemana,
                                 horaProgramada: scheduleManualForm.horaProgramada,
@@ -3783,12 +3901,28 @@ export default function TasksPage() {
                           id="schedule-task-catalog"
                           required
                           onChange={(e) => {
-                            const overlapError = validateNoOverlap(e.target.value);
+                            const catalogId = e.target.value;
+                            const overlapError = validateNoOverlap(catalogId);
                             if (overlapError) {
                               setNotice({ kind: "error", text: `Validación: ${overlapError}` });
-                            } else {
-                              setNotice(null);
+                              return;
                             }
+
+                            setNotice(null);
+
+                            const task = catalog.find((c) => c.id === catalogId);
+                            if (!task) return;
+
+                            // Prefill catalog editor so the user can tweak before creating/assigning
+                            beginEditCatalog(task, {
+                              cantidadPersonal: "1",
+                              horaProgramada: minutesToHHMM(slotStart),
+                              diasSemana: [dayIndex],
+                            });
+
+                            // Show quick editor and open the editing panel for this schedule cell
+                            setShowQuickCatalogEditor(true);
+                            setSelectedScheduleCell((current) => (current ? { ...current, isEditing: true } : current));
                           }}
                           className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#3a5f94] focus:ring-1 focus:ring-[#3a5f94]"
                         >
@@ -3799,6 +3933,87 @@ export default function TasksPage() {
                             </option>
                           ))}
                         </select>
+
+                        {showQuickCatalogEditor && editingCatalogId && selectedScheduleCell?.isEditing ? (
+                          <div className="mt-4 space-y-3 rounded-lg border border-slate-200 bg-white p-3">
+                            <p className="text-sm font-black text-slate-900">Editor rápido (Catálogo)</p>
+                            <label className="block">
+                              <span className="text-xs font-bold text-slate-500">Nombre de la tarea</span>
+                              <input
+                                value={catalogForm.nombre}
+                                onChange={(e) => setCatalogForm((c) => ({ ...c, nombre: e.target.value }))}
+                                className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 text-sm"
+                              />
+                            </label>
+
+                            <label className="block">
+                              <span className="text-xs font-bold text-slate-500">Sector/Lugar</span>
+                              <select value={catalogForm.sector} onChange={(e) => setCatalogForm((c) => ({ ...c, sector: e.target.value }))} className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 text-sm">
+                                <option value="">Aún no seleccionado</option>
+                                {taskLocationOptions.map((location) => (
+                                  <option key={location.id} value={location.nombre}>{location.nombre}</option>
+                                ))}
+                              </select>
+                            </label>
+
+                            <div className="grid grid-cols-2 gap-2">
+                              <label>
+                                <span className="text-xs font-bold text-slate-500">Duración (min)</span>
+                                <input type="number" min={1} value={catalogForm.tiempoEstimadoMin} onChange={(e) => setCatalogForm((c) => ({ ...c, tiempoEstimadoMin: e.target.value }))} className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 text-sm" />
+                              </label>
+
+                              <label>
+                                <span className="text-xs font-bold text-slate-500">Hora programada</span>
+                                <select value={catalogForm.horaProgramada} onChange={(e) => setCatalogForm((c) => ({ ...c, horaProgramada: e.target.value }))} className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 text-sm">
+                                  {Array.from(new Set([minutesToHHMM(selectedScheduleCell.slotStart), catalogForm.horaProgramada, ...TASK_RECURRENT_TIME_OPTIONS])).map((time) => (
+                                    <option key={time} value={time}>{toAmPmLabel(time)}</option>
+                                  ))}
+                                </select>
+                              </label>
+                            </div>
+
+                            <div>
+                              <span className="text-xs font-bold text-slate-500">Días de semana</span>
+                              <div className="mt-2 grid grid-cols-7 gap-2">
+                                {dayLabels.map((label, idx) => (
+                                  <label key={label} className="flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-600">
+                                    <input type="checkbox" checked={catalogForm.diasSemana.includes(idx)} onChange={(e) => {
+                                      const enabled = e.target.checked;
+                                      setCatalogForm((current) => ({
+                                        ...current,
+                                        diasSemana: enabled ? [...current.diasSemana, idx].sort((a,b)=>a-b) : current.diasSemana.filter(d=>d!==idx),
+                                      }));
+                                    }} className="h-3.5 w-3.5 rounded" />
+                                    <span>{label}</span>
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
+
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <span className="text-xs font-bold text-slate-500">Checklist de subtareas</span>
+                                <span className="text-[11px] font-semibold text-slate-500">{catalogForm.requerimientos.length} seleccionados</span>
+                              </div>
+                              <div className="grid gap-2">
+                                {catalogForm.requerimientos.length === 0 ? (
+                                  <p className="text-[11px] text-slate-500">Escribe y agrega subtareas para construir el checklist.</p>
+                                ) : (
+                                  catalogForm.requerimientos.map((item) => (
+                                    <div key={item} className="flex items-center justify-between gap-2 rounded-md bg-slate-50 px-2 py-1 text-xs font-semibold text-slate-700">
+                                      <span>{item}</span>
+                                      <button type="button" onClick={() => removeRequirement(item)} className="text-slate-400 hover:text-red-600">✕</button>
+                                    </div>
+                                  ))
+                                )}
+                                <div className="flex gap-2">
+                                  <input value={requirementDraft} onChange={(e) => setRequirementDraft(e.target.value)} placeholder="Agregar subtarea" className="flex-1 rounded-md border border-slate-200 px-3 py-2 text-sm" />
+                                  <button type="button" onClick={addCustomRequirement} className="rounded-md bg-[#3a5f94] px-3 py-2 text-sm text-white">Agregar</button>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ) : null}
                       </div>
                     ) : (
                       <div className="space-y-4 rounded-lg border border-slate-200 bg-white p-3">
@@ -3925,6 +4140,57 @@ export default function TasksPage() {
                             })}
                           </div>
                           <p className="mt-1 text-[11px] text-slate-500">El día actual se incluirá automáticamente al guardar.</p>
+                        </div>
+                        <div className="space-y-3 rounded-md border border-[#d9e4ea] bg-[#f3f7fa] px-3 py-2 sm:col-span-2 lg:col-span-6">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="inline-flex items-center gap-1 text-sm font-black tracking-[0.08em] text-[#274a83] uppercase">
+                              <span className="material-symbols-outlined text-[16px] leading-none">checklist</span>
+                              Checklist de subtareas
+                            </span>
+                            <span className="text-[11px] font-semibold text-slate-500">{(scheduleManualForm.requerimientos ?? []).length} seleccionados</span>
+                          </div>
+                          <p className="text-[11px] text-[#335a94]">Estas subtareas son las que debes completar en cada ejecución de la tarea.</p>
+
+                          <div className="flex flex-col gap-2 sm:flex-row">
+                            <input
+                              value={scheduleManualRequirementDraft}
+                              onChange={(event) => setScheduleManualRequirementDraft(event.target.value)}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") {
+                                  event.preventDefault();
+                                  addManualRequirement();
+                                }
+                              }}
+                              className="min-w-0 flex-1 rounded-md border-none bg-white px-3 py-1 text-sm font-medium text-[#2a3439] shadow-inner shadow-slate-200/70 focus:ring-2 focus:ring-[#3a5f94]/20"
+                              placeholder="Agregar subtarea al checklist"
+                            />
+                            <button
+                              type="button"
+                              onClick={addManualRequirement}
+                              className="inline-flex items-center justify-center gap-1 rounded-md bg-[#3a5f94] px-3 py-1.5 text-[10px] font-bold text-white uppercase transition-transform hover:brightness-110"
+                            >
+                              <span className="material-symbols-outlined text-[14px] leading-none">add_circle</span>
+                              Agregar
+                            </button>
+                          </div>
+
+                          {(scheduleManualForm.requerimientos ?? []).length === 0 ? (
+                            <p className="text-[11px] text-slate-500">Escribe y agrega subtareas para construir el checklist.</p>
+                          ) : (
+                            <div className="grid gap-2 sm:grid-cols-2">
+                              {(scheduleManualForm.requerimientos ?? []).map((item) => (
+                                <div key={item} className="flex items-center justify-between gap-2 rounded-md bg-white px-2 py-1 text-xs font-semibold text-slate-700">
+                                  <label className="inline-flex items-center gap-2">
+                                    <input type="checkbox" checked readOnly className="h-4 w-4 rounded border-slate-300 text-slate-900" />
+                                    <span>{item}</span>
+                                  </label>
+                                  <button type="button" onClick={() => removeManualRequirement(item)} className="text-slate-400 transition hover:text-red-600" aria-label={`Eliminar requerimiento ${item}`}>
+                                    <span className="material-symbols-outlined text-[14px] leading-none">remove_circle</span>
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       </div>
                     )}
@@ -4209,11 +4475,13 @@ export default function TasksPage() {
                             return;
                           }
 
-                          beginEditCatalog(taskCatalog);
-                          setCatalogForm((current) => ({ ...current, cantidadPersonal: "1" }));
-                          setSelectedScheduleCell((current) =>
-                            current ? { ...current, isEditing: true } : null
-                          );
+                          beginEditCatalog(taskCatalog, {
+                            cantidadPersonal: "1",
+                            horaProgramada: minutesToHHMM(slotStart),
+                            diasSemana: [selectedScheduleCell.dayIndex],
+                          });
+                          setShowQuickCatalogEditor(true);
+                          setSelectedScheduleCell((current) => (current ? { ...current, isEditing: true } : null));
                         }}
                         className="w-full rounded-md bg-[#3a5f94] px-3 py-2.5 text-sm font-bold tracking-[0.14em] text-white uppercase transition hover:brightness-110"
                       >

@@ -521,10 +521,10 @@ export default function ReservasPage() {
                 setStatusMessage(response.message);
             } else if (modalType === 'defective-return') {
                 const trimmed = reportReason.trim();
-                const response = await fetchApiJson<{ message: string; reservationId: string }>(`/api/reservas/${modalReservationId}/defective-return`, {
+                const response = await fetchApiJson<{ message: string; reservationId: string }>(`/api/reservas/${modalReservationId}/report`, {
                     method: 'PATCH',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ defectReason: trimmed.length > 0 ? trimmed : null }),
+                    body: JSON.stringify({ reportReason: trimmed.length > 0 ? trimmed : null }),
                 });
                 setStatusMessage(response.message);
             }
@@ -1105,12 +1105,20 @@ export default function ReservasPage() {
                                             const isLate = endDateTime
                                                 ? endDateTime.getTime() < now.getTime() && (statusLower === 'confirmada' || statusLower === 'aprobada')
                                                 : false;
+                                            const overdueDateLabel = endDateTime
+                                                ? new Intl.DateTimeFormat('es-CO', {
+                                                    weekday: 'long',
+                                                    day: 'numeric',
+                                                    month: 'long',
+                                                }).format(endDateTime)
+                                                : reservation.bookingDate;
+                                            const overdueDateLabelFormatted = overdueDateLabel.charAt(0).toUpperCase() + overdueDateLabel.slice(1);
 
                                             return (
                                                 <article key={reservation.id} className={`rounded-xl border ${isLate ? 'border-rose-300 bg-[#fff6f6]' : 'border-slate-200 bg-[#f7f9fb]'} p-4`}>
                                                     {isLate ? (
                                                         <div className="mb-3 rounded-md border border-rose-100 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700">
-                                                            Tardío — la reserva terminó el {reservation.bookingDate} a las {reservation.endTime}
+                                                            RESERVA TARDÍA - esta reserva debería haberse cerrado a las {reservation.endTime} del {overdueDateLabelFormatted}
                                                         </div>
                                                     ) : null}
 
@@ -1153,56 +1161,38 @@ export default function ReservasPage() {
                                                         ) : null}
                                                     </div>
 
-                                                    {reservation.resourceType === "equipment" && (statusLower === 'confirmada' || statusLower === 'aprobada') ? (
-                                                        <div className="mt-3 space-y-2">
+                                                    <div className="mt-3 space-y-2">
+                                                        {statusLower === 'no_aceptado' ? (
                                                             <button
                                                                 type="button"
-                                                                onClick={() => void handleReturnReservation(reservation.id)}
-                                                                disabled={returningReservationId === reservation.id}
-                                                                className="inline-flex w-full items-center justify-center rounded-xl bg-[#3a5f94] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#2d5387] disabled:cursor-not-allowed disabled:opacity-60"
-                                                            >
-                                                                {returningReservationId === reservation.id ? "Devolviendo..." : "Devolución exitosa"}
-                                                            </button>
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => void handleDefectiveReturn(reservation.id)}
+                                                                onClick={() => void handleCancelReservation(reservation.id)}
                                                                 disabled={actionReservationId === reservation.id}
-                                                                className="inline-flex w-full items-center justify-center rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                                                className="inline-flex w-full items-center justify-center rounded-xl bg-slate-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
                                                             >
-                                                                {actionReservationId === reservation.id ? 'Procesando...' : 'Devolución defectuosa'}
+                                                                {actionReservationId === reservation.id ? 'Cancelando...' : 'Cancelar reserva'}
                                                             </button>
-                                                        </div>
-                                                    ) : null}
-                                                    {statusLower === 'no_aceptado' ? (
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => void handleCancelReservation(reservation.id)}
-                                                            disabled={actionReservationId === reservation.id}
-                                                            className="mt-4 inline-flex w-full items-center justify-center rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
-                                                        >
-                                                            {actionReservationId === reservation.id ? 'Procesando...' : 'Cancelar solicitud'}
-                                                        </button>
-                                                    ) : null}
-                                                    {statusLower === 'confirmada' ? (
-                                                        <div className="mt-3 grid grid-cols-2 gap-2">
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => void handleCloseReservation(reservation.id)}
-                                                                disabled={actionReservationId === reservation.id}
-                                                                className="inline-flex w-full items-center justify-center rounded-xl bg-[#3a5f94] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#2d5387] disabled:cursor-not-allowed disabled:opacity-60"
-                                                            >
-                                                                {actionReservationId === reservation.id ? 'Procesando...' : 'Cerrar reserva'}
-                                                            </button>
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => void handleReportReservation(reservation.id)}
-                                                                disabled={actionReservationId === reservation.id}
-                                                                className="inline-flex w-full items-center justify-center rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
-                                                            >
-                                                                {actionReservationId === reservation.id ? 'Procesando...' : 'Reportar préstamo'}
-                                                            </button>
-                                                        </div>
-                                                    ) : null}
+                                                        ) : null}
+                                                        {reservation.resourceType === "equipment" && (statusLower === 'confirmada' || statusLower === 'aprobada') ? (
+                                                            <>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => void handleReturnReservation(reservation.id)}
+                                                                    disabled={returningReservationId === reservation.id}
+                                                                    className="inline-flex w-full items-center justify-center rounded-xl bg-[#3a5f94] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#2d5387] disabled:cursor-not-allowed disabled:opacity-60"
+                                                                >
+                                                                    {returningReservationId === reservation.id ? "Devolviendo..." : "Devolución exitosa"}
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => void handleDefectiveReturn(reservation.id)}
+                                                                    disabled={actionReservationId === reservation.id}
+                                                                    className="inline-flex w-full items-center justify-center rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                                                >
+                                                                    {actionReservationId === reservation.id ? 'Procesando...' : 'Devolución defectuosa'}
+                                                                </button>
+                                                            </>
+                                                        ) : null}
+                                                    </div>
                                                 </article>
                                             );
                                         })()
@@ -1344,12 +1334,7 @@ export default function ReservasPage() {
                         </div>
                     </section>
 
-                    <section className="rounded-2xl border border-slate-200 bg-[#e8eff3] p-6">
-                        <h3 className="text-xs font-bold uppercase text-[#3a5f94]">Policy Note</h3>
-                        <p className="mt-3 text-sm leading-6 text-slate-600">
-                            Bookings should be reviewed by the coordinator before confirmation. Keep the final approval flow inside the same visual language used across the platform.
-                        </p>
-                    </section>
+                    
 
                     {/* Modal for close/report confirmation */}
                     {modalOpen && (
