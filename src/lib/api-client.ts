@@ -41,6 +41,19 @@ const toFriendlyApiError = (path: string, message: string, status?: number) => {
     return "Hay datos incompletos o con formato inválido. Revisa los campos obligatorios e inténtalo de nuevo.";
   }
 
+  // Map Zod / server validation patterns like "Too small: expected string to have >=3 characters"
+  if (normalizedMessage.includes("too small") || /expected string to have >=\s*\d+\s*characters/.test(normalizedMessage)) {
+    const match = normalizedMessage.match(/expected string to have >=\s*(\d+)\s*characters/);
+    const min = match ? Number(match[1]) : 3;
+    return `Uno o más campos son demasiado cortos (mínimo ${min} caracteres). Revisa los campos obligatorios y corrige los valores.`;
+  }
+
+  if (normalizedMessage.includes("too large") || /expected string to have <=\s*\d+\s*characters/.test(normalizedMessage)) {
+    const match = normalizedMessage.match(/expected string to have <=\s*(\d+)\s*characters/);
+    const max = match ? Number(match[1]) : null;
+    return max ? `Uno o más campos exceden el límite de ${max} caracteres. Reduce la longitud y vuelve a intentar.` : `Uno o más campos exceden el tamaño permitido. Revisa los campos e inténtalo de nuevo.`;
+  }
+
   if (status === 401 || normalizedMessage.includes("no autorizado")) {
     return "No tienes permisos para realizar esta acción. Verifica tu sesión o credenciales.";
   }
@@ -199,10 +212,18 @@ export async function fetchApiJsonWithOptions<T>(path: string, init?: RequestIni
       }
 
       if (!response.ok) {
-        const errorMessage =
-          body && typeof body === "object" && "error" in body && typeof body.error === "string"
-            ? body.error
-            : `HTTP ${response.status}`;
+        let errorMessage = `HTTP ${response.status}`;
+
+        if (body && typeof body === "object") {
+          if (Array.isArray((body as any).details)) {
+            const details = (body as any).details as Array<{ path?: string; message?: string }>;
+            const mapped = details.map((d) => (d.path ? `${d.path}: ${d.message}` : d.message)).join("; ");
+            errorMessage = `${(body as any).error ?? 'Error de validación'}: ${mapped}`;
+          } else if ("error" in body && typeof (body as any).error === "string") {
+            errorMessage = (body as any).error;
+          }
+        }
+
         throw new HttpResponseError(errorMessage, response.status);
       }
 

@@ -5,6 +5,8 @@ import { fetchApiJson } from "@/lib/api-client";
 import { getCachedData, setCachedData } from "@/lib/cache-storage";
 import { readAuthSession } from "@/lib/auth-session";
 import { useEffect, useMemo, useRef, useState, type SyntheticEvent } from "react";
+import toast from "react-hot-toast";
+import { confirmToast } from "@/lib/toast-dialog";
 
 type StaffView = "directory" | "schedule";
 type StaffMobileDetailTab = "profile" | "tasks" | "daily" | "academic" | "activity";
@@ -1162,7 +1164,7 @@ function StaffScheduleBoard({
     event.preventDefault();
 
     if (!canManageStaff) {
-      alert("Solo el perfil Administrador puede modificar jornadas y pausas.");
+      toast.error("Solo el perfil Administrador puede modificar jornadas y pausas.");
       return;
     }
 
@@ -1172,13 +1174,13 @@ function StaffScheduleBoard({
 
     const validationError = validateEditorRows();
     if (validationError) {
-      alert(validationError);
+      toast.error(validationError);
       return;
     }
 
     const pausaValidationError = validatePausaRows();
     if (pausaValidationError) {
-      alert(pausaValidationError);
+      toast.error(pausaValidationError);
       return;
     }
 
@@ -1309,9 +1311,9 @@ function StaffScheduleBoard({
       });
 
       closeEditor();
-      alert("Jornada y pausas actualizadas correctamente.");
+      toast.success("Jornada y pausas actualizadas correctamente.");
     } catch (error) {
-      alert(error instanceof Error ? error.message : "No se pudo guardar la configuración de jornada/pausas.");
+      toast.error(error instanceof Error ? error.message : "No se pudo guardar la configuración de jornada/pausas.");
     } finally {
       setIsSavingJornada(false);
     }
@@ -2817,7 +2819,7 @@ export default function StaffPage() {
     event.preventDefault();
 
     if (!canManageStaff) {
-      alert("Solo el perfil Administrador puede agregar personal.");
+      toast.error("Solo el perfil Administrador puede agregar personal.");
       return;
     }
 
@@ -2830,27 +2832,27 @@ export default function StaffPage() {
 
       // Validar campos requeridos
       if (!newStaff.firstName || !newStaff.lastName) {
-        alert("Por favor completa los campos de nombre y apellido.");
+        toast.error("Por favor completa los campos de nombre y apellido.");
         return;
       }
 
       if (!resolvedBirthDate) {
-        alert("Por favor selecciona una fecha de nacimiento valida (ano, mes y dia).");
+        toast.error("Por favor selecciona una fecha de nacimiento valida (ano, mes y dia).");
         return;
       }
 
       if (!isAdultBirthDate(resolvedBirthDate)) {
-        alert("Solo se pueden registrar personas mayores de edad (18+).");
+        toast.error("Solo se pueden registrar personas mayores de edad (18+).");
         return;
       }
 
       if (requiresCredential && newStaff.password.trim().length < 8) {
-        alert("Administrador y Monitor requieren una contraseña de al menos 8 caracteres.");
+        toast.error("Administrador y Monitor requieren una contraseña de al menos 8 caracteres.");
         return;
       }
 
       if (requiresCredential && newStaff.password !== newStaff.passwordConfirm) {
-        alert("La contraseña y su confirmación no coinciden.");
+        toast.error("La contraseña y su confirmación no coinciden.");
         return;
       }
 
@@ -2859,7 +2861,7 @@ export default function StaffPage() {
         (slot) => !slot.day || !slot.startTime || !slot.endTime,
       );
       if (hasIncompleteSlot) {
-        alert("Hay bloques de horario incompletos. Completa hora inicio y hora fin, o elimina el bloque.");
+        toast.error("Hay bloques de horario incompletos. Completa hora inicio y hora fin, o elimina el bloque.");
         return;
       }
 
@@ -2870,13 +2872,13 @@ export default function StaffPage() {
         }));
 
       if (hasAnySlot && bloqueosClase.length === 0) {
-        alert("Debes completar al menos un bloque valido o eliminar todos los bloques.");
+        toast.error("Debes completar al menos un bloque valido o eliminar todos los bloques.");
         return;
       }
 
       const blockValidationError = validateClassBlocks(bloqueosClase);
       if (blockValidationError) {
-        alert(`Error en horarios de clase: ${blockValidationError}`);
+        toast.error(`Error en horarios de clase: ${blockValidationError}`);
         return;
       }
 
@@ -2903,13 +2905,13 @@ export default function StaffPage() {
         }),
       });
 
-      alert(`Colaborador ${newStaff.firstName} ${newStaff.lastName} creado correctamente.`);
+      toast.success(`Colaborador ${newStaff.firstName} ${newStaff.lastName} creado correctamente.`);
       closeAddStaffForm();
       setFormFeedback(null);
       await loadStaff();
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "No se pudo guardar el staff.";
-      alert(getFriendlyStaffApiError(errorMessage, "guardar"));
+      toast.error(getFriendlyStaffApiError(errorMessage, "guardar"));
       setFormFeedback(null);
     } finally {
       setIsSavingNewStaff(false);
@@ -2963,12 +2965,12 @@ export default function StaffPage() {
     event.preventDefault();
 
     if (!canManageStaff) {
-      alert("Solo el perfil Administrador puede editar perfiles.");
+      toast.error("Solo el perfil Administrador puede editar perfiles.");
       return;
     }
 
     if (!selectedStaff) {
-      alert("Por favor selecciona un staff para editar.");
+      toast.error("Por favor selecciona un staff para editar.");
       return;
     }
 
@@ -2980,27 +2982,27 @@ export default function StaffPage() {
       const requiresCredential = roleRequiresCredential(editStaff.roleId);
 
       if (!resolvedBirthDate) {
-        alert("Por favor selecciona una fecha de nacimiento valida (ano, mes y dia).");
+        toast.error("Por favor selecciona una fecha de nacimiento valida (ano, mes y dia).");
         return;
       }
 
       if (!isAdultBirthDate(resolvedBirthDate)) {
-        alert("Solo se pueden registrar personas mayores de edad (18+).");
+        toast.error("Solo se pueden registrar personas mayores de edad (18+).");
         return;
       }
 
       if (requiresCredential && !selectedStaff.tieneCredencial && editStaff.password.trim().length < 8) {
-        alert("Este rol requiere contraseña. Ingresa una contraseña de al menos 8 caracteres.");
+        toast.error("Este rol requiere contraseña. Ingresa una contraseña de al menos 8 caracteres.");
         return;
       }
 
       if (editStaff.password.trim().length > 0 && editStaff.password.trim().length < 8) {
-        alert("Si deseas cambiar la contraseña, debe tener al menos 8 caracteres.");
+        toast.error("Si deseas cambiar la contraseña, debe tener al menos 8 caracteres.");
         return;
       }
 
       if (editStaff.password.trim().length > 0 && editStaff.password !== editStaff.passwordConfirm) {
-        alert("La contraseña y su confirmación no coinciden.");
+        toast.error("La contraseña y su confirmación no coinciden.");
         return;
       }
 
@@ -3009,7 +3011,7 @@ export default function StaffPage() {
         (slot) => !slot.day || !slot.startTime || !slot.endTime,
       );
       if (hasIncompleteSlot) {
-        alert("Hay bloques de horario incompletos. Completa hora inicio y hora fin, o elimina el bloque.");
+        toast.error("Hay bloques de horario incompletos. Completa hora inicio y hora fin, o elimina el bloque.");
         return;
       }
 
@@ -3020,13 +3022,13 @@ export default function StaffPage() {
         }));
 
       if (hasAnySlot && bloqueosClase.length === 0) {
-        alert("Debes completar al menos un bloque valido o eliminar todos los bloques.");
+        toast.error("Debes completar al menos un bloque valido o eliminar todos los bloques.");
         return;
       }
 
       const blockValidationError = validateClassBlocks(bloqueosClase);
       if (blockValidationError) {
-        alert(`Error en horarios de clase: ${blockValidationError}`);
+        toast.error(`Error en horarios de clase: ${blockValidationError}`);
         return;
       }
 
@@ -3053,13 +3055,13 @@ export default function StaffPage() {
         }),
       });
 
-      alert(`Perfil de ${editStaff.firstName} ${editStaff.lastName} actualizado correctamente.`);
+      toast.success(`Perfil de ${editStaff.firstName} ${editStaff.lastName} actualizado correctamente.`);
       setShowEditStaffForm(false);
       setFormFeedback(null);
       await loadStaff();
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "No se pudo actualizar el staff.";
-      alert(getFriendlyStaffApiError(errorMessage, "actualizar"));
+      toast.error(getFriendlyStaffApiError(errorMessage, "actualizar"));
       setFormFeedback(null);
     } finally {
       setIsSavingEditStaff(false);
@@ -3070,18 +3072,18 @@ export default function StaffPage() {
     event.preventDefault();
 
     if (!canManageStaff) {
-      alert("Solo el perfil Administrador puede ajustar horas acumuladas.");
+      toast.error("Solo el perfil Administrador puede ajustar horas acumuladas.");
       return;
     }
 
     if (!selectedStaff) {
-      alert("Selecciona un miembro del personal primero.");
+      toast.error("Selecciona un miembro del personal primero.");
       return;
     }
 
     const parsedHours = Number(balanceAdjustmentHours);
     if (!Number.isFinite(parsedHours) || Math.abs(parsedHours) < 0.01) {
-      alert("Ingresa un valor valido diferente de 0. Usa positivo para horas a favor y negativo para horas en contra.");
+      toast.error("Ingresa un valor valido diferente de 0. Usa positivo para horas a favor y negativo para horas en contra.");
       return;
     }
 
@@ -3102,10 +3104,10 @@ export default function StaffPage() {
         loadStaff(),
         loadBalanceMovements(selectedStaff.id),
       ]);
-      alert("Ajuste de horas registrado correctamente.");
+      toast.success("Ajuste de horas registrado correctamente.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "No se pudo registrar el ajuste de horas.";
-      alert(message);
+      toast.error(message);
     } finally {
       setIsSavingBalanceMovement(false);
     }
@@ -3231,16 +3233,19 @@ export default function StaffPage() {
 
   async function handleDeleteStaff() {
     if (!canManageStaff) {
-      alert("Solo el perfil Administrador puede eliminar personal.");
+      toast.error("Solo el perfil Administrador puede eliminar personal.");
       return;
     }
 
     if (!selectedStaff) {
-      alert("Por favor selecciona un staff para eliminar.");
+      toast.error("Por favor selecciona un staff para eliminar.");
       return;
     }
 
-    const confirmDelete = confirm(`¿Estás seguro de que deseas eliminar a ${selectedStaff.nombres} ${selectedStaff.apellidos}? Esta acción no se puede deshacer.`);
+    const confirmDelete = await confirmToast(`¿Estás seguro de que deseas eliminar a ${selectedStaff.nombres} ${selectedStaff.apellidos}? Esta acción no se puede deshacer.`, {
+      title: "Eliminar personal",
+      confirmLabel: "Eliminar",
+    });
     if (!confirmDelete) return;
 
     try {
@@ -3249,12 +3254,12 @@ export default function StaffPage() {
         headers: { "Content-Type": "application/json" },
       });
 
-      alert(`Se eliminó correctamente a ${selectedStaff.nombres} ${selectedStaff.apellidos}.`);
+      toast.success(`Se eliminó correctamente a ${selectedStaff.nombres} ${selectedStaff.apellidos}.`);
       setSelectedStaffId(null);
       await loadStaff();
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "No se pudo eliminar el staff.";
-      alert(getFriendlyStaffApiError(errorMessage, "eliminar"));
+      toast.error(getFriendlyStaffApiError(errorMessage, "eliminar"));
     }
   }
 

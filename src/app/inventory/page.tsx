@@ -130,6 +130,7 @@ export default function InventoryPage() {
   const [inventoryError, setInventoryError] = useState<string | null>(null);
   const [activeModal, setActiveModal] = useState<InventoryModalState>(null);
   const [activeItemMenuId, setActiveItemMenuId] = useState<string | null>(null);
+  const [itemSearchQuery, setItemSearchQuery] = useState<string>("");
   const [groupForm, setGroupForm] = useState<InventoryGroupFormState>({
     name: "",
     icon: "inventory_2",
@@ -265,6 +266,21 @@ export default function InventoryPage() {
           return a.name.localeCompare(b.name);
         }),
     [inventoryItems, selectedGroup],
+  );
+
+  const filteredItems = useMemo(
+    () =>
+      itemSearchQuery.trim() === ""
+        ? selectedItems
+        : selectedItems.filter((item) => {
+            const query = itemSearchQuery.toLowerCase().trim();
+            return (
+              item.name.toLowerCase().includes(query) ||
+              item.code.toLowerCase().includes(query) ||
+              item.room.toLowerCase().includes(query)
+            );
+          }),
+    [selectedItems, itemSearchQuery],
   );
 
   const selectedGroupItemCount = useMemo(
@@ -808,7 +824,7 @@ export default function InventoryPage() {
           </div>
 
           <div className="xl:col-span-2">
-            <div className="mb-3 flex items-center justify-between gap-2">
+            <div className="mb-4 flex items-center justify-between gap-2">
               <h4 className="text-sm font-bold text-[#2a3439]">Lista de Elementos</h4>
               {canManageInventory && selectedGroup ? (
                 <button className="rounded-md border border-[#3a5f94] bg-[#3a5f94] px-3 py-1.5 text-xs font-bold text-white hover:bg-[#2f4f7a]" type="button" onClick={createItem}>
@@ -816,11 +832,28 @@ export default function InventoryPage() {
                 </button>
               ) : null}
             </div>
+            
+            {selectedItems.length > 0 && (
+              <div className="mb-4">
+                <div className="relative">
+                  <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[#566166] text-[18px]">search</span>
+                  <input
+                    type="text"
+                    placeholder="Buscar por nombre, código o salón..."
+                    value={itemSearchQuery}
+                    onChange={(e) => setItemSearchQuery(e.target.value)}
+                    className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-10 pr-3 text-sm placeholder-[#a8aeb5] focus:border-[#3a5f94] focus:outline-none focus:ring-1 focus:ring-[#3a5f94]/20"
+                  />
+                </div>
+              </div>
+            )}
+            
             {isLoadingInventory ? (
               <p className="text-xs text-[#566166]">Cargando inventario...</p>
             ) : selectedItems.length > 0 ? (
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                {selectedItems.map((item) => (
+                {filteredItems.length > 0 ? (
+                  filteredItems.map((item) => (
                   <div
                     className={`relative overflow-visible rounded-lg border p-3 ${
                       item.defective ? "border-rose-200 bg-rose-50" : "border-transparent bg-[#f0f4f7]/60"
@@ -940,7 +973,10 @@ export default function InventoryPage() {
                       </p>
                     ) : null}
                   </div>
-                ))}
+                  ))
+                ) : (
+                  <p className="col-span-full text-center text-xs text-[#566166] py-4">No se encontraron elementos que coincidan con "{itemSearchQuery}"</p>
+                )}
               </div>
             ) : (
               <p className="text-xs text-[#566166]">No hay elementos para este grupo.</p>

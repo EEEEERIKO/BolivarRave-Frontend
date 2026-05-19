@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { readAuthSession } from "@/lib/auth-session";
 import { fetchApiJson } from "@/lib/api-client";
+import toast from "react-hot-toast";
 
 type ResourceType = "rooms" | "equipment";
 
@@ -34,10 +35,19 @@ type ReservationFeedItem = {
     endTime: string;
     requesterName: string;
     requesterDocument: string;
+    requesterEmail: string | null;
+    requesterPhone: string | null;
     status: string;
     destinationRoomLabel: string | null;
     returnedAt: string | null;
     createdAt: string;
+};
+
+type RequesterProfile = {
+    requesterDocument: string;
+    requesterName: string;
+    requesterEmail: string | null;
+    requesterPhone: string | null;
 };
 
 // We'll populate items dynamically when user selects a group.
@@ -56,6 +66,34 @@ function getBogotaTodayKey() {
     const day = parts.find((part) => part.type === "day")?.value ?? "01";
 
     return `${year}-${month}-${day}`;
+}
+
+function getBogotaCurrentTimeKey() {
+    const formatter = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "America/Bogota",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+    });
+
+    return formatter.format(new Date());
+}
+
+function getDefaultBookingTimeRange() {
+    const startTime = getBogotaCurrentTimeKey();
+    const [hoursText = "00", minutesText = "00"] = startTime.split(":");
+    const hours = Number(hoursText);
+    const minutes = Number(minutesText);
+    const safeHours = Number.isFinite(hours) ? hours : 0;
+    const safeMinutes = Number.isFinite(minutes) ? minutes : 0;
+    const endTotalMinutes = safeHours * 60 + safeMinutes + 120;
+    const endHours = Math.floor((endTotalMinutes / 60) % 24);
+    const endMinutes = endTotalMinutes % 60;
+
+    return {
+        startTime,
+        endTime: `${String(endHours).padStart(2, "0")}:${String(endMinutes).padStart(2, "0")}`,
+    };
 }
 
 function formatTime(value: string) {
@@ -92,13 +130,18 @@ function resourceTypeLabel(type: ResourceType) {
     return type === "rooms" ? "Clases de Sábado" : "Equipos";
 }
 
+function normalizeDocumentNumber(value: string) {
+    return value.trim().replace(/[\s.-]/g, "").toLowerCase();
+}
+
 export default function ReservasPage() {
     const todayKey = useMemo(() => getBogotaTodayKey(), []);
+    const defaultBookingTimeRange = useMemo(() => getDefaultBookingTimeRange(), []);
     const [resourceType, setResourceType] = useState<ResourceType>("rooms");
     const [selectedResourceId, setSelectedResourceId] = useState<string>("");
     const [bookingDate, setBookingDate] = useState(todayKey);
-    const [startTime, setStartTime] = useState("08:00");
-    const [endTime, setEndTime] = useState("10:00");
+    const [startTime, setStartTime] = useState(defaultBookingTimeRange.startTime);
+    const [endTime, setEndTime] = useState(defaultBookingTimeRange.endTime);
     const [purpose, setPurpose] = useState("");
     const [fullName, setFullName] = useState("");
     const [documentNumber, setDocumentNumber] = useState("");
@@ -112,15 +155,19 @@ export default function ReservasPage() {
     const [inventoryGroups, setInventoryGroups] = useState<InventoryGroup[]>([]);
     const [selectedGroupId, setSelectedGroupId] = useState<string>("");
     const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
+    const [allReservations, setAllReservations] = useState<ReservationFeedItem[]>([]);
     const [reservationsFeed, setReservationsFeed] = useState<ReservationFeedItem[]>([]);
     const [reservationsLoading, setReservationsLoading] = useState(false);
     const [returningReservationId, setReturningReservationId] = useState<string | null>(null);
     const [actionReservationId, setActionReservationId] = useState<string | null>(null);
     const [modalOpen, setModalOpen] = useState(false);
-    const [modalType, setModalType] = useState<'close' | 'report' | null>(null);
+    const [modalType, setModalType] = useState<'close' | 'report' | 'cancel' | 'defective-return' | null>(null);
     const [modalReservationId, setModalReservationId] = useState<string | null>(null);
     const [reportReason, setReportReason] = useState('');
     const [showReservationHistory, setShowReservationHistory] = useState(false);
+    const [requesterLookupMessage, setRequesterLookupMessage] = useState<string | null>(null);
+    const [prefilledRequesterDocument, setPrefilledRequesterDocument] = useState<string>("");
+    const [requesterStage, setRequesterStage] = useState<'id-only' | 'full'>('id-only');
 
     const availableInventoryItems = inventoryItems.filter((it) => (it.status ?? "").toLowerCase() === "disponible");
 
@@ -280,6 +327,26 @@ export default function ReservasPage() {
         [roomsCatalog, selectedDestinationRoomId],
     );
 
+    const requesterProfilesByDocument = useMemo(() => {
+        const profiles = new Map<string, RequesterProfile>();
+
+        for (const reservation of allReservations) {
+            const normalizedDocument = normalizeDocumentNumber(reservation.requesterDocument);
+            if (!normalizedDocument || profiles.has(normalizedDocument)) {
+                continue;
+            }
+
+            profiles.set(normalizedDocument, {
+                requesterDocument: reservation.requesterDocument,
+                requesterName: reservation.requesterName,
+                requesterEmail: reservation.requesterEmail,
+                requesterPhone: reservation.requesterPhone,
+            });
+        }
+
+        return profiles;
+    }, [allReservations]);
+
     const requestSummary = useMemo(() => {
         return {
             resource: selectedResource ? resourceLabel(selectedResource) : "Sin recurso seleccionado",
@@ -315,13 +382,53 @@ export default function ReservasPage() {
         setReservationsLoading(true);
 
         try {
-            const response = await fetchApiJson<{ reservas?: ReservationFeedItem[] }>("/api/reservas", { cache: "no-store" });
-            setReservationsFeed((response.reservas ?? []).slice(0, 6));
+                const response = await fetchApiJson<{ reservas?: ReservationFeedItem[] }>("/api/reservas", { cache: "no-store" });
+                const reservas = response.reservas ?? [];
+                setAllReservations(reservas);
+                setReservationsFeed(reservas.slice(0, 6));
         } catch {
-            setReservationsFeed([]);
+                const err = (arguments[0] ?? null) as unknown as Error;
+                const msg = err instanceof Error ? err.message : "No se pudo cargar las reservas.";
+                setAllReservations([]);
+                setReservationsFeed([]);
+                toast.error(msg);
         } finally {
             setReservationsLoading(false);
         }
+    };
+
+    const handleRequesterDocumentLookup = () => {
+        const normalizedDocument = normalizeDocumentNumber(documentNumber);
+
+        if (!normalizedDocument) {
+            setRequesterLookupMessage(null);
+            setPrefilledRequesterDocument("");
+            setRequesterStage('id-only');
+            return;
+        }
+
+        const previousDocument = prefilledRequesterDocument;
+        const profile = requesterProfilesByDocument.get(normalizedDocument);
+
+        if (!profile) {
+            if (previousDocument && previousDocument !== normalizedDocument) {
+                setFullName("");
+                setEmail("");
+                setPhone("");
+            }
+
+            setPrefilledRequesterDocument("");
+            setRequesterLookupMessage("No hay reservas previas para esta cédula. Completa los datos manualmente.");
+            setRequesterStage('full');
+            return;
+        }
+
+        setFullName(profile.requesterName);
+        setEmail(profile.requesterEmail ?? "");
+        setPhone(profile.requesterPhone ?? "");
+        setPrefilledRequesterDocument(normalizedDocument);
+        setRequesterLookupMessage(`Se completaron los datos desde una reserva previa de ${profile.requesterName}.`);
+        setRequesterStage('full');
     };
 
     const handleReturnReservation = async (reservationId: string) => {
@@ -356,6 +463,20 @@ export default function ReservasPage() {
         setModalOpen(true);
     };
 
+    const handleCancelReservation = async (reservationId: string) => {
+        setModalType('cancel');
+        setModalReservationId(reservationId);
+        setReportReason('');
+        setModalOpen(true);
+    };
+
+    const handleDefectiveReturn = async (reservationId: string) => {
+        setModalType('defective-return');
+        setModalReservationId(reservationId);
+        setReportReason('');
+        setModalOpen(true);
+    };
+
     const handleModalClose = () => {
         setModalOpen(false);
         setModalType(null);
@@ -366,8 +487,8 @@ export default function ReservasPage() {
     const handleModalConfirm = async () => {
         if (!modalReservationId) return;
 
-        // Validate report reason if needed
-        if (modalType === 'report') {
+        // Validate reason if needed
+        if (modalType === 'report' || modalType === 'defective-return') {
             const trimmed = reportReason.trim();
             if (trimmed.length > 0 && trimmed.length < 5) {
                 setStatusMessage('El motivo debe tener al menos 5 caracteres.');
@@ -391,6 +512,19 @@ export default function ReservasPage() {
                     method: 'PATCH',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ reportReason: trimmed.length > 0 ? trimmed : null }),
+                });
+                setStatusMessage(response.message);
+            } else if (modalType === 'cancel') {
+                const response = await fetchApiJson<{ message: string; reservationId: string }>(`/api/reservas/${modalReservationId}/cancel`, {
+                    method: 'PATCH',
+                });
+                setStatusMessage(response.message);
+            } else if (modalType === 'defective-return') {
+                const trimmed = reportReason.trim();
+                const response = await fetchApiJson<{ message: string; reservationId: string }>(`/api/reservas/${modalReservationId}/defective-return`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ defectReason: trimmed.length > 0 ? trimmed : null }),
                 });
                 setStatusMessage(response.message);
             }
@@ -457,9 +591,14 @@ export default function ReservasPage() {
             });
 
             setStatusMessage(`${response.message} ID: ${response.reservationId}`);
+            setRequesterLookupMessage(null);
+            setPrefilledRequesterDocument("");
+            setRequesterStage('id-only');
             void loadReservationsFeed();
         } catch (error) {
-            setStatusMessage(error instanceof Error ? error.message : "No se pudo registrar la reserva.");
+            const msg = error instanceof Error ? error.message : "No se pudo registrar la reserva.";
+            setStatusMessage(msg);
+            toast.error(msg);
         } finally {
             setIsSubmitting(false);
         }
@@ -484,7 +623,7 @@ export default function ReservasPage() {
                                 <p className="text-[9px] font-bold tracking-[0.28em] text-slate-500 uppercase">Apartado de Reservas</p>
                                 <h1 className="mt-1 text-3xl font-black tracking-tight text-[#2a3439] sm:text-4xl">Registro de Reservas</h1>
                                 <p className="mt-2 max-w-xl text-sm leading-6 text-slate-600">
-                                    Esta página es para registrar las reservas de salones (durante el sábado) y equipos (durante la semana) del edificio académico Bolivar Rave.
+                                    Esta página es para registrar las reservas de salones (durante el sábado) y equipos del edificio académico Bolivar Rave.
                                 </p>
                             </div>
 
@@ -658,58 +797,25 @@ export default function ReservasPage() {
                                                                         const m = startTime.split(":")[1] || "00";
                                                                         setStartTime(`${String(h).padStart(2, "0")}:${m}`);
                                                                     }}
-                                                                    className="w-6 bg-transparent text-center text-xs font-bold text-slate-900 outline-none"
+                                                                    className="w-12 bg-transparent text-center text-xs font-bold text-slate-900 outline-none"
                                                                 />
                                                                 <span className="text-xs font-bold text-slate-400">:</span>
                                                                 <input
                                                                     type="number"
                                                                     min="0"
                                                                     max="59"
-                                                                    step="15"
                                                                     value={startTime.split(":")[1] || "00"}
                                                                     onChange={(e) => {
                                                                         const h = startTime.split(":")[0] || "06";
                                                                         const m = Math.max(0, Math.min(59, parseInt(e.target.value) || 0));
                                                                         setStartTime(`${h}:${String(m).padStart(2, "0")}`);
                                                                     }}
-                                                                    className="w-6 bg-transparent text-center text-xs font-bold text-slate-900 outline-none"
+                                                                    className="w-12 bg-transparent text-center text-xs font-bold text-slate-900 outline-none"
                                                                 />
                                                             </div>
                                                         </div>
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => {
-                                                                const [h, m] = startTime.split(":").map(Number);
-                                                                let newH = h, newM = m + 15;
-                                                                if (newM >= 60) {
-                                                                    newM -= 60;
-                                                                    newH += 1;
-                                                                }
-                                                                if (newH >= 6 && newH <= 22) {
-                                                                    setStartTime(`${String(newH).padStart(2, "0")}:${String(newM).padStart(2, "0")}`);
-                                                                }
-                                                            }}
-                                                            className="flex h-4 w-4 items-center justify-center rounded bg-[#3a5f94] text-white hover:bg-[#2d5387] active:scale-95 flex-shrink-0"
-                                                        >
-                                                            <span className="material-symbols-outlined" style={{ fontSize: "10px" }}>add</span>
-                                                        </button>
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => {
-                                                                const [h, m] = startTime.split(":").map(Number);
-                                                                let newH = h, newM = m - 15;
-                                                                if (newM < 0) {
-                                                                    newM += 60;
-                                                                    newH -= 1;
-                                                                }
-                                                                if (newH >= 6 && newH <= 22) {
-                                                                    setStartTime(`${String(newH).padStart(2, "0")}:${String(newM).padStart(2, "0")}`);
-                                                                }
-                                                            }}
-                                                            className="flex h-4 w-4 items-center justify-center rounded bg-slate-200 text-slate-600 hover:bg-slate-300 active:scale-95 flex-shrink-0"
-                                                        >
-                                                            <span className="material-symbols-outlined" style={{ fontSize: "10px" }}>remove</span>
-                                                        </button>
+                                                        
+                                                        
                                                     </div>
                                                 </div>
 
@@ -729,58 +835,25 @@ export default function ReservasPage() {
                                                                         const m = endTime.split(":")[1] || "00";
                                                                         setEndTime(`${String(h).padStart(2, "0")}:${m}`);
                                                                     }}
-                                                                    className="w-6 bg-transparent text-center text-xs font-bold text-slate-900 outline-none"
+                                                                    className="w-12 bg-transparent text-center text-xs font-bold text-slate-900 outline-none"
                                                                 />
                                                                 <span className="text-xs font-bold text-slate-400">:</span>
                                                                 <input
                                                                     type="number"
                                                                     min="0"
                                                                     max="59"
-                                                                    step="15"
                                                                     value={endTime.split(":")[1] || "00"}
                                                                     onChange={(e) => {
                                                                         const h = endTime.split(":")[0] || "06";
                                                                         const m = Math.max(0, Math.min(59, parseInt(e.target.value) || 0));
                                                                         setEndTime(`${h}:${String(m).padStart(2, "0")}`);
                                                                     }}
-                                                                    className="w-6 bg-transparent text-center text-xs font-bold text-slate-900 outline-none"
+                                                                    className="w-12 bg-transparent text-center text-xs font-bold text-slate-900 outline-none"
                                                                 />
                                                             </div>
                                                         </div>
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => {
-                                                                const [h, m] = endTime.split(":").map(Number);
-                                                                let newH = h, newM = m + 15;
-                                                                if (newM >= 60) {
-                                                                    newM -= 60;
-                                                                    newH += 1;
-                                                                }
-                                                                if (newH >= 6 && newH <= 22) {
-                                                                    setEndTime(`${String(newH).padStart(2, "0")}:${String(newM).padStart(2, "0")}`);
-                                                                }
-                                                            }}
-                                                            className="flex h-4 w-4 items-center justify-center rounded bg-[#3a5f94] text-white hover:bg-[#2d5387] active:scale-95 flex-shrink-0"
-                                                        >
-                                                            <span className="material-symbols-outlined" style={{ fontSize: "10px" }}>add</span>
-                                                        </button>
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => {
-                                                                const [h, m] = endTime.split(":").map(Number);
-                                                                let newH = h, newM = m - 15;
-                                                                if (newM < 0) {
-                                                                    newM += 60;
-                                                                    newH -= 1;
-                                                                }
-                                                                if (newH >= 6 && newH <= 22) {
-                                                                    setEndTime(`${String(newH).padStart(2, "0")}:${String(newM).padStart(2, "0")}`);
-                                                                }
-                                                            }}
-                                                            className="flex h-4 w-4 items-center justify-center rounded bg-slate-200 text-slate-600 hover:bg-slate-300 active:scale-95 flex-shrink-0"
-                                                        >
-                                                            <span className="material-symbols-outlined" style={{ fontSize: "10px" }}>remove</span>
-                                                        </button>
+                                                        
+                                                        
                                                     </div>
                                                     
                                                 </div>
@@ -843,47 +916,75 @@ export default function ReservasPage() {
                                     <h3 className="mt-1 text-lg font-black text-slate-900">¿Quién está realizando la solicitud?</h3>
                                 </div>
 
-                                <div className="grid gap-4 md:grid-cols-2">
-                                    <label className="block">
-                                        <span className="mb-2 block text-xs font-bold text-slate-500 uppercase">Nombre Completo</span>
-                                        <input
-                                            type="text"
-                                            value={fullName}
-                                            onChange={(event) => setFullName(event.target.value)}
-                                            placeholder="Erik Valencia Cardona"
-                                            className="w-full rounded-xl border border-slate-200 bg-[#f7f9fb] p-3 text-sm text-slate-700 shadow-sm outline-none transition focus:border-[#3a5f94]"
-                                        />
-                                    </label>
-                                    <label className="block">
-                                        <span className="mb-2 block text-xs font-bold text-slate-500 uppercase">ID / documento</span>
-                                        <input
-                                            type="text"
-                                            value={documentNumber}
-                                            onChange={(event) => setDocumentNumber(event.target.value)}
-                                            placeholder="12938475"
-                                            className="w-full rounded-xl border border-slate-200 bg-[#f7f9fb] p-3 text-sm text-slate-700 shadow-sm outline-none transition focus:border-[#3a5f94]"
-                                        />
-                                    </label>
-                                    <label className="block">
-                                        <span className="mb-2 block text-xs font-bold text-slate-500 uppercase">Correo Electrónico</span>
-                                        <input
-                                            type="email"
-                                            value={email}
-                                            onChange={(event) => setEmail(event.target.value)}
-                                            placeholder="erik@unac.edu.co"
-                                            className="w-full rounded-xl border border-slate-200 bg-[#f7f9fb] p-3 text-sm text-slate-700 shadow-sm outline-none transition focus:border-[#3a5f94]"
-                                        />
-                                    </label>
-                                    <label className="block">
-                                        <span className="mb-2 block text-xs font-bold text-slate-500 uppercase">Número de teléfono</span>
-                                        <input
-                                            type="tel"
-                                            value={phone}
-                                            onChange={(event) => setPhone(event.target.value)}
-                                            placeholder="+57 300 000 0000"
-                                            className="w-full rounded-xl border border-slate-200 bg-[#f7f9fb] p-3 text-sm text-slate-700 shadow-sm outline-none transition focus:border-[#3a5f94]"
-                                        />
-                                    </label>
+                                <div className="grid gap-4">
+                                    {requesterStage === 'id-only' ? (
+                                        <label className="block">
+                                            <span className="mb-2 block text-xs font-bold text-slate-500 uppercase">ID / documento</span>
+                                            <input
+                                                type="text"
+                                                value={documentNumber}
+                                                onChange={(event) => setDocumentNumber(event.target.value)}
+                                                onBlur={handleRequesterDocumentLookup}
+                                                placeholder="12938475"
+                                                className="w-full rounded-xl border border-slate-200 bg-[#f7f9fb] p-3 text-sm text-slate-700 shadow-sm outline-none transition focus:border-[#3a5f94]"
+                                            />
+                                            {requesterLookupMessage ? (
+                                                <p className="mt-2 text-[11px] font-medium text-slate-500">{requesterLookupMessage}</p>
+                                            ) : null}
+                                        </label>
+                                    ) : (
+                                        <>
+                                            <div className="grid gap-4 md:grid-cols-2">
+                                                <label className="block">
+                                                    <span className="mb-2 block text-xs font-bold text-slate-500 uppercase">Nombre Completo</span>
+                                                    <input
+                                                        type="text"
+                                                        value={fullName}
+                                                        onChange={(event) => setFullName(event.target.value)}
+                                                        placeholder="Erik Valencia Cardona"
+                                                        className="w-full rounded-xl border border-slate-200 bg-[#f7f9fb] p-3 text-sm text-slate-700 shadow-sm outline-none transition focus:border-[#3a5f94]"
+                                                    />
+                                                </label>
+                                                <label className="block">
+                                                    <span className="mb-2 block text-xs font-bold text-slate-500 uppercase">ID / documento</span>
+                                                    <input
+                                                        type="text"
+                                                        value={documentNumber}
+                                                        onChange={(event) => setDocumentNumber(event.target.value)}
+                                                        onBlur={handleRequesterDocumentLookup}
+                                                        placeholder="12938475"
+                                                        className="w-full rounded-xl border border-slate-200 bg-[#f7f9fb] p-3 text-sm text-slate-700 shadow-sm outline-none transition focus:border-[#3a5f94]"
+                                                    />
+                                                    {requesterLookupMessage ? (
+                                                        <p className="mt-2 text-[11px] font-medium text-slate-500">{requesterLookupMessage}</p>
+                                                    ) : null}
+                                                </label>
+                                            </div>
+
+                                            <div className="grid gap-4 md:grid-cols-2">
+                                                <label className="block">
+                                                    <span className="mb-2 block text-xs font-bold text-slate-500 uppercase">Correo Electrónico</span>
+                                                    <input
+                                                        type="email"
+                                                        value={email}
+                                                        onChange={(event) => setEmail(event.target.value)}
+                                                        placeholder="erik@unac.edu.co"
+                                                        className="w-full rounded-xl border border-slate-200 bg-[#f7f9fb] p-3 text-sm text-slate-700 shadow-sm outline-none transition focus:border-[#3a5f94]"
+                                                    />
+                                                </label>
+                                                <label className="block">
+                                                    <span className="mb-2 block text-xs font-bold text-slate-500 uppercase">Número de teléfono</span>
+                                                    <input
+                                                        type="tel"
+                                                        value={phone}
+                                                        onChange={(event) => setPhone(event.target.value)}
+                                                        placeholder="+57 300 000 0000"
+                                                        className="w-full rounded-xl border border-slate-200 bg-[#f7f9fb] p-3 text-sm text-slate-700 shadow-sm outline-none transition focus:border-[#3a5f94]"
+                                                    />
+                                                </label>
+                                            </div>
+                                        </>
+                                    )}
                                 </div>
                             </section>
 
@@ -893,7 +994,7 @@ export default function ReservasPage() {
                                     disabled={isSubmitting || endTime <= startTime}
                                     className="w-full rounded-xl bg-[#3a5f94] px-8 py-3.5 text-sm font-bold text-white shadow-lg shadow-[#3a5f94]/15 transition hover:bg-[#2d5387] active:scale-[0.98] sm:w-auto"
                                 >
-                                    {isSubmitting ? "Guardando..." : "Submit Request"}
+                                    {isSubmitting ? "Guardando..." : "Enviar Reserva"}
                                 </button>
                                 <button
                                     type="button"
@@ -902,19 +1003,23 @@ export default function ReservasPage() {
                                         setSelectedResourceId(roomsCatalog[0]?.id ?? "");
                                         setSelectedCardId(roomsCatalog[0]?.id ?? null);
                                         setBookingDate(todayKey);
-                                        setStartTime("08:00");
-                                        setEndTime("10:00");
+                                        const resetTimeRange = getDefaultBookingTimeRange();
+                                        setStartTime(resetTimeRange.startTime);
+                                        setEndTime(resetTimeRange.endTime);
                                         setPurpose("");
                                         setSelectedDestinationRoomId(roomsCatalog[0]?.id ?? "");
                                         setFullName("");
                                         setDocumentNumber("");
                                         setEmail("");
                                         setPhone("");
+                                        setRequesterLookupMessage(null);
+                                        setPrefilledRequesterDocument("");
+                                        setRequesterStage('id-only');
                                         setStatusMessage(null);
                                     }}
                                     className="w-full rounded-xl px-6 py-3.5 text-sm font-bold text-slate-600 transition hover:text-[#9f403d] sm:w-auto"
                                 >
-                                    Cancel
+                                    Eliminar información y empezar de nuevo
                                 </button>
                                 {statusMessage ? <p className="text-sm font-medium text-slate-600">{statusMessage}</p> : null}
                             </div>
@@ -1048,14 +1153,34 @@ export default function ReservasPage() {
                                                         ) : null}
                                                     </div>
 
-                                                    {reservation.resourceType === "equipment" && statusLower !== "devuelto" ? (
+                                                    {reservation.resourceType === "equipment" && (statusLower === 'confirmada' || statusLower === 'aprobada') ? (
+                                                        <div className="mt-3 space-y-2">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => void handleReturnReservation(reservation.id)}
+                                                                disabled={returningReservationId === reservation.id}
+                                                                className="inline-flex w-full items-center justify-center rounded-xl bg-[#3a5f94] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#2d5387] disabled:cursor-not-allowed disabled:opacity-60"
+                                                            >
+                                                                {returningReservationId === reservation.id ? "Devolviendo..." : "Devolución exitosa"}
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => void handleDefectiveReturn(reservation.id)}
+                                                                disabled={actionReservationId === reservation.id}
+                                                                className="inline-flex w-full items-center justify-center rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                                            >
+                                                                {actionReservationId === reservation.id ? 'Procesando...' : 'Devolución defectuosa'}
+                                                            </button>
+                                                        </div>
+                                                    ) : null}
+                                                    {statusLower === 'no_aceptado' ? (
                                                         <button
                                                             type="button"
-                                                            onClick={() => void handleReturnReservation(reservation.id)}
-                                                            disabled={returningReservationId === reservation.id}
-                                                            className="mt-4 inline-flex w-full items-center justify-center rounded-xl bg-[#3a5f94] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#2d5387] disabled:cursor-not-allowed disabled:opacity-60"
+                                                            onClick={() => void handleCancelReservation(reservation.id)}
+                                                            disabled={actionReservationId === reservation.id}
+                                                            className="mt-4 inline-flex w-full items-center justify-center rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
                                                         >
-                                                            {returningReservationId === reservation.id ? "Devolviendo..." : "Marcar como devuelto"}
+                                                            {actionReservationId === reservation.id ? 'Procesando...' : 'Cancelar solicitud'}
                                                         </button>
                                                     ) : null}
                                                     {statusLower === 'confirmada' ? (
@@ -1232,7 +1357,7 @@ export default function ReservasPage() {
                             <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-lg">
                                 <div className="border-b border-slate-200 px-6 py-4">
                                     <h2 className="text-lg font-bold text-slate-900">
-                                        {modalType === 'close' ? 'Cerrar Reserva' : 'Reportar Préstamo'}
+                                        {modalType === 'close' ? 'Cerrar Reserva' : modalType === 'cancel' ? 'Cancelar Solicitud' : modalType === 'defective-return' ? 'Devolución Defectuosa' : 'Reportar Préstamo'}
                                     </h2>
                                 </div>
 
@@ -1241,6 +1366,30 @@ export default function ReservasPage() {
                                         <p className="text-sm text-slate-600">
                                             ¿Estás seguro que deseas marcar esta reserva como cerrada?
                                         </p>
+                                    )}
+
+                                    {modalType === 'cancel' && (
+                                        <p className="text-sm text-slate-600">
+                                            ¿Estás seguro que deseas cancelar esta solicitud de reserva?
+                                        </p>
+                                    )}
+
+                                    {modalType === 'defective-return' && (
+                                        <div className="space-y-3">
+                                            <p className="text-sm text-slate-600">
+                                                Proporciona un motivo para la devolución defectuosa (mínimo 5 caracteres):
+                                            </p>
+                                            <textarea
+                                                value={reportReason}
+                                                onChange={(e) => setReportReason(e.target.value)}
+                                                placeholder="Describe el defecto o problema con el equipo..."
+                                                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm placeholder-slate-400 focus:border-[#3a5f94] focus:outline-none focus:ring-1 focus:ring-[#3a5f94]"
+                                                rows={4}
+                                            />
+                                            {reportReason.length > 0 && reportReason.length < 5 && (
+                                                <p className="text-xs text-rose-600">Mínimo 5 caracteres (escribiste {reportReason.length})</p>
+                                            )}
+                                        </div>
                                     )}
 
                                     {modalType === 'report' && (
@@ -1274,41 +1423,21 @@ export default function ReservasPage() {
                                     <button
                                         type="button"
                                         onClick={handleModalConfirm}
-                                        disabled={actionReservationId !== null || (modalType === 'report' && reportReason.trim().length < 5 && reportReason.trim().length > 0)}
+                                        disabled={actionReservationId !== null || ((modalType === 'report' || modalType === 'defective-return') && reportReason.trim().length < 5 && reportReason.trim().length > 0)}
                                         className={`flex-1 rounded-lg px-4 py-2.5 text-sm font-bold text-white transition ${
-                                            modalType === 'report'
+                                            modalType === 'report' || modalType === 'defective-return'
                                                 ? 'bg-rose-600 hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60'
                                                 : 'bg-[#3a5f94] hover:bg-[#2d5387] disabled:cursor-not-allowed disabled:opacity-60'
                                         }`}
                                     >
-                                        {actionReservationId ? 'Procesando...' : modalType === 'close' ? 'Cerrar Reserva' : 'Reportar'}
+                                        {actionReservationId ? 'Procesando...' : modalType === 'close' ? 'Cerrar Reserva' : modalType === 'cancel' ? 'Cancelar Solicitud' : modalType === 'defective-return' ? 'Confirmar Devolución Defectuosa' : 'Reportar'}
                                     </button>
                                 </div>
                             </div>
                         </div>
                     )}
 
-                    <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                        <h3 className="text-xs font-bold uppercase tracking-wide text-slate-500">Preview</h3>
-                        <div className="mt-4 rounded-2xl border border-slate-200 bg-[#f7f9fb] p-4">
-                            <div className="flex items-center justify-between gap-4">
-                                <div>
-                                    <p className="text-[10px] font-bold uppercase text-slate-500">Selected card</p>
-                                    <p className="text-sm font-black text-slate-900">{selectedResource ? selectedResource.label : "No selection"}</p>
-                                </div>
-                                <div className="rounded-full bg-white px-3 py-1 text-[11px] font-semibold text-slate-600 shadow-sm">
-                                    {selectedCardId ? "Ready" : "Select one"}
-                                </div>
-                            </div>
-                            <div className="mt-4 flex items-center gap-3 rounded-xl bg-white p-3 shadow-sm">
-                                <span className="material-symbols-outlined text-[#3a5f94]">event_available</span>
-                                <div>
-                                    <p className="text-[10px] font-bold uppercase text-slate-500">Booking window</p>
-                                    <p className="text-sm font-bold text-slate-900">{formatDuration(startTime, endTime)}</p>
-                                </div>
-                            </div>
-                        </div>
-                    </section>
+                    
 
                     
                 </div>

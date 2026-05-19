@@ -4,6 +4,8 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 import { fetchApiJson } from "@/lib/api-client";
 import { readAuthSession } from "@/lib/auth-session";
 import { useWebSocketSchedules } from "@/lib/use-websocket-schedules";
+import toast from "react-hot-toast";
+import { confirmToast } from "@/lib/toast-dialog";
 
 type AuditorioEstado = "Pendiente" | "Aprobada" | "Cancelada";
 
@@ -718,7 +720,7 @@ export default function AuditorioPage() {
 
     const overlapWith = hasOverlapWithOtherEvents(shiftedBlocks, eventId);
     if (overlapWith) {
-      window.alert(formatOverlapMessage(overlapWith));
+      toast.error(formatOverlapMessage(overlapWith));
       return;
     }
 
@@ -769,7 +771,7 @@ export default function AuditorioPage() {
       } catch (error) {
         const message = error instanceof Error ? error.message : "No se pudo mover la reserva";
         setLoadError(message);
-        window.alert(message);
+        toast.error(message);
         setEvents(previousEvents);
       }
     })();
@@ -916,7 +918,10 @@ export default function AuditorioPage() {
     }
 
     if (!editingEventId && formState.assignedStaffIds.length === 0) {
-      const confirmed = window.confirm("Seguro que quieres crearlo sin asignar a ningún trabajador?");
+      const confirmed = await confirmToast("Seguro que quieres crearlo sin asignar a ningún trabajador?", {
+        title: "Confirmar creación",
+        confirmLabel: "Crear igual",
+      });
       if (!confirmed) {
         return;
       }
@@ -962,7 +967,10 @@ export default function AuditorioPage() {
     if (!canManageAuditorio) return;
     if (!selectedEvent || isDeleting) return;
 
-    const accepted = window.confirm(`Eliminar la reserva "${selectedEvent.title}"?`);
+    const accepted = await confirmToast(`Eliminar la reserva "${selectedEvent.title}"?`, {
+      title: "Eliminar evento",
+      confirmLabel: "Eliminar",
+    });
     if (!accepted) return;
 
     setIsDeleting(true);
@@ -975,7 +983,7 @@ export default function AuditorioPage() {
     } catch (error) {
       const message = error instanceof Error ? error.message : "No se pudo eliminar la reserva";
       setLoadError(message);
-      window.alert(message);
+      toast.error(message);
     } finally {
       setIsDeleting(false);
     }
@@ -1013,7 +1021,7 @@ export default function AuditorioPage() {
     } catch (error) {
       const message = error instanceof Error ? error.message : "No se pudo descargar el historial en excel";
       setLoadError(message);
-      window.alert(message);
+      toast.error(message);
     } finally {
       setIsDownloadingExcel(false);
     }

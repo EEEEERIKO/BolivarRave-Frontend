@@ -10,6 +10,7 @@ import { CalendarRange } from "lucide-react";
 import { readAuthSession, type AuthSession } from "@/lib/auth-session";
 import { fetchApiJson } from "@/lib/api-client";
 import { useWebSocketSchedules } from "@/lib/use-websocket-schedules";
+import { Toaster } from "react-hot-toast";
 
 type PendingScheduleRequest = {
   id: string;
@@ -201,6 +202,8 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const isLoginRoute = pathname.startsWith("/login");
+  const isPublicReservationConfirmRoute = pathname.startsWith("/reservas/confirm");
+  const isPublicRoute = isLoginRoute || isPublicReservationConfirmRoute;
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [pendingRequests, setPendingRequests] = useState<PendingScheduleRequest[]>([]);
@@ -234,7 +237,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   }, [isNotificationsOpen]);
 
   useEffect(() => {
-    if (isLoginRoute) {
+    if (isPublicRoute) {
       setIsSessionReady(true);
       return;
     }
@@ -259,7 +262,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
     ) {
       router.replace("/");
     }
-  }, [isLoginRoute, pathname, router]);
+  }, [isPublicRoute, pathname, router]);
 
   const syncNotifications = async () => {
     const role = authSession?.role;
@@ -345,7 +348,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
     }
   };
 
-  if (isLoginRoute) {
+  if (isPublicRoute) {
     return <>{children}</>;
   }
 
@@ -470,6 +473,8 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
           </div>
         </div>
       </aside>
+
+      <Toaster position="top-right" toastOptions={{ duration: 4000 }} />
 
       <main className="min-h-screen min-w-0 flex-1 overflow-x-hidden pt-16 sm:pt-20 lg:ml-64">
         <header className="fixed top-0 left-0 right-0 z-30 flex min-h-16 items-center justify-between gap-3 border-b border-slate-200 bg-white/95 px-3 backdrop-blur-md sm:min-h-20 sm:px-6 lg:left-64 lg:px-8 dark:border-slate-800 dark:bg-slate-900/95">

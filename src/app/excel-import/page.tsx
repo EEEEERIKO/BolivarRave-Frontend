@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { ParsedScheduleRowPayload, parseScheduleWorkbookClient } from "@/lib/schedule-parser";
 import { fetchApiJson } from "@/lib/api-client";
 import { readAuthSession } from "@/lib/auth-session";
+import toast from "react-hot-toast";
 
 const EXCEL_EXTENSIONS = [".xlsx", ".xls"];
 const CSV_EXTENSIONS = [".csv"];
@@ -1111,7 +1112,7 @@ export default function ExcelImportPage() {
     if (!isExcelFile(file)) {
       const message = "Formato no permitido. Solo se aceptan archivos .xls, .xlsx o .csv.";
       setFileError(message);
-      window.alert(message);
+      toast.error(message);
       return;
     }
 
