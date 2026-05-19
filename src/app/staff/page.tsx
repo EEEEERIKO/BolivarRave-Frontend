@@ -604,6 +604,7 @@ function StaffScheduleBoard({
   const [editorPausaRows, setEditorPausaRows] = useState<EditablePausaItem[]>([]);
   const [isLoadingPausas, setIsLoadingPausas] = useState(false);
   const [isSavingJornada, setIsSavingJornada] = useState(false);
+  const [editorSelectedDay, setEditorSelectedDay] = useState<WorkWeekDay>("Lunes");
   const [selectedScheduleDay, setSelectedScheduleDay] = useState<WorkWeekDay>(() => getCurrentWorkWeekDay());
   const [nowTimestamp, setNowTimestamp] = useState(() => Date.now());
   const leftColumnRef = useRef<HTMLDivElement>(null);
@@ -952,6 +953,7 @@ function StaffScheduleBoard({
     setEditingStaff(staff);
     setEditorRows(mappedRows);
     setEditorPausaRows([]);
+    setEditorSelectedDay("Lunes");
     setIsEditorOpen(true);
     setScheduleError(null);
 
@@ -970,6 +972,7 @@ function StaffScheduleBoard({
     setEditingStaff(null);
     setEditorRows([]);
     setEditorPausaRows([]);
+    setEditorSelectedDay("Lunes");
   };
 
   const addEditorRow = () => {
@@ -1684,7 +1687,7 @@ function StaffScheduleBoard({
 
       {isEditorOpen && editingStaff ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
+          <div className="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
             <div className="mb-4 flex items-start justify-between gap-4">
               <div>
                 <h3 className="text-xl font-black text-[#2a3439]">Horario de trabajo</h3>
@@ -1697,80 +1700,116 @@ function StaffScheduleBoard({
               </button>
             </div>
 
-            <form className="space-y-3" onSubmit={saveJornada}>
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                <div className="mb-2 flex items-center justify-between">
-                  <p className="text-sm font-semibold text-[#2a3439]">Bloques de jornada semanal</p>
-                  <button className="rounded-lg border border-slate-300 px-3 py-1 text-xs font-bold text-[#566166]" onClick={addEditorRow} type="button">
+            <form className="space-y-4" onSubmit={saveJornada}>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <p className="mb-3 text-sm font-semibold text-[#2a3439]">Selecciona un día</p>
+                <div className="mb-4 flex flex-wrap gap-2">
+                  {MASTER_WEEK_DAYS.map((day) => {
+                    const dayShort = day === "Lunes" ? "Lun" : day === "Martes" ? "Mar" : day === "Miércoles" ? "Mié" : day === "Jueves" ? "Jue" : day === "Viernes" ? "Vie" : day === "Sábado" ? "Sáb" : "Dom";
+                    const isActive = editorSelectedDay === day;
+                    return (
+                      <button
+                        key={day}
+                        type="button"
+                        onClick={() => setEditorSelectedDay(day)}
+                        className={`rounded-lg px-4 py-2 text-sm font-bold transition ${
+                          isActive
+                            ? "bg-[#3a5f94] text-white"
+                            : "border border-slate-300 bg-white text-[#2a3439] hover:bg-slate-100"
+                        }`}
+                      >
+                        {dayShort}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <p className="text-sm font-semibold text-[#2a3439]">Bloques de jornada - {editorSelectedDay}</p>
+                  <button className="rounded-lg border border-slate-300 px-3 py-1 text-xs font-bold text-[#566166] hover:bg-slate-100" onClick={addEditorRow} type="button">
                     + Agregar bloque
                   </button>
                 </div>
 
                 <div className="space-y-2">
-                  {editorRows.map((row, index) => (
-                    <div className="grid grid-cols-1 gap-2 rounded-xl border border-slate-200 bg-white p-3 md:grid-cols-[1fr_1fr_1fr_1fr_auto]" key={row.id}>
-                  <select
-                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                    onChange={(event) => updateEditorRow(row.id, "diaSemana", event.target.value)}
-                    value={row.diaSemana}
-                  >
-                    <option value="">Dia</option>
-                    {MASTER_WEEK_DAYS.map((day) => (
-                      <option key={day} value={day}>
-                        {day}
-                      </option>
-                    ))}
-                  </select>
+                  {editorRows
+                    .filter((row) => row.diaSemana === editorSelectedDay || row.diaSemana === "")
+                    .map((row, filteredIndex) => {
+                      const totalFilteredForDay = editorRows.filter((r) => r.diaSemana === editorSelectedDay || r.diaSemana === "").length;
+                      return (
+                        <div className="grid grid-cols-1 gap-2 rounded-xl border border-slate-200 bg-white p-3 md:grid-cols-[auto_1fr_1fr_1fr_auto]" key={row.id}>
+                          <select
+                            className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:hidden"
+                            onChange={(event) => updateEditorRow(row.id, "diaSemana", event.target.value)}
+                            value={row.diaSemana}
+                          >
+                            <option value="">Dia</option>
+                            {MASTER_WEEK_DAYS.map((day) => (
+                              <option key={day} value={day}>
+                                {day}
+                              </option>
+                            ))}
+                          </select>
 
-                        <select
-                          className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                          onChange={(event) => updateEditorRow(row.id, "horaEntrada", event.target.value)}
-                          value={row.horaEntrada}
-                        >
-                          <option value="">Hora de inicio</option>
-                          {TIME_SLOT_OPTIONS.map((option) => (
-                            <option key={`entrada-${option.value}`} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
+                          <div className="hidden rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs font-bold text-[#2a3439] md:flex items-center">
+                            {row.diaSemana || editorSelectedDay}
+                          </div>
 
-                        <select
-                          className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                          onChange={(event) => updateEditorRow(row.id, "horaSalida", event.target.value)}
-                          value={row.horaSalida}
-                        >
-                          <option value="">Hora de fin</option>
-                          {TIME_SLOT_OPTIONS.map((option) => (
-                            <option key={`salida-${option.value}`} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
+                          <select
+                            className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                            onChange={(event) => updateEditorRow(row.id, "horaEntrada", event.target.value)}
+                            value={row.horaEntrada}
+                          >
+                            <option value="">Hora de inicio</option>
+                            {TIME_SLOT_OPTIONS.map((option) => (
+                              <option key={`entrada-${option.value}`} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
 
-                  <div className="flex items-center rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-[#566166]">
-                    <span className="font-medium">{row.totalHorasDia || "0"} h</span>
-                  </div>
+                          <select
+                            className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                            onChange={(event) => updateEditorRow(row.id, "horaSalida", event.target.value)}
+                            value={row.horaSalida}
+                          >
+                            <option value="">Hora de fin</option>
+                            {TIME_SLOT_OPTIONS.map((option) => (
+                              <option key={`salida-${option.value}`} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
 
-                  <button
-                    className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold text-[#9f403d]"
-                    onClick={() => removeEditorRow(row.id)}
-                    type="button"
-                  >
-                    Quitar
-                  </button>
+                          <div className="flex items-center rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm font-medium text-[#566166]">
+                            {row.totalHorasDia || "0"} h
+                          </div>
 
-                  <p className="text-[10px] text-[#566166] md:col-span-5">Bloque {index + 1} de jornada semanal</p>
-                    </div>
-                  ))}
+                          <button
+                            className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold text-[#9f403d] hover:bg-red-50"
+                            onClick={() => removeEditorRow(row.id)}
+                            type="button"
+                          >
+                            Quitar
+                          </button>
+                        </div>
+                      );
+                    })}
+                  {editorRows.filter((row) => row.diaSemana === editorSelectedDay || row.diaSemana === "").length === 0 && (
+                    <p className="rounded-lg border border-dashed border-slate-300 bg-white px-3 py-2 text-xs text-[#566166]">
+                      No hay bloques de jornada para {editorSelectedDay}
+                    </p>
+                  )}
                 </div>
               </div>
 
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                <div className="mb-2 flex items-center justify-between">
-                  <p className="text-sm font-semibold text-[#2a3439]">Pausas programadas (comida/descanso)</p>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <p className="text-sm font-semibold text-[#2a3439]">Pausas programadas - {editorSelectedDay}</p>
                   <button
-                    className="rounded-lg border border-slate-300 px-3 py-1 text-xs font-bold text-[#566166]"
+                    className="rounded-lg border border-slate-300 px-3 py-1 text-xs font-bold text-[#566166] hover:bg-slate-100"
                     onClick={addPausaRow}
                     type="button"
                   >
@@ -1782,77 +1821,82 @@ function StaffScheduleBoard({
                   <p className="rounded-lg border border-dashed border-slate-300 bg-white px-3 py-2 text-xs text-[#566166]">
                     Cargando pausas...
                   </p>
-                ) : editorPausaRows.length === 0 ? (
-                  <p className="rounded-lg border border-dashed border-slate-300 bg-white px-3 py-2 text-xs text-[#566166]">
-                    No hay pausas configuradas para este colaborador.
-                  </p>
                 ) : (
                   <div className="space-y-2">
-                    {sortedEditorPausaRows.map((row, index) => (
-                      <div className="grid grid-cols-1 gap-2 rounded-lg border border-slate-200 bg-white p-2 md:grid-cols-[1fr_1fr_1fr_1fr_auto]" key={row.id}>
-                        <select
-                          className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                          onChange={(event) => updatePausaRow(row.id, "diaSemana", event.target.value)}
-                          value={row.diaSemana}
-                        >
-                          <option value="">Día</option>
-                          {MASTER_WEEK_DAYS.map((day) => (
-                            <option key={`pausa-day-${day}`} value={day}>
-                              {day}
-                            </option>
-                          ))}
-                        </select>
+                    {sortedEditorPausaRows
+                      .filter((row) => row.diaSemana === editorSelectedDay || row.diaSemana === "")
+                      .map((row) => (
+                        <div className="grid grid-cols-1 gap-2 rounded-lg border border-slate-200 bg-white p-3 md:grid-cols-[auto_1fr_1fr_1fr_1fr_auto]" key={row.id}>
+                          <select
+                            className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:hidden"
+                            onChange={(event) => updatePausaRow(row.id, "diaSemana", event.target.value)}
+                            value={row.diaSemana}
+                          >
+                            <option value="">Día</option>
+                            {MASTER_WEEK_DAYS.map((day) => (
+                              <option key={`pausa-day-${day}`} value={day}>
+                                {day}
+                              </option>
+                            ))}
+                          </select>
 
-                        <select
-                          className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                          onChange={(event) => updatePausaRow(row.id, "tipoPausa", event.target.value)}
-                          value={row.tipoPausa}
-                        >
-                          <option value="">Sin asignar</option>
-                          {PAUSA_TIPOS.map((tipo) => (
-                            <option key={`pausa-tipo-${tipo}`} value={tipo}>
-                              {tipo}
-                            </option>
-                          ))}
-                        </select>
+                          <div className="hidden rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs font-bold text-[#2a3439] md:flex items-center">
+                            {row.diaSemana || editorSelectedDay}
+                          </div>
 
-                        <select
-                          className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                          onChange={(event) => updatePausaRow(row.id, "horaInicio", event.target.value)}
-                          value={row.horaInicio}
-                        >
-                          <option value="">Inicio</option>
-                          {TIME_SLOT_OPTIONS.map((option) => (
-                            <option key={`pausa-inicio-${option.value}`} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
+                          <select
+                            className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                            onChange={(event) => updatePausaRow(row.id, "tipoPausa", event.target.value)}
+                            value={row.tipoPausa}
+                          >
+                            <option value="">Sin asignar</option>
+                            {PAUSA_TIPOS.map((tipo) => (
+                              <option key={`pausa-tipo-${tipo}`} value={tipo}>
+                                {tipo}
+                              </option>
+                            ))}
+                          </select>
 
-                        <select
-                          className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                          onChange={(event) => updatePausaRow(row.id, "horaFin", event.target.value)}
-                          value={row.horaFin}
-                        >
-                          <option value="">Fin</option>
-                          {TIME_SLOT_OPTIONS.map((option) => (
-                            <option key={`pausa-fin-${option.value}`} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
+                          <select
+                            className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                            onChange={(event) => updatePausaRow(row.id, "horaInicio", event.target.value)}
+                            value={row.horaInicio}
+                          >
+                            <option value="">Inicio</option>
+                            {TIME_SLOT_OPTIONS.map((option) => (
+                              <option key={`pausa-inicio-${option.value}`} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
 
-                        <button
-                          className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold text-[#9f403d]"
-                          onClick={() => removePausaRow(row.id)}
-                          type="button"
-                        >
-                          Quitar
-                        </button>
+                          <select
+                            className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                            onChange={(event) => updatePausaRow(row.id, "horaFin", event.target.value)}
+                            value={row.horaFin}
+                          >
+                            <option value="">Fin</option>
+                            {TIME_SLOT_OPTIONS.map((option) => (
+                              <option key={`pausa-fin-${option.value}`} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
 
-                        <p className="text-[10px] text-[#566166] md:col-span-5">Pausa {index + 1}</p>
-                      </div>
-                    ))}
+                          <button
+                            className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold text-[#9f403d] hover:bg-red-50"
+                            onClick={() => removePausaRow(row.id)}
+                            type="button"
+                          >
+                            Quitar
+                          </button>
+                        </div>
+                      ))}
+                    {sortedEditorPausaRows.filter((row) => row.diaSemana === editorSelectedDay || row.diaSemana === "").length === 0 && (
+                      <p className="rounded-lg border border-dashed border-slate-300 bg-white px-3 py-2 text-xs text-[#566166]">
+                        No hay pausas configuradas para {editorSelectedDay}
+                      </p>
+                    )}
                   </div>
                 )}
               </div>
