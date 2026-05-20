@@ -1686,7 +1686,7 @@ function StaffScheduleBoard({
       </div>
 
       {isEditorOpen && editingStaff ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-md">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
             <div className="mb-4 flex items-start justify-between gap-4">
               <div>
@@ -2859,23 +2859,6 @@ export default function StaffPage() {
     void loadSkills();
   }, []);
 
-  useEffect(() => {
-    if (!showAddStaffForm && !showEditStaffForm) {
-      return;
-    }
-
-    const previousOverflow = document.body.style.overflow;
-    const previousOverscrollBehavior = document.body.style.overscrollBehavior;
-
-    document.body.style.overflow = "hidden";
-    document.body.style.overscrollBehavior = "none";
-
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      document.body.style.overscrollBehavior = previousOverscrollBehavior;
-    };
-  }, [showAddStaffForm, showEditStaffForm]);
-
   async function handleAddStaffSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -3333,7 +3316,7 @@ export default function StaffPage() {
       ) : null}
 
       {showAddStaffForm ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-md">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="flex max-h-[92vh] w-full max-w-4xl flex-col rounded-2xl bg-white shadow-[0_4px_20px_rgba(15,23,42,0.05)] overflow-hidden">
             <header className="flex h-16 items-center justify-between border-b border-slate-200 bg-white px-8">
               <div className="flex items-center gap-4">
@@ -3417,7 +3400,16 @@ export default function StaffPage() {
                     />
                   </div>
 
-                  
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-700">Carrera (Monitor/Estudiante)</label>
+                    <input
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10"
+                      onChange={(event) => setNewStaff((prev) => ({ ...prev, major: event.target.value }))}
+                      placeholder="Ej: Ingeniería de Sistemas"
+                      type="text"
+                      value={newStaff.major}
+                    />
+                  </div>
 
                   <div className="space-y-2">
                     <label className="text-sm font-medium text-slate-700">Fecha de nacimiento</label>
@@ -3521,155 +3513,138 @@ export default function StaffPage() {
                       <option value="Plan Especial">Plan Especial</option>
                     </select>
                   </div>
-
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-slate-700">Carrera (Monitor/Estudiante)</label>
-                    <input
-                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10"
-                      onChange={(event) => setNewStaff((prev) => ({ ...prev, major: event.target.value }))}
-                      placeholder="Ej: Ingeniería de Sistemas"
-                      type="text"
-                      value={newStaff.major}
-                    />
-                  </div>
-
-                  
                 </div>
               </div>
             </div>
 
-            
+            <div className="grid gap-6 p-8 md:grid-cols-2 max-h-[300px] overflow-y-auto">
+              <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-[0_4px_20px_rgba(15,23,42,0.05)]">
+                 <div className="mb-3 flex items-center justify-between border-b border-slate-200 pb-3">
+                   <h3 className="flex items-center gap-2 text-[14px] font-semibold text-[#295786]">
+                    <span className="material-symbols-outlined text-[22px]" style={{fontVariationSettings: "'FILL' 1"}}>event_busy</span>
+                    Horas no disponibles
+                  </h3>
+                   <button
+                     className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-[#295786] transition hover:bg-[#d5e3ff]"
+                    onClick={addUnavailableClassSlot}
+                    type="button"
+                  >
+                     <span className="material-symbols-outlined text-[16px]">add</span>
+                    Agregar bloque
+                  </button>
+                </div>
 
-            <div className="px-8 pb-4">
-              <div className="grid items-start gap-3 md:grid-cols-2">
-                <section className="rounded-2xl border border-slate-200 bg-white p-3 shadow-[0_4px_12px_rgba(15,23,42,0.04)]">
-                  <div className="mb-2 flex items-center justify-between border-b border-slate-200 pb-2">
-                    <h3 className="flex items-center gap-2 text-[13px] font-semibold text-[#295786]">
-                      <span className="material-symbols-outlined text-[22px]" style={{fontVariationSettings: "'FILL' 1"}}>event_busy</span>
-                      Horas no disponibles
-                    </h3>
-                    <button
-                      className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-[#295786] transition hover:bg-[#d5e3ff]"
-                      onClick={addUnavailableClassSlot}
-                      type="button"
-                    >
-                      <span className="material-symbols-outlined text-[16px]">add</span>
-                      Agregar bloque
-                    </button>
-                  </div>
-
-                  {unavailableClassSlots.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center py-3 text-center h-[104px]">
-                      <div className="mb-2 flex h-9 w-9 items-center justify-center rounded-full bg-slate-100">
-                        <span className="material-symbols-outlined text-slate-400 text-[18px]">info</span>
-                      </div>
-                      <p className="text-[11px] leading-4 text-slate-500">No hay horarios de clase cargados. Este campo es opcional.</p>
+                {unavailableClassSlots.length === 0 ? (
+                   <div className="flex flex-col items-center justify-center py-4 text-center h-[200px]">
+                     <div className="mb-2 flex size-10 items-center justify-center rounded-full bg-slate-100">
+                       <span className="material-symbols-outlined text-slate-400 text-[18px]">info</span>
                     </div>
-                  ) : (
-                    <div className="max-h-[130px] space-y-2 overflow-y-auto pr-2">
-                      {unavailableClassSlots.map((slot, index) => (
-                        <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 space-y-1" key={slot.id}>
-                          <div className="grid grid-cols-3 gap-1">
-                            <select
-                              className="rounded-lg border border-slate-300 px-2 py-1 text-xs"
-                              onChange={(event) => updateUnavailableClassSlot(slot.id, "day", event.target.value)}
-                              value={slot.day}
-                            >
-                              <option value="">Día</option>
-                              {WEEK_DAYS.map((day) => (
-                                <option key={day} value={day}>
-                                  {day}
-                                </option>
-                              ))}
-                            </select>
+                     <p className="text-xs text-slate-500">No hay horarios de clase cargados. Este campo es opcional.</p>
+                  </div>
+                 ) : (
+                   <div className="space-y-2 max-h-[200px] overflow-y-auto pr-2">
+                    {unavailableClassSlots.map((slot, index) => (
+                       <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 space-y-1" key={slot.id}>
+                         <div className="grid grid-cols-3 gap-1">
+                          <select
+                             className="rounded-lg border border-slate-300 px-2 py-1 text-xs"
+                            onChange={(event) => updateUnavailableClassSlot(slot.id, "day", event.target.value)}
+                            value={slot.day}
+                          >
+                             <option value="">Día</option>
+                            {WEEK_DAYS.map((day) => (
+                              <option key={day} value={day}>
+                                {day}
+                              </option>
+                            ))}
+                          </select>
 
-                            <select
-                              className="rounded-lg border border-slate-300 px-2 py-1 text-xs"
-                              onChange={(event) => updateUnavailableClassSlot(slot.id, "startTime", event.target.value)}
-                              value={slot.startTime}
-                            >
-                              <option value="">Inicio</option>
-                              {CLASS_TIME_OPTIONS.map((time) => (
-                                <option key={time} value={time}>
-                                  {time}
-                                </option>
-                              ))}
-                            </select>
+                          <select
+                             className="rounded-lg border border-slate-300 px-2 py-1 text-xs"
+                            onChange={(event) => updateUnavailableClassSlot(slot.id, "startTime", event.target.value)}
+                            value={slot.startTime}
+                          >
+                             <option value="">Inicio</option>
+                            {CLASS_TIME_OPTIONS.map((time) => (
+                              <option key={time} value={time}>
+                                {time}
+                              </option>
+                            ))}
+                          </select>
 
-                            <select
-                              className="rounded-lg border border-slate-300 px-2 py-1 text-xs"
-                              onChange={(event) => updateUnavailableClassSlot(slot.id, "endTime", event.target.value)}
-                              value={slot.endTime}
-                            >
-                              <option value="">Fin</option>
-                              {CLASS_TIME_OPTIONS.map((time) => (
-                                <option key={time} value={time}>
-                                  {time}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-
-                          <div className="flex items-center justify-between">
-                            <p className="text-[10px] text-slate-500">Bloque {index + 1}</p>
-                            <button
-                              className="rounded-lg px-2 py-0.5 text-[11px] text-red-600 hover:bg-red-50"
-                              onClick={() => removeUnavailableClassSlot(slot.id)}
-                              type="button"
-                            >
-                              Quitar
-                            </button>
-                          </div>
+                          <select
+                             className="rounded-lg border border-slate-300 px-2 py-1 text-xs"
+                            onChange={(event) => updateUnavailableClassSlot(slot.id, "endTime", event.target.value)}
+                            value={slot.endTime}
+                          >
+                             <option value="">Fin</option>
+                            {CLASS_TIME_OPTIONS.map((time) => (
+                              <option key={time} value={time}>
+                                {time}
+                              </option>
+                            ))}
+                          </select>
                         </div>
-                      ))}
-                    </div>
-                  )}
-                </section>
 
-                <section className="rounded-2xl border border-slate-200 bg-white p-3 shadow-[0_4px_12px_rgba(15,23,42,0.04)]">
-                  <div className="mb-2 flex items-center gap-2 border-b border-slate-200 pb-2">
-                    <span className="material-symbols-outlined text-[20px] text-[#295786]" style={{fontVariationSettings: "'FILL' 1"}}>psychology</span>
-                    <h3 className="text-[13px] font-semibold text-[#295786]">Habilidades</h3>
-                  </div>
-
-                  {skillsCatalog.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center py-4 text-center">
-                      <div className="mb-2 flex h-10 w-10 items-center justify-center rounded-full bg-slate-100">
-                        <span className="material-symbols-outlined text-slate-400">search_off</span>
+                        <div className="flex items-center justify-between">
+                           <p className="text-[10px] text-slate-500">Bloque {index + 1}</p>
+                          <button
+                             className="rounded-lg text-xs text-red-600 hover:bg-red-50 px-2 py-0.5"
+                            onClick={() => removeUnavailableClassSlot(slot.id)}
+                            type="button"
+                          >
+                            Quitar
+                          </button>
+                        </div>
                       </div>
-                      <p className="max-w-[200px] text-[11px] leading-4 text-slate-500">No hay habilidades cargadas en el sistema.</p>
+                    ))}
+                  </div>
+                )}
+              </section>
+
+              <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-[0_4px_20px_rgba(15,23,42,0.05)]">
+                <div className="mb-4 flex items-center gap-2 border-b border-slate-200 pb-4">
+                  <span className="material-symbols-outlined text-[22px] text-[#295786]" style={{fontVariationSettings: "'FILL' 1"}}>psychology</span>
+                  <h3 className="text-[16px] font-semibold text-[#295786]">Habilidades</h3>
+                </div>
+
+                {skillsCatalog.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-8 text-center">
+                    <div className="mb-3 flex size-12 items-center justify-center rounded-full bg-slate-100">
+                      <span className="material-symbols-outlined text-slate-400">search_off</span>
                     </div>
-                  ) : (
-                    <div className="max-h-[130px] grid grid-cols-1 gap-2 overflow-y-auto pr-1">
-                      {skillsCatalog.map((skill) => {
-                        const isSelected = newStaff.habilidadIds.includes(skill.id);
-                        return (
-                          <label className={`flex items-center gap-3 rounded-2xl border p-2 transition ${isSelected ? "border-[#295786] bg-[#d5e3ff]" : "border-slate-200 bg-[#fafcff] hover:bg-[#f4f7ff]"}`} key={skill.id}>
-                            <input
-                              checked={isSelected}
-                              className="h-4 w-4 rounded border-slate-300 text-[#295786] focus:ring-[#295786]"
-                              onChange={(event) =>
-                                setNewStaff((prev) => ({
-                                  ...prev,
-                                  habilidadIds: event.target.checked
-                                    ? [...prev.habilidadIds, skill.id]
-                                    : prev.habilidadIds.filter((id) => id !== skill.id),
-                                }))
-                              }
-                              type="checkbox"
-                            />
-                            <span className="text-sm font-medium text-slate-700">{skill.nombre}</span>
-                          </label>
-                        );
-                      })}
-                    </div>
-                  )}
-                </section>
-              </div>
+                    <p className="text-sm text-slate-500 max-w-[200px]">No hay habilidades cargadas en el sistema.</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 gap-3">
+                    {skillsCatalog.map((skill) => {
+                      const isSelected = newStaff.habilidadIds.includes(skill.id);
+                      return (
+                        <label className={`flex items-center gap-3 rounded-2xl border p-3 transition ${ isSelected ? "border-[#295786] bg-[#d5e3ff]" : "border-slate-200 bg-[#fafcff] hover:bg-[#f4f7ff]"}`} key={skill.id}>
+                          <input
+                            checked={isSelected}
+                            className="h-5 w-5 rounded border-slate-300 text-[#295786] focus:ring-[#295786]"
+                            onChange={(event) =>
+                              setNewStaff((prev) => ({
+                                ...prev,
+                                habilidadIds: event.target.checked
+                                  ? [...prev.habilidadIds, skill.id]
+                                  : prev.habilidadIds.filter((id) => id !== skill.id),
+                              }))
+                            }
+                            type="checkbox"
+                          />
+                          <span className="text-sm font-medium text-slate-700">{skill.nombre}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
             </div>
 
             {roleRequiresCredential(newStaff.roleId) ? (
-              <section className="mx-8 rounded-2xl border border-slate-200 bg-white p-6 shadow-[0_4px_20px_rgba(15,23,42,0.05)]">
+              <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-[0_4px_20px_rgba(15,23,42,0.05)] mx-8 md:col-span-2">
                 <h3 className="mb-6 flex items-center gap-2 text-[16px] font-semibold text-[#295786] border-b border-slate-200 pb-4">
                   <span className="material-symbols-outlined text-[22px]" style={{fontVariationSettings: "'FILL' 1"}}>lock</span>
                   Credenciales de Acceso
@@ -3722,7 +3697,7 @@ export default function StaffPage() {
               </section>
             ) : null}
 
-            <div className="flex items-center justify-between gap-3 border-t border-slate-200 bg-white px-8 py-6">
+            <div className="flex justify-end gap-3 border-t border-slate-200 bg-white px-8 py-6">
               <button
                 className="rounded-xl border border-[#295786] px-6 py-3 text-sm font-medium text-[#295786] transition hover:bg-[#d5e3ff] disabled:cursor-not-allowed disabled:opacity-60"
                 disabled={isSavingNewStaff}
@@ -3731,7 +3706,7 @@ export default function StaffPage() {
               >
                 Descartar cambios
               </button>
-              <button
+              <button 
                 className="rounded-xl bg-[#295786] px-6 py-3 text-sm font-semibold text-white shadow-[0_12px_24px_rgba(41,87,134,0.24)] transition hover:bg-[#1f4a74] disabled:cursor-not-allowed disabled:opacity-70" 
                 disabled={isSavingNewStaff} 
                 type="submit"
@@ -3745,7 +3720,7 @@ export default function StaffPage() {
       ) : null}
 
       {showEditStaffForm ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-md">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="flex max-h-[92vh] w-full max-w-2xl flex-col rounded-2xl bg-white p-6 shadow-2xl">
             <div className="mb-4">
               <div>
@@ -4336,6 +4311,25 @@ export default function StaffPage() {
                 ))}
               </div>
                 </div>
+              <div className="mt-3 space-y-2">
+                <div className="flex items-center justify-center gap-4 text-[10px] text-[#566166]">
+                  <span className="inline-flex items-center gap-1">
+                    <span className="h-2 w-2 rounded-full bg-[#3a5f94]" /> No disponible
+                  </span>
+                  <span className="inline-flex items-center gap-1">
+                    <span className="h-2 w-2 rounded-full bg-[#f0f4f7] border border-slate-300" /> Disponible
+                  </span>
+                </div>
+              </div>
+              {hasAcademicUnavailability ? (
+                <p className="mt-2 text-center text-[10px] italic text-[#566166]">
+                  Los bloques resaltados indican horarios de clase.
+                </p>
+              ) : (
+                <p className="mt-2 text-center text-[10px] italic text-[#566166]">
+                  No hay bloques de clase registrados para este personal.
+                </p>
+              )}
               {academicBlockedSlotDetails.length > 0 ? (
                 <div className="mt-3 space-y-1 rounded-lg border border-slate-200 bg-white p-3">
                   <p className="text-[10px] font-bold tracking-wider text-slate-400 uppercase">Detalle de Bloques</p>
@@ -4698,7 +4692,7 @@ export default function StaffPage() {
         )}
 
         {!isCollaborador && isStaffDetailModalOpen && selectedStaff ? (
-          <div className="fixed inset-0 z-50 flex items-end bg-slate-950/55 p-0 backdrop-blur-md xl:hidden" role="dialog" aria-modal="true">
+          <div className="fixed inset-0 z-50 flex items-end bg-black/50 p-0 xl:hidden" role="dialog" aria-modal="true">
             <button
               type="button"
               aria-label="Cerrar detalle del personal"

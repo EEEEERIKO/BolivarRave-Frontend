@@ -1,7 +1,22 @@
 "use client";
 
-import { useState } from "react";
-import toast from "react-hot-toast";
+import React, { useState } from "react";
+import { createRoot } from "react-dom/client";
+
+function mountModal(element: React.ReactElement) {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  root.render(element);
+  return () => {
+    try {
+      root.unmount();
+    } catch {
+      // ignore
+    }
+    if (container.parentNode) container.parentNode.removeChild(container);
+  };
+}
 
 type ConfirmToastOptions = {
   title?: string;
@@ -16,10 +31,10 @@ type PromptToastOptions = ConfirmToastOptions & {
 
 export function confirmToast(message: string, options?: ConfirmToastOptions): Promise<boolean> {
   return new Promise((resolve) => {
-    toast.custom(
-      (t) => (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/50 px-4 py-6 backdrop-blur-sm pointer-events-auto">
-          <div className="pointer-events-auto w-[calc(100vw-2rem)] max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+    function Modal() {
+      return (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/50 px-4 py-6 backdrop-blur-sm">
+          <div className="w-[calc(100vw-2rem)] max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl dark:border-slate-800 dark:bg-slate-900">
             <div className="flex items-start gap-3">
               <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
                 <span className="material-symbols-outlined text-[20px]">warning</span>
@@ -34,7 +49,7 @@ export function confirmToast(message: string, options?: ConfirmToastOptions): Pr
               <button
                 type="button"
                 onClick={() => {
-                  toast.dismiss(t.id);
+                  unmount();
                   resolve(false);
                 }}
                 className="rounded-md border border-slate-200 px-3 py-2 text-xs font-bold tracking-wide text-slate-600 uppercase transition hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
@@ -44,7 +59,7 @@ export function confirmToast(message: string, options?: ConfirmToastOptions): Pr
               <button
                 type="button"
                 onClick={() => {
-                  toast.dismiss(t.id);
+                  unmount();
                   resolve(true);
                 }}
                 className="rounded-md bg-[#3a5f94] px-3 py-2 text-xs font-bold tracking-wide text-white uppercase transition hover:brightness-110"
@@ -54,70 +69,65 @@ export function confirmToast(message: string, options?: ConfirmToastOptions): Pr
             </div>
           </div>
         </div>
-      ),
-      { duration: Infinity }
-    );
+      );
+    }
+
+    const unmount = mountModal(<Modal />);
   });
 }
 
 export function promptToast(message: string, options?: PromptToastOptions): Promise<string | null> {
   return new Promise((resolve) => {
-    toast.custom(
-      (t) => {
-        function PromptBody() {
-          const [value, setValue] = useState(options?.defaultValue ?? "");
-
-          return (
-            <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/50 px-4 py-6 backdrop-blur-sm pointer-events-auto">
-              <div className="pointer-events-auto w-[calc(100vw-2rem)] max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl dark:border-slate-800 dark:bg-slate-900">
-                <div className="flex items-start gap-3">
-                  <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300">
-                    <span className="material-symbols-outlined text-[20px]">edit_note</span>
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    {options?.title ? <p className="text-sm font-bold text-slate-900 dark:text-slate-100">{options.title}</p> : null}
-                    <p className="mt-1 text-sm leading-5 text-slate-600 dark:text-slate-300 whitespace-pre-line">{message}</p>
-                  </div>
-                </div>
-
-                <input
-                  autoFocus
-                  value={value}
-                  onChange={(event) => setValue(event.target.value)}
-                  placeholder={options?.placeholder ?? "Escribe aquí"}
-                  className="mt-4 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-0 transition placeholder:text-slate-400 focus:border-[#3a5f94] dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
-                />
-
-                <div className="mt-4 flex justify-end gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      toast.dismiss(t.id);
-                      resolve(null);
-                    }}
-                    className="rounded-md border border-slate-200 px-3 py-2 text-xs font-bold tracking-wide text-slate-600 uppercase transition hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-                  >
-                    {options?.cancelLabel ?? "Cancelar"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      toast.dismiss(t.id);
-                      resolve(value.trim());
-                    }}
-                    className="rounded-md bg-[#3a5f94] px-3 py-2 text-xs font-bold tracking-wide text-white uppercase transition hover:brightness-110"
-                  >
-                    {options?.confirmLabel ?? "Aceptar"}
-                  </button>
-                </div>
+    function Prompt() {
+      const [value, setValue] = useState(options?.defaultValue ?? "");
+      return (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/50 px-4 py-6 backdrop-blur-sm">
+          <div className="w-[calc(100vw-2rem)] max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300">
+                <span className="material-symbols-outlined text-[20px]">edit_note</span>
+              </div>
+              <div className="min-w-0 flex-1">
+                {options?.title ? <p className="text-sm font-bold text-slate-900 dark:text-slate-100">{options.title}</p> : null}
+                <p className="mt-1 text-sm leading-5 text-slate-600 dark:text-slate-300 whitespace-pre-line">{message}</p>
               </div>
             </div>
-          );
-        }
 
-        return <PromptBody />;
-      },
-      { duration: Infinity }
-    );
+            <input
+              autoFocus
+              value={value}
+              onChange={(event) => setValue(event.target.value)}
+              placeholder={options?.placeholder ?? "Escribe aquí"}
+              className="mt-4 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-0 transition placeholder:text-slate-400 focus:border-[#3a5f94] dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+            />
+
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  unmount();
+                  resolve(null);
+                }}
+                className="rounded-md border border-slate-200 px-3 py-2 text-xs font-bold tracking-wide text-slate-600 uppercase transition hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+              >
+                {options?.cancelLabel ?? "Cancelar"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  unmount();
+                  resolve(value.trim());
+                }}
+                className="rounded-md bg-[#3a5f94] px-3 py-2 text-xs font-bold tracking-wide text-white uppercase transition hover:brightness-110"
+              >
+                {options?.confirmLabel ?? "Aceptar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    const unmount = mountModal(<Prompt />);
   });
 }

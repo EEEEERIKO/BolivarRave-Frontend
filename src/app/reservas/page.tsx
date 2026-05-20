@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { readAuthSession } from "@/lib/auth-session";
 import { fetchApiJson } from "@/lib/api-client";
 import toast from "react-hot-toast";
@@ -150,7 +151,7 @@ function normalizeDocumentNumber(value: string) {
     return value.trim().replace(/[\s.-]/g, "").toLowerCase();
 }
 
-function summarizeDefectReasons(reservations: ReservationFeedItem[], documentNumber: string) {
+function summarizeDefectReasons(reservations: ReservationFeedItem[], documentNumber: string, inventoryItems: InventoryItem[]) {
     const normalizedDocument = normalizeDocumentNumber(documentNumber);
     const matches = reservations.filter((reservation) => {
         try {
@@ -160,14 +161,38 @@ function summarizeDefectReasons(reservations: ReservationFeedItem[], documentNum
         }
     });
 
-    const reasons = matches
+    const reasonsFromReservations = matches
         .map((reservation) => reservation.reportReason?.trim())
         .filter((reason): reason is string => Boolean(reason));
 
+    // Also try to extract motivo from inventory items referenced by those reservations
+    const reasonsFromInventory = matches
+        .map((reservation) => {
+            try {
+                const item = inventoryItems.find((i) => String(i.id) === String(reservation.resourceId));
+                return item?.motivo?.trim() ?? null;
+            } catch {
+                return null;
+            }
+        })
+        .filter((r): r is string => Boolean(r));
+
+    const combined = Array.from(new Set([...reasonsFromReservations, ...reasonsFromInventory]));
+
     return {
         count: matches.length,
-        reasons: Array.from(new Set(reasons)),
+        reasons: combined,
     };
+}
+
+function getReservationDateTimeValue(reservation: ReservationFeedItem) {
+    const combined = `${reservation.bookingDate}T${reservation.startTime}:00`;
+    const parsed = Date.parse(combined);
+    return Number.isFinite(parsed) ? parsed : Date.parse(reservation.createdAt);
+}
+
+function normalizeSearchText(value: string) {
+    return value.trim().toLowerCase();
 }
 
 export default function ReservasPage() {
@@ -201,6 +226,9 @@ export default function ReservasPage() {
     const [modalReservationId, setModalReservationId] = useState<string | null>(null);
     const [reportReason, setReportReason] = useState('');
     const [showReservationHistory, setShowReservationHistory] = useState(false);
+    const [historySearch, setHistorySearch] = useState("");
+    const [historyTypeFilter, setHistoryTypeFilter] = useState<"all" | ResourceType>("all");
+    const [historyReportFilter, setHistoryReportFilter] = useState<"all" | "reportado" | "no-reportado">("all");
     const [requesterLookupMessage, setRequesterLookupMessage] = useState<string | null>(null);
     const [prefilledRequesterDocument, setPrefilledRequesterDocument] = useState<string>("");
     const [requesterStage, setRequesterStage] = useState<'id-only' | 'full'>('id-only');
@@ -427,11 +455,231 @@ export default function ReservasPage() {
     }, [reservationsFeed]);
 
     const closedReservations = useMemo(() => {
-        return reservationsFeed.filter((reservation) => {
+        return allReservations.filter((reservation) => {
             const statusLower = reservation.status.toLowerCase();
             return ['devuelto', 'reportado', 'rechazada', 'cancelada'].includes(statusLower);
         });
-    }, [reservationsFeed]);
+    }, [allReservations]);
+
+    const filteredHistoryReservations = useMemo(() => {
+        const query = normalizeSearchText(historySearch);
+
+        return [...closedReservations]
+            .sort((left, right) => getReservationDateTimeValue(right) - getReservationDateTimeValue(left))
+            .filter((reservation) => {
+                if (historyTypeFilter !== "all" && reservation.resourceType !== historyTypeFilter) {
+                    return false;
+                }
+
+                const statusLower = reservation.status.toLowerCase();
+                const isReported = statusLower === "reportado";
+
+                if (historyReportFilter === "reportado" && !isReported) {
+                    return false;
+                }
+
+                if (historyReportFilter === "no-reportado" && isReported) {
+                    return false;
+                }
+
+                if (!query) {
+                    return true;
+                }
+
+                const searchBlob = normalizeSearchText(
+                    [
+                        reservation.requesterName,
+                        reservation.requesterEmail ?? "",
+                        reservation.requesterDocument,
+                        reservation.resourceLabel,
+                        reservation.resourceContext ?? "",
+                        reservation.resourceOriginalRoomLabel ?? "",
+                        reservation.destinationRoomLabel ?? "",
+                        reservation.status,
+                    ].join(" ")
+                );
+
+                return searchBlob.includes(query);
+            });
+    }, [closedReservations, historyReportFilter, historySearch, historyTypeFilter]);
+
+        const historyModal = showReservationHistory && typeof document !== "undefined"
+            ? createPortal(
+                <div
+                    className="fixed inset-0 z-[99999] flex items-center justify-center bg-slate-950/60 px-3 py-4 backdrop-blur-sm sm:px-4 sm:py-6"
+                    role="dialog"
+                    aria-modal="true"
+                    onClick={() => setShowReservationHistory(false)}
+                >
+                    <section
+                        className="flex h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl"
+                        onClick={(event) => event.stopPropagation()}
+                    >
+                        <div className="flex items-start justify-between gap-4 border-b border-slate-200 bg-slate-50 px-4 py-4 sm:px-6 sm:py-5">
+                            <div className="min-w-0">
+                                <p className="text-[9px] font-bold tracking-[0.24em] text-slate-500 uppercase">Historial</p>
+                                <h3 className="mt-1 text-lg font-black text-slate-900 sm:text-xl">Reservas cerradas y filtradas</h3>
+                                <p className="mt-1 max-w-2xl text-sm text-slate-600">
+                                    Busca por nombre, correo, cédula, tipo de recurso o estado de reporte.
+                                </p>
+                            </div>
+
+                            <button
+                                type="button"
+                                onClick={() => setShowReservationHistory(false)}
+                                className="rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+                            >
+                                Cerrar
+                            </button>
+                        </div>
+
+                        <div className="grid gap-3 border-b border-slate-200 bg-white px-4 py-4 sm:px-6 lg:grid-cols-3">
+                            <label className="block">
+                                <span className="mb-2 block text-[11px] font-bold tracking-wide text-slate-500 uppercase">Buscar</span>
+                                <input
+                                    value={historySearch}
+                                    onChange={(event) => setHistorySearch(event.target.value)}
+                                    placeholder="Nombre, correo, cédula, recurso..."
+                                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-[#3a5f94]"
+                                />
+                            </label>
+
+                            <label className="block">
+                                <span className="mb-2 block text-[11px] font-bold tracking-wide text-slate-500 uppercase">Tipo</span>
+                                <select
+                                    value={historyTypeFilter}
+                                    onChange={(event) => setHistoryTypeFilter(event.target.value as "all" | ResourceType)}
+                                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-[#3a5f94]"
+                                >
+                                    <option value="all">Todos</option>
+                                    <option value="rooms">Salones</option>
+                                    <option value="equipment">Equipos</option>
+                                </select>
+                            </label>
+
+                            <label className="block">
+                                <span className="mb-2 block text-[11px] font-bold tracking-wide text-slate-500 uppercase">Reporte</span>
+                                <select
+                                    value={historyReportFilter}
+                                    onChange={(event) => setHistoryReportFilter(event.target.value as "all" | "reportado" | "no-reportado")}
+                                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-[#3a5f94]"
+                                >
+                                    <option value="all">Todos</option>
+                                    <option value="reportado">Reportadas</option>
+                                    <option value="no-reportado">No reportadas</option>
+                                </select>
+                            </label>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-3 text-sm text-slate-600 sm:px-6">
+                            <p>
+                                Mostrando <span className="font-bold text-slate-900">{filteredHistoryReservations.length}</span> de <span className="font-bold text-slate-900">{closedReservations.length}</span> registros.
+                            </p>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setHistorySearch("");
+                                    setHistoryTypeFilter("all");
+                                    setHistoryReportFilter("all");
+                                }}
+                                className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-100"
+                            >
+                                Limpiar filtros
+                            </button>
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto bg-slate-50 px-4 py-4 sm:px-6">
+                            {filteredHistoryReservations.length > 0 ? (
+                                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                                    {filteredHistoryReservations.map((reservation) => {
+                                        const statusLower = reservation.status.toLowerCase();
+                                        const statusDisplay =
+                                            statusLower === "rechazada"
+                                                ? "Rechazada"
+                                                : statusLower === "cancelada"
+                                                    ? "Cancelada"
+                                                    : statusLower === "devuelto"
+                                                        ? "Devuelto"
+                                                        : statusLower === "reportado"
+                                                            ? "Reportado"
+                                                            : reservation.status;
+
+                                        const statusStyles =
+                                            statusLower === "rechazada"
+                                                ? "bg-rose-50 text-rose-700 border-rose-100"
+                                                : statusLower === "cancelada"
+                                                    ? "bg-slate-100 text-slate-600 border-slate-200"
+                                                    : statusLower === "devuelto"
+                                                        ? "bg-cyan-50 text-cyan-700 border-cyan-100"
+                                                        : statusLower === "reportado"
+                                                            ? "bg-amber-50 text-amber-700 border-amber-100"
+                                                            : "bg-slate-50 text-slate-600 border-slate-200";
+
+                                        return (
+                                            <article key={reservation.id} className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm transition hover:shadow-md">
+                                                <div className="flex items-start justify-between gap-3">
+                                                    <div className="min-w-0">
+                                                        <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">
+                                                            {reservation.resourceType === "rooms" ? "Salón" : "Equipo"}
+                                                        </p>
+                                                        <p className="truncate text-sm font-black text-slate-900">{reservation.resourceLabel}</p>
+                                                    </div>
+                                                    <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase ${statusStyles}`}>
+                                                        {statusDisplay}
+                                                    </span>
+                                                </div>
+
+                                                <div className="mt-3 grid gap-2 text-xs text-slate-600">
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="material-symbols-outlined text-[14px] text-[#3a5f94]">event</span>
+                                                        <span>{reservation.bookingDate}</span>
+                                                    </div>
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="material-symbols-outlined text-[14px] text-[#3a5f94]">schedule</span>
+                                                        <span>{formatDuration(reservation.startTime, reservation.endTime)}</span>
+                                                    </div>
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="material-symbols-outlined text-[14px] text-[#3a5f94]">person</span>
+                                                        <span className="truncate">{reservation.requesterName}</span>
+                                                    </div>
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="material-symbols-outlined text-[14px] text-[#3a5f94]">badge</span>
+                                                        <span className="truncate">{reservation.requesterDocument}</span>
+                                                    </div>
+                                                    {reservation.requesterEmail ? (
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="material-symbols-outlined text-[14px] text-[#3a5f94]">mail</span>
+                                                            <span className="truncate">{reservation.requesterEmail}</span>
+                                                        </div>
+                                                    ) : null}
+                                                    {reservation.destinationRoomLabel ? (
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="material-symbols-outlined text-[14px] text-[#3a5f94]">place</span>
+                                                            <span className="truncate">Destino: {reservation.destinationRoomLabel}</span>
+                                                        </div>
+                                                    ) : null}
+                                                    {reservation.resourceOriginalRoomLabel ? (
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="material-symbols-outlined text-[14px] text-[#3a5f94]">history</span>
+                                                            <span className="truncate">Origen: {reservation.resourceOriginalRoomLabel}</span>
+                                                        </div>
+                                                    ) : null}
+                                                </div>
+                                            </article>
+                                        );
+                                    })}
+                                </div>
+                            ) : (
+                                <div className="flex h-full min-h-[220px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-white p-8 text-center text-sm text-slate-500">
+                                    No hay reservas que coincidan con los filtros actuales.
+                                </div>
+                            )}
+                        </div>
+                    </section>
+                </div>,
+                document.body
+            )
+            : null;
 
     const loadReservationsFeed = async () => {
         if (!canViewReservations) {
@@ -643,6 +891,19 @@ export default function ReservasPage() {
         void loadReservationsFeed();
     }, [canViewReservations]);
 
+    useEffect(() => {
+        if (!showReservationHistory) {
+            return;
+        }
+
+        const previousOverflow = document.body.style.overflow;
+        document.body.style.overflow = "hidden";
+
+        return () => {
+            document.body.style.overflow = previousOverflow;
+        };
+    }, [showReservationHistory]);
+
     const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault();
 
@@ -654,7 +915,21 @@ export default function ReservasPage() {
         
 
         if (!selectedResourceId) {
-            setStatusMessage("Debes seleccionar un recurso para continuar.");
+            let message = "Debes seleccionar un recurso para continuar.";
+
+            if (resourceType === "rooms") {
+                message = "Debes seleccionar un salón (aula) para continuar.";
+            } else if (resourceType === "equipment") {
+                if (inventoryItems.length === 0) {
+                    message = "No hay equipos cargados para el grupo seleccionado. Cambia de grupo o carga elementos en el inventario.";
+                } else if (availableInventoryItems.length === 0) {
+                    message = "No hay equipos disponibles en el intervalo horario seleccionado. Ajusta la hora o elige otro equipo.";
+                } else {
+                    message = "Selecciona un equipo disponible de la lista para continuar.";
+                }
+            }
+
+            setStatusMessage(message);
             return;
         }
 
@@ -669,7 +944,7 @@ export default function ReservasPage() {
         try {
             // If requester has prior defect reports, warn and require confirmation
             if (documentNumber.trim()) {
-                const defectSummary = summarizeDefectReasons(allReservations, documentNumber);
+                const defectSummary = summarizeDefectReasons(allReservations, documentNumber, inventoryItems);
                 const hadDefects = defectSummary.count > 0;
 
                 if (hadDefects) {
@@ -1356,77 +1631,12 @@ export default function ReservasPage() {
                         </div>
                     </section>
 
-                    {showReservationHistory && closedReservations.length > 0 && (
-                        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                            <div className="mb-4">
-                                <p className="text-[9px] font-bold tracking-[0.24em] text-slate-500 uppercase">Historial</p>
-                                <h3 className="mt-1 text-lg font-black text-slate-900">Reservas cerradas</h3>
-                            </div>
-
-                            <div className="space-y-3">
-                                {closedReservations.map((reservation) => {
-                                    const statusLower = reservation.status.toLowerCase();
-                                    const statusDisplay =
-                                        statusLower === "rechazada"
-                                            ? "Rechazada"
-                                            : statusLower === "cancelada"
-                                                ? "Cancelada"
-                                                : statusLower === "devuelto"
-                                                    ? "Devuelto"
-                                                    : statusLower === "reportado"
-                                                        ? "Reportado"
-                                                        : reservation.status;
-
-                                    const statusStyles =
-                                        statusLower === "rechazada"
-                                            ? "bg-rose-50 text-rose-700 border-rose-100"
-                                            : statusLower === "cancelada"
-                                                ? "bg-slate-100 text-slate-600 border-slate-200"
-                                                : statusLower === "devuelto"
-                                                    ? "bg-cyan-50 text-cyan-700 border-cyan-100"
-                                                    : statusLower === "reportado"
-                                                        ? "bg-amber-50 text-amber-700 border-amber-100"
-                                                        : "bg-slate-50 text-slate-600 border-slate-200";
-
-                                    return (
-                                        <article key={reservation.id} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                                            <div className="flex items-start justify-between gap-3">
-                                                <div className="min-w-0">
-                                                    <p className="text-[10px] font-bold uppercase text-slate-500">
-                                                        {reservation.resourceType === "rooms" ? "Salón" : "Equipo"}
-                                                    </p>
-                                                    <p className="truncate text-sm font-black text-slate-900">{reservation.resourceLabel}</p>
-                                                </div>
-                                                <span className={`shrink-0 rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase ${statusStyles}`}>
-                                                    {statusDisplay}
-                                                </span>
-                                            </div>
-
-                                            <div className="mt-2 grid gap-1 text-xs text-slate-600">
-                                                <div className="flex items-center gap-2">
-                                                    <span className="material-symbols-outlined text-[14px] text-slate-400">event</span>
-                                                    <span>{reservation.bookingDate}</span>
-                                                </div>
-                                                <div className="flex items-center gap-2">
-                                                    <span className="material-symbols-outlined text-[14px] text-slate-400">schedule</span>
-                                                    <span>{formatDuration(reservation.startTime, reservation.endTime)}</span>
-                                                </div>
-                                                <div className="flex items-center gap-2">
-                                                    <span className="material-symbols-outlined text-[14px] text-slate-400">person</span>
-                                                    <span className="truncate">{reservation.requesterName}</span>
-                                                </div>
-                                            </div>
-                                        </article>
-                                    );
-                                })}
-                            </div>
-                        </section>
-                    )}
+                    {historyModal}
 
                     <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
                         <div className="mb-6">
-                            <p className="text-[9px] font-bold tracking-[0.24em] text-slate-500 uppercase">Request summary</p>
-                            <h2 className="mt-1 text-lg font-black text-slate-900">Current draft</h2>
+                            <p className="text-[9px] font-bold tracking-[0.24em] text-slate-500 uppercase">Reserva</p>
+                            <h2 className="mt-1 text-lg font-black text-slate-900">Datos Actuales</h2>
                         </div>
 
                         <div className="space-y-5">
@@ -1475,13 +1685,7 @@ export default function ReservasPage() {
                             ) : null}
                         </div>
 
-                        <div className="mt-8 rounded-2xl bg-[#d5e3ff]/40 p-4">
-                            <p className="text-[10px] font-bold uppercase text-[#153f73]">Status</p>
-                            <div className="mt-2 flex items-center gap-2">
-                                <span className="h-2.5 w-2.5 rounded-full bg-[#3a5f94]" />
-                                <span className="text-sm font-bold text-[#3a5f94]">Drafting Request</span>
-                            </div>
-                        </div>
+                    
                     </section>
 
                     
