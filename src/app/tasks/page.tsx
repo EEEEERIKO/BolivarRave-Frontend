@@ -908,7 +908,7 @@ export default function TasksPage() {
   const [requirementDraft, setRequirementDraft] = useState("");
   const [scheduleManualRequirementDraft, setScheduleManualRequirementDraft] = useState("");
   const [selectedCatalogLocations, setSelectedCatalogLocations] = useState<string[]>([]);
-  const [tasksSubtab, setTasksSubtab] = useState<TasksSubtab>("gestion");
+  const [tasksSubtab, setTasksSubtab] = useState<TasksSubtab>("horario");
   const [catalogSearchQuery, setCatalogSearchQuery] = useState("");
   const [catalogTypeFilter, setCatalogTypeFilter] = useState<TaskType | "todos">("todos");
   const [catalogSectorFilter, setCatalogSectorFilter] = useState("todos");
@@ -2207,7 +2207,7 @@ export default function TasksPage() {
     <main className="min-h-screen bg-background text-on-surface">
       <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-5 px-4 py-6 sm:px-6 lg:px-8">
         <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
-          <div className="flex flex-col gap-4 bg-[linear-gradient(180deg,#f7f9fb_0%,#eef3f8_100%)] px-5 py-4 sm:px-6 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex flex-col gap-2 bg-[linear-gradient(180deg,#f7f9fb_0%,#eef3f8_100%)] px-5 py-4 sm:px-6">
             <div className="max-w-3xl space-y-1">
               <p className="text-[9px] font-black tracking-[0.34em] text-slate-500 uppercase">Inteligencia Institucional</p>
               <h1 className="text-2xl font-black tracking-tight text-slate-900 sm:text-3xl">Centro de Control de Tareas</h1>
@@ -2215,39 +2215,6 @@ export default function TasksPage() {
                 Tareas reales, habilidades reales y revisiones trazables.
               </p>
             </div>
-
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:min-w-[480px]">
-              {[
-                { label: "Catalogo", value: catalog.length, tone: "bg-white/12" },
-                { label: "Instancias", value: instances.length, tone: "bg-white/12" },
-                { label: "Pendientes", value: pendingInstances.length, tone: "bg-white/12" },
-                { label: "Revision", value: reviewableCount, tone: "bg-white/12" },
-              ].map((item) => (
-                <div key={item.label} className="rounded-lg border border-slate-200 bg-white px-3 py-2 shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
-                  <p className="text-[9px] font-bold tracking-[0.26em] text-slate-500 uppercase">{item.label}</p>
-                  <p className="mt-1 text-xl font-black text-slate-900">{item.value}</p>
-                  <div className="mt-2 h-1 rounded-full bg-slate-100">
-                    <div className="h-full rounded-full bg-[#3a5f94]" style={{ width: `${Math.max(20, Math.min(100, item.value * 18))}%` }} />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2 border-t border-slate-200 px-5 py-3 sm:px-6">
-            <div className="rounded-md bg-slate-100 px-3 py-1 text-[10px] font-semibold text-slate-600">
-              {staff.filter((person) => eligibleStaffIds.has(person.id)).length} staff compatibles · {linkedSkillsCount} vinculaciones activas
-            </div>
-            {refreshing ? (
-              <div className="rounded-md bg-[#3a5f94]/10 px-3 py-1 text-[10px] font-semibold text-[#3a5f94]">
-                Actualizando datos...
-              </div>
-            ) : null}
-            {notice ? (
-              <div className={`rounded-md px-3 py-1 text-[10px] font-semibold ${notice.kind === "success" ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"}`}>
-                {notice.text}
-              </div>
-            ) : null}
           </div>
         </section>
 
@@ -2255,14 +2222,14 @@ export default function TasksPage() {
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              onClick={() => setTasksSubtab("gestion")}
+              onClick={() => setTasksSubtab("horario")}
               className={`rounded-md px-4 py-2 text-[11px] font-bold tracking-[0.18em] uppercase transition ${
-                tasksSubtab === "gestion"
+                tasksSubtab === "horario"
                   ? "bg-[#3a5f94] text-white shadow-sm"
                   : "border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100"
               }`}
             >
-              Gestión
+              Horario
             </button>
             <button
               type="button"
@@ -2277,39 +2244,6 @@ export default function TasksPage() {
             </button>
             <button
               type="button"
-              onClick={() => setTasksSubtab("tareas-asignadas")}
-              className={`rounded-md px-4 py-2 text-[11px] font-bold tracking-[0.18em] uppercase transition ${
-                tasksSubtab === "tareas-asignadas"
-                  ? "bg-[#3a5f94] text-white shadow-sm"
-                  : "border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100"
-              }`}
-            >
-              Tareas Asignadas
-            </button>
-            <button
-              type="button"
-              onClick={() => setTasksSubtab("horario")}
-              className={`rounded-md px-4 py-2 text-[11px] font-bold tracking-[0.18em] uppercase transition ${
-                tasksSubtab === "horario"
-                  ? "bg-[#3a5f94] text-white shadow-sm"
-                  : "border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100"
-              }`}
-            >
-              Horario
-            </button>
-            <button
-              type="button"
-              onClick={() => setTasksSubtab("habilidades")}
-              className={`rounded-md px-4 py-2 text-[11px] font-bold tracking-[0.18em] uppercase transition ${
-                tasksSubtab === "habilidades"
-                  ? "bg-[#3a5f94] text-white shadow-sm"
-                  : "border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100"
-              }`}
-            >
-              Habilidades
-            </button>
-            <button
-              type="button"
               onClick={() => setTasksSubtab("lugares")}
               className={`rounded-md px-4 py-2 text-[11px] font-bold tracking-[0.18em] uppercase transition ${
                 tasksSubtab === "lugares"
@@ -2319,9 +2253,7 @@ export default function TasksPage() {
             >
               Lugares
             </button>
-            <span className="ml-auto rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-600">
-              {filteredCatalog.length} visibles de {catalog.length}
-            </span>
+            
           </div>
         </section>
 
@@ -3424,7 +3356,7 @@ export default function TasksPage() {
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="text-[9px] font-bold tracking-[0.24em] text-slate-500 uppercase">Previsualización tipo CSV</p>
-              <h3 className="mt-0.5 text-sm font-black text-slate-900">Horario alimentado con tareas</h3>
+              <h3 className="mt-0.5 text-sm font-black text-slate-900">Horario con tareas asignadas</h3>
               <p className="mt-1 text-[11px] text-slate-500">Los trabajadores se agrupan por mañana, tarde y noche. Los huecos libres se marcan como DISPONIBLE.</p>
             </div>
             <div className="flex w-full flex-col gap-2 sm:w-auto sm:items-end">

@@ -90,7 +90,6 @@ const EXCLUDED_NORMALIZED_ROOM_NAMES = new Set([
   "salon academia de música 200",
   "salon 205 - sillas",
   "salon 206 - sillas",
-  "salon 305",
   "laboratorio de simulación financiera 403",
   "501",
   "502",

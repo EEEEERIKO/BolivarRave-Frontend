@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { readAuthSession } from "@/lib/auth-session";
 import { fetchApiJson } from "@/lib/api-client";
@@ -189,6 +189,24 @@ function getReservationDateTimeValue(reservation: ReservationFeedItem) {
     const combined = `${reservation.bookingDate}T${reservation.startTime}:00`;
     const parsed = Date.parse(combined);
     return Number.isFinite(parsed) ? parsed : Date.parse(reservation.createdAt);
+}
+
+function hasFreshPendingReservation(reservations: ReservationFeedItem[], maxAgeSeconds = 90) {
+    const now = Date.now();
+
+    return reservations.some((reservation) => {
+        const statusLower = reservation.status.toLowerCase();
+        if (statusLower !== "no_aceptado") {
+            return false;
+        }
+
+        const createdAtMs = Date.parse(reservation.createdAt);
+        if (!Number.isFinite(createdAtMs)) {
+            return true;
+        }
+
+        return now - createdAtMs <= maxAgeSeconds * 1000;
+    });
 }
 
 function normalizeSearchText(value: string) {
@@ -454,6 +472,11 @@ export default function ReservasPage() {
         });
     }, [reservationsFeed]);
 
+    const shouldAutoRefreshReservations = useMemo(
+        () => hasFreshPendingReservation(activeReservations),
+        [activeReservations]
+    );
+
     const closedReservations = useMemo(() => {
         return allReservations.filter((reservation) => {
             const statusLower = reservation.status.toLowerCase();
@@ -681,7 +704,7 @@ export default function ReservasPage() {
             )
             : null;
 
-    const loadReservationsFeed = async () => {
+    const loadReservationsFeed = useCallback(async () => {
         if (!canViewReservations) {
             return;
         }
@@ -702,7 +725,7 @@ export default function ReservasPage() {
         } finally {
             setReservationsLoading(false);
         }
-    };
+    }, [canViewReservations]);
 
     const handleRequesterDocumentLookup = () => {
         const normalizedDocument = normalizeDocumentNumber(documentNumber);
@@ -889,7 +912,34 @@ export default function ReservasPage() {
 
     useEffect(() => {
         void loadReservationsFeed();
-    }, [canViewReservations]);
+    }, [loadReservationsFeed]);
+
+    useEffect(() => {
+        if (!canViewReservations) {
+            return;
+        }
+
+        if (!shouldAutoRefreshReservations) {
+            return;
+        }
+
+        const refreshIfVisible = () => {
+            if (typeof document !== "undefined" && document.visibilityState === "visible") {
+                void loadReservationsFeed();
+            }
+        };
+
+        const intervalId = window.setInterval(refreshIfVisible, 5000);
+
+        window.addEventListener("focus", refreshIfVisible);
+        document.addEventListener("visibilitychange", refreshIfVisible);
+
+        return () => {
+            window.clearInterval(intervalId);
+            window.removeEventListener("focus", refreshIfVisible);
+            document.removeEventListener("visibilitychange", refreshIfVisible);
+        };
+    }, [canViewReservations, loadReservationsFeed, shouldAutoRefreshReservations]);
 
     useEffect(() => {
         if (!showReservationHistory) {
@@ -992,14 +1042,16 @@ export default function ReservasPage() {
 
             // If equipment was reserved, update item room to the destination room
             try {
-                if (resourceType === 'equipment' && selectedResourceId) {
+                        if (resourceType === 'equipment' && selectedResourceId) {
                     const item = inventoryItems.find((i) => String(i.id) === String(selectedResourceId));
                     if (item) {
+                        // Use the human-readable room name (label) when updating inventory.
+                        const roomLabel = selectedDestinationRoom ? selectedDestinationRoom.label : item.room;
                         const updatePayload: any = {
                             groupId: item.groupId,
                             name: item.name,
                             code: item.code,
-                            room: selectedDestinationRoomId ? selectedDestinationRoomId : item.room,
+                            room: roomLabel,
                             status: item.status,
                             defective: !!item.defective,
                             motivo: item.motivo || null,
@@ -1597,25 +1649,46 @@ export default function ReservasPage() {
                                                                 {actionReservationId === reservation.id ? 'Cancelando...' : 'Cancelar reserva'}
                                                             </button>
                                                         ) : null}
-                                                        {reservation.resourceType === "equipment" && (statusLower === 'confirmada' || statusLower === 'aprobada') ? (
-                                                            <>
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => void handleReturnReservation(reservation.id)}
-                                                                    disabled={returningReservationId === reservation.id}
-                                                                    className="inline-flex w-full items-center justify-center rounded-xl bg-[#3a5f94] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#2d5387] disabled:cursor-not-allowed disabled:opacity-60"
-                                                                >
-                                                                    {returningReservationId === reservation.id ? "Devolviendo..." : "Devolución exitosa"}
-                                                                </button>
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => void handleDefectiveReturn(reservation.id)}
-                                                                    disabled={actionReservationId === reservation.id}
-                                                                    className="inline-flex w-full items-center justify-center rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
-                                                                >
-                                                                    {actionReservationId === reservation.id ? 'Procesando...' : 'Devolución defectuosa'}
-                                                                </button>
-                                                            </>
+                                                        { (statusLower === 'confirmada' || statusLower === 'aprobada') ? (
+                                                            reservation.resourceType === "equipment" ? (
+                                                                <>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => void handleReturnReservation(reservation.id)}
+                                                                        disabled={returningReservationId === reservation.id}
+                                                                        className="inline-flex w-full items-center justify-center rounded-xl bg-[#3a5f94] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#2d5387] disabled:cursor-not-allowed disabled:opacity-60"
+                                                                    >
+                                                                        {returningReservationId === reservation.id ? "Devolviendo..." : "Devolución exitosa"}
+                                                                    </button>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => void handleDefectiveReturn(reservation.id)}
+                                                                        disabled={actionReservationId === reservation.id}
+                                                                        className="inline-flex w-full items-center justify-center rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                                                    >
+                                                                        {actionReservationId === reservation.id ? 'Procesando...' : 'Devolución defectuosa'}
+                                                                    </button>
+                                                                </>
+                                                            ) : (
+                                                                <>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => void handleCloseReservation(reservation.id)}
+                                                                        disabled={actionReservationId === reservation.id}
+                                                                        className="inline-flex w-full items-center justify-center rounded-xl bg-[#3a5f94] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#2d5387] disabled:cursor-not-allowed disabled:opacity-60"
+                                                                    >
+                                                                        {actionReservationId === reservation.id ? 'Procesando...' : 'Cerrar reserva'}
+                                                                    </button>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => void handleReportReservation(reservation.id)}
+                                                                        disabled={actionReservationId === reservation.id}
+                                                                        className="inline-flex w-full items-center justify-center rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                                                    >
+                                                                        {actionReservationId === reservation.id ? 'Procesando...' : 'Reportar problema'}
+                                                                    </button>
+                                                                </>
+                                                            )
                                                         ) : null}
                                                     </div>
                                                 </article>
