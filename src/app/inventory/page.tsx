@@ -27,23 +27,7 @@ type InventoryItem = {
   status: "Disponible" | "Fijo";
   defective: boolean;
   motivo: string | null;
-  price?: number;
   order: number;
-};
-
-const normalizeItemPrice = (value: unknown): number => {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value;
-  }
-
-  if (typeof value === "string") {
-    const parsed = Number(value);
-    if (Number.isFinite(parsed)) {
-      return parsed;
-    }
-  }
-
-  return 0;
 };
 
 type InventoryGroupFormState = {
@@ -59,7 +43,6 @@ type InventoryItemFormState = {
   status: "Disponible" | "Fijo";
   defective: boolean;
   motivo: string;
-  price: string;
 };
 
 type InventoryModalState =
@@ -142,7 +125,6 @@ export default function InventoryPage() {
     status: "Disponible",
     defective: false,
     motivo: "",
-    price: "",
   });
   const [defectiveReason, setDefectiveReason] = useState<string>("");
   const [modalError, setModalError] = useState<string | null>(null);
@@ -193,11 +175,7 @@ export default function InventoryPage() {
       ]);
 
       const nextGroups = groupsResponse.status === "fulfilled" ? groupsResponse.value.groups ?? [] : [];
-      const nextItemsRaw = itemsResponse.status === "fulfilled" ? itemsResponse.value.items ?? [] : [];
-      const nextItems = nextItemsRaw.map((item) => ({
-        ...item,
-        price: normalizeItemPrice(item.price),
-      }));
+      const nextItems = itemsResponse.status === "fulfilled" ? itemsResponse.value.items ?? [] : [];
       const nextRooms =
         roomsResponse.status === "fulfilled"
           ? Array.from(new Set((roomsResponse.value.rooms ?? []).filter((room) => typeof room === "string" && room.trim().length > 0)))
@@ -279,11 +257,7 @@ export default function InventoryPage() {
 
   const roomOptions = useMemo(() => {
     const options = [...roomCatalog];
-    if (!options.includes("Monitoría")) {
-      options.unshift("Monitoría");
-    }
     if (itemForm.room && !options.includes(itemForm.room)) {
-      // keep the current edited value first so the select shows it when editing
       options.unshift(itemForm.room);
     }
     return options;
@@ -372,7 +346,6 @@ export default function InventoryPage() {
       status: mode === "edit" && item ? item.status : "Disponible",
       defective: false,
       motivo: "",
-      price: mode === "edit" && item && typeof item.price === "number" ? String(item.price) : "",
     });
     setActiveModal({ kind: "item", mode, itemId: item?.id });
   };
@@ -509,7 +482,6 @@ export default function InventoryPage() {
           status: itemForm.status,
           defective: itemForm.defective,
           motivo: itemForm.defective ? itemForm.motivo.trim() || null : null,
-          ...(itemForm.price && itemForm.price.trim() !== "" ? { price: Number(itemForm.price) } : {}),
         };
 
         if (activeModal.mode === "create") {
@@ -575,7 +547,6 @@ export default function InventoryPage() {
           status: targetItem.status,
           defective: true,
           motivo: reason,
-          ...(typeof targetItem.price === "number" ? { price: targetItem.price } : {}),
         };
 
         try {
@@ -590,16 +561,7 @@ export default function InventoryPage() {
           );
 
           if (response.item) {
-            setInventoryItems((current) =>
-              current.map((item) =>
-                item.id === response.item?.id
-                  ? ({
-                      ...(response.item as InventoryItem),
-                      price: normalizeItemPrice(response.item?.price),
-                    } as InventoryItem)
-                  : item,
-              ),
-            );
+            setInventoryItems((current) => current.map((item) => (item.id === response.item?.id ? (response.item as InventoryItem) : item)));
 
             if (response.item.motivo && response.item.motivo.trim().length > 0) {
               upsertDefectiveReasonOverride(targetItem.id, response.item.motivo);
@@ -778,7 +740,18 @@ export default function InventoryPage() {
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-[0_10px_40px_rgba(42,52,57,0.06)]">
         <div className="mb-6 flex items-center justify-between">
           <h3 className="text-xl font-extrabold tracking-tight text-[#1A365D]">Detalles del Grupo</h3>
-          
+          {canManageInventory ? (
+            <button
+              className="material-symbols-outlined text-lg text-[#566166]"
+              onClick={createItem}
+              type="button"
+              title="Nuevo elemento"
+            >
+              add_circle
+            </button>
+          ) : (
+            <button className="material-symbols-outlined text-lg text-[#566166]">more_vert</button>
+          )}
         </div>
 
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
@@ -899,38 +872,29 @@ export default function InventoryPage() {
                             {item.code}
                           </p>
                         </div>
-                        
-                        <div className="mt-1 text-sm text-[#566166]">
-                          {typeof item.price === "number" ? `Precio: $${item.price.toFixed(2)}` : null}
-                        </div>
+                        {item.defective ? (
+                          <div className="mt-1 flex items-center gap-1 text-[10px] font-bold text-rose-700">
+                            <span className="material-symbols-outlined text-sm">error</span>
+                            { "Defectuoso"}
+                          </div>
+                        ) : null}
                       </div>
                     </div>
 
                     <div className="mt-2 flex flex-wrap items-center justify-between gap-2 pr-8">
                       <p className="text-xs font-semibold text-[#2a3439]">{item.room}</p>
                       <div className="flex flex-wrap items-center gap-1">
-                        {!item.defective ? (
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              openItemModal("edit", item);
-                            }}
-                            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold transition hover:opacity-80 cursor-pointer ${
-                              item.status === "Fijo"
+                        <span
+                          className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                            item.defective
+                              ? "bg-rose-100 text-rose-700"
+                              : item.status === "Fijo"
                                 ? "bg-[#d9d7f8]/40 text-[#5d5d78]"
                                 : "bg-[#d5e3ff] text-[#2c5287]"
-                            }`}
-                          >
-                            {item.status === "Fijo" ? "Fijo" : "Disponible"}
-                          </button>
-                        ) : (
-                          <span
-                            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold bg-rose-100 text-rose-700`}
-                          >
-                            Defectuoso
-                          </span>
-                        )}
+                          }`}
+                        >
+                          
+                        </span>
                       </div>
                     </div>
 
@@ -1089,21 +1053,6 @@ export default function InventoryPage() {
                           </option>
                         ))}
                       </select>
-                    </div>
-                    <div>
-                      <label className="mb-2 block text-xs font-bold tracking-widest text-[#566166] uppercase" htmlFor="inventory-item-price">
-                        Precio
-                      </label>
-                      <input
-                        id="inventory-item-price"
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm text-[#2a3439] outline-none transition focus:border-[#3a5f94]"
-                        onChange={(event) => setItemForm((current) => ({ ...current, price: event.target.value }))}
-                        placeholder="0.00"
-                        value={itemForm.price}
-                      />
                     </div>
                     <div>
                       <label className="mb-2 block text-xs font-bold tracking-widest text-[#566166] uppercase" htmlFor="inventory-item-status">

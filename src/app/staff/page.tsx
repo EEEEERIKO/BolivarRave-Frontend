@@ -5,6 +5,8 @@ import { fetchApiJson } from "@/lib/api-client";
 import { getCachedData, setCachedData } from "@/lib/cache-storage";
 import { readAuthSession } from "@/lib/auth-session";
 import { useEffect, useMemo, useRef, useState, type SyntheticEvent } from "react";
+import toast from "react-hot-toast";
+import { confirmToast } from "@/lib/toast-dialog";
 
 type StaffView = "directory" | "schedule";
 type StaffMobileDetailTab = "profile" | "tasks" | "daily" | "academic" | "activity";
@@ -602,6 +604,7 @@ function StaffScheduleBoard({
   const [editorPausaRows, setEditorPausaRows] = useState<EditablePausaItem[]>([]);
   const [isLoadingPausas, setIsLoadingPausas] = useState(false);
   const [isSavingJornada, setIsSavingJornada] = useState(false);
+  const [editorSelectedDay, setEditorSelectedDay] = useState<WorkWeekDay>("Lunes");
   const [selectedScheduleDay, setSelectedScheduleDay] = useState<WorkWeekDay>(() => getCurrentWorkWeekDay());
   const [nowTimestamp, setNowTimestamp] = useState(() => Date.now());
   const leftColumnRef = useRef<HTMLDivElement>(null);
@@ -950,6 +953,7 @@ function StaffScheduleBoard({
     setEditingStaff(staff);
     setEditorRows(mappedRows);
     setEditorPausaRows([]);
+    setEditorSelectedDay("Lunes");
     setIsEditorOpen(true);
     setScheduleError(null);
 
@@ -968,6 +972,7 @@ function StaffScheduleBoard({
     setEditingStaff(null);
     setEditorRows([]);
     setEditorPausaRows([]);
+    setEditorSelectedDay("Lunes");
   };
 
   const addEditorRow = () => {
@@ -1162,7 +1167,7 @@ function StaffScheduleBoard({
     event.preventDefault();
 
     if (!canManageStaff) {
-      alert("Solo el perfil Administrador puede modificar jornadas y pausas.");
+      toast.error("Solo el perfil Administrador puede modificar jornadas y pausas.");
       return;
     }
 
@@ -1172,13 +1177,13 @@ function StaffScheduleBoard({
 
     const validationError = validateEditorRows();
     if (validationError) {
-      alert(validationError);
+      toast.error(validationError);
       return;
     }
 
     const pausaValidationError = validatePausaRows();
     if (pausaValidationError) {
-      alert(pausaValidationError);
+      toast.error(pausaValidationError);
       return;
     }
 
@@ -1309,9 +1314,9 @@ function StaffScheduleBoard({
       });
 
       closeEditor();
-      alert("Jornada y pausas actualizadas correctamente.");
+      toast.success("Jornada y pausas actualizadas correctamente.");
     } catch (error) {
-      alert(error instanceof Error ? error.message : "No se pudo guardar la configuración de jornada/pausas.");
+      toast.error(error instanceof Error ? error.message : "No se pudo guardar la configuración de jornada/pausas.");
     } finally {
       setIsSavingJornada(false);
     }
@@ -1682,7 +1687,7 @@ function StaffScheduleBoard({
 
       {isEditorOpen && editingStaff ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
+          <div className="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
             <div className="mb-4 flex items-start justify-between gap-4">
               <div>
                 <h3 className="text-xl font-black text-[#2a3439]">Horario de trabajo</h3>
@@ -1695,80 +1700,116 @@ function StaffScheduleBoard({
               </button>
             </div>
 
-            <form className="space-y-3" onSubmit={saveJornada}>
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                <div className="mb-2 flex items-center justify-between">
-                  <p className="text-sm font-semibold text-[#2a3439]">Bloques de jornada semanal</p>
-                  <button className="rounded-lg border border-slate-300 px-3 py-1 text-xs font-bold text-[#566166]" onClick={addEditorRow} type="button">
+            <form className="space-y-4" onSubmit={saveJornada}>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <p className="mb-3 text-sm font-semibold text-[#2a3439]">Selecciona un día</p>
+                <div className="mb-4 flex flex-wrap gap-2">
+                  {MASTER_WEEK_DAYS.map((day) => {
+                    const dayShort = day === "Lunes" ? "Lun" : day === "Martes" ? "Mar" : day === "Miércoles" ? "Mié" : day === "Jueves" ? "Jue" : day === "Viernes" ? "Vie" : day === "Sábado" ? "Sáb" : "Dom";
+                    const isActive = editorSelectedDay === day;
+                    return (
+                      <button
+                        key={day}
+                        type="button"
+                        onClick={() => setEditorSelectedDay(day)}
+                        className={`rounded-lg px-4 py-2 text-sm font-bold transition ${
+                          isActive
+                            ? "bg-[#3a5f94] text-white"
+                            : "border border-slate-300 bg-white text-[#2a3439] hover:bg-slate-100"
+                        }`}
+                      >
+                        {dayShort}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <p className="text-sm font-semibold text-[#2a3439]">Bloques de jornada - {editorSelectedDay}</p>
+                  <button className="rounded-lg border border-slate-300 px-3 py-1 text-xs font-bold text-[#566166] hover:bg-slate-100" onClick={addEditorRow} type="button">
                     + Agregar bloque
                   </button>
                 </div>
 
                 <div className="space-y-2">
-                  {editorRows.map((row, index) => (
-                    <div className="grid grid-cols-1 gap-2 rounded-xl border border-slate-200 bg-white p-3 md:grid-cols-[1fr_1fr_1fr_1fr_auto]" key={row.id}>
-                  <select
-                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                    onChange={(event) => updateEditorRow(row.id, "diaSemana", event.target.value)}
-                    value={row.diaSemana}
-                  >
-                    <option value="">Dia</option>
-                    {MASTER_WEEK_DAYS.map((day) => (
-                      <option key={day} value={day}>
-                        {day}
-                      </option>
-                    ))}
-                  </select>
+                  {editorRows
+                    .filter((row) => row.diaSemana === editorSelectedDay || row.diaSemana === "")
+                    .map((row, filteredIndex) => {
+                      const totalFilteredForDay = editorRows.filter((r) => r.diaSemana === editorSelectedDay || r.diaSemana === "").length;
+                      return (
+                        <div className="grid grid-cols-1 gap-2 rounded-xl border border-slate-200 bg-white p-3 md:grid-cols-[auto_1fr_1fr_1fr_auto]" key={row.id}>
+                          <select
+                            className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:hidden"
+                            onChange={(event) => updateEditorRow(row.id, "diaSemana", event.target.value)}
+                            value={row.diaSemana}
+                          >
+                            <option value="">Dia</option>
+                            {MASTER_WEEK_DAYS.map((day) => (
+                              <option key={day} value={day}>
+                                {day}
+                              </option>
+                            ))}
+                          </select>
 
-                        <select
-                          className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                          onChange={(event) => updateEditorRow(row.id, "horaEntrada", event.target.value)}
-                          value={row.horaEntrada}
-                        >
-                          <option value="">Hora de inicio</option>
-                          {TIME_SLOT_OPTIONS.map((option) => (
-                            <option key={`entrada-${option.value}`} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
+                          <div className="hidden rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs font-bold text-[#2a3439] md:flex items-center">
+                            {row.diaSemana || editorSelectedDay}
+                          </div>
 
-                        <select
-                          className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                          onChange={(event) => updateEditorRow(row.id, "horaSalida", event.target.value)}
-                          value={row.horaSalida}
-                        >
-                          <option value="">Hora de fin</option>
-                          {TIME_SLOT_OPTIONS.map((option) => (
-                            <option key={`salida-${option.value}`} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
+                          <select
+                            className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                            onChange={(event) => updateEditorRow(row.id, "horaEntrada", event.target.value)}
+                            value={row.horaEntrada}
+                          >
+                            <option value="">Hora de inicio</option>
+                            {TIME_SLOT_OPTIONS.map((option) => (
+                              <option key={`entrada-${option.value}`} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
 
-                  <div className="flex items-center rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-[#566166]">
-                    <span className="font-medium">{row.totalHorasDia || "0"} h</span>
-                  </div>
+                          <select
+                            className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                            onChange={(event) => updateEditorRow(row.id, "horaSalida", event.target.value)}
+                            value={row.horaSalida}
+                          >
+                            <option value="">Hora de fin</option>
+                            {TIME_SLOT_OPTIONS.map((option) => (
+                              <option key={`salida-${option.value}`} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
 
-                  <button
-                    className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold text-[#9f403d]"
-                    onClick={() => removeEditorRow(row.id)}
-                    type="button"
-                  >
-                    Quitar
-                  </button>
+                          <div className="flex items-center rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm font-medium text-[#566166]">
+                            {row.totalHorasDia || "0"} h
+                          </div>
 
-                  <p className="text-[10px] text-[#566166] md:col-span-5">Bloque {index + 1} de jornada semanal</p>
-                    </div>
-                  ))}
+                          <button
+                            className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold text-[#9f403d] hover:bg-red-50"
+                            onClick={() => removeEditorRow(row.id)}
+                            type="button"
+                          >
+                            Quitar
+                          </button>
+                        </div>
+                      );
+                    })}
+                  {editorRows.filter((row) => row.diaSemana === editorSelectedDay || row.diaSemana === "").length === 0 && (
+                    <p className="rounded-lg border border-dashed border-slate-300 bg-white px-3 py-2 text-xs text-[#566166]">
+                      No hay bloques de jornada para {editorSelectedDay}
+                    </p>
+                  )}
                 </div>
               </div>
 
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                <div className="mb-2 flex items-center justify-between">
-                  <p className="text-sm font-semibold text-[#2a3439]">Pausas programadas (comida/descanso)</p>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <p className="text-sm font-semibold text-[#2a3439]">Pausas programadas - {editorSelectedDay}</p>
                   <button
-                    className="rounded-lg border border-slate-300 px-3 py-1 text-xs font-bold text-[#566166]"
+                    className="rounded-lg border border-slate-300 px-3 py-1 text-xs font-bold text-[#566166] hover:bg-slate-100"
                     onClick={addPausaRow}
                     type="button"
                   >
@@ -1780,77 +1821,82 @@ function StaffScheduleBoard({
                   <p className="rounded-lg border border-dashed border-slate-300 bg-white px-3 py-2 text-xs text-[#566166]">
                     Cargando pausas...
                   </p>
-                ) : editorPausaRows.length === 0 ? (
-                  <p className="rounded-lg border border-dashed border-slate-300 bg-white px-3 py-2 text-xs text-[#566166]">
-                    No hay pausas configuradas para este colaborador.
-                  </p>
                 ) : (
                   <div className="space-y-2">
-                    {sortedEditorPausaRows.map((row, index) => (
-                      <div className="grid grid-cols-1 gap-2 rounded-lg border border-slate-200 bg-white p-2 md:grid-cols-[1fr_1fr_1fr_1fr_auto]" key={row.id}>
-                        <select
-                          className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                          onChange={(event) => updatePausaRow(row.id, "diaSemana", event.target.value)}
-                          value={row.diaSemana}
-                        >
-                          <option value="">Día</option>
-                          {MASTER_WEEK_DAYS.map((day) => (
-                            <option key={`pausa-day-${day}`} value={day}>
-                              {day}
-                            </option>
-                          ))}
-                        </select>
+                    {sortedEditorPausaRows
+                      .filter((row) => row.diaSemana === editorSelectedDay || row.diaSemana === "")
+                      .map((row) => (
+                        <div className="grid grid-cols-1 gap-2 rounded-lg border border-slate-200 bg-white p-3 md:grid-cols-[auto_1fr_1fr_1fr_1fr_auto]" key={row.id}>
+                          <select
+                            className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:hidden"
+                            onChange={(event) => updatePausaRow(row.id, "diaSemana", event.target.value)}
+                            value={row.diaSemana}
+                          >
+                            <option value="">Día</option>
+                            {MASTER_WEEK_DAYS.map((day) => (
+                              <option key={`pausa-day-${day}`} value={day}>
+                                {day}
+                              </option>
+                            ))}
+                          </select>
 
-                        <select
-                          className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                          onChange={(event) => updatePausaRow(row.id, "tipoPausa", event.target.value)}
-                          value={row.tipoPausa}
-                        >
-                          <option value="">Sin asignar</option>
-                          {PAUSA_TIPOS.map((tipo) => (
-                            <option key={`pausa-tipo-${tipo}`} value={tipo}>
-                              {tipo}
-                            </option>
-                          ))}
-                        </select>
+                          <div className="hidden rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs font-bold text-[#2a3439] md:flex items-center">
+                            {row.diaSemana || editorSelectedDay}
+                          </div>
 
-                        <select
-                          className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                          onChange={(event) => updatePausaRow(row.id, "horaInicio", event.target.value)}
-                          value={row.horaInicio}
-                        >
-                          <option value="">Inicio</option>
-                          {TIME_SLOT_OPTIONS.map((option) => (
-                            <option key={`pausa-inicio-${option.value}`} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
+                          <select
+                            className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                            onChange={(event) => updatePausaRow(row.id, "tipoPausa", event.target.value)}
+                            value={row.tipoPausa}
+                          >
+                            <option value="">Sin asignar</option>
+                            {PAUSA_TIPOS.map((tipo) => (
+                              <option key={`pausa-tipo-${tipo}`} value={tipo}>
+                                {tipo}
+                              </option>
+                            ))}
+                          </select>
 
-                        <select
-                          className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                          onChange={(event) => updatePausaRow(row.id, "horaFin", event.target.value)}
-                          value={row.horaFin}
-                        >
-                          <option value="">Fin</option>
-                          {TIME_SLOT_OPTIONS.map((option) => (
-                            <option key={`pausa-fin-${option.value}`} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
+                          <select
+                            className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                            onChange={(event) => updatePausaRow(row.id, "horaInicio", event.target.value)}
+                            value={row.horaInicio}
+                          >
+                            <option value="">Inicio</option>
+                            {TIME_SLOT_OPTIONS.map((option) => (
+                              <option key={`pausa-inicio-${option.value}`} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
 
-                        <button
-                          className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold text-[#9f403d]"
-                          onClick={() => removePausaRow(row.id)}
-                          type="button"
-                        >
-                          Quitar
-                        </button>
+                          <select
+                            className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                            onChange={(event) => updatePausaRow(row.id, "horaFin", event.target.value)}
+                            value={row.horaFin}
+                          >
+                            <option value="">Fin</option>
+                            {TIME_SLOT_OPTIONS.map((option) => (
+                              <option key={`pausa-fin-${option.value}`} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
 
-                        <p className="text-[10px] text-[#566166] md:col-span-5">Pausa {index + 1}</p>
-                      </div>
-                    ))}
+                          <button
+                            className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold text-[#9f403d] hover:bg-red-50"
+                            onClick={() => removePausaRow(row.id)}
+                            type="button"
+                          >
+                            Quitar
+                          </button>
+                        </div>
+                      ))}
+                    {sortedEditorPausaRows.filter((row) => row.diaSemana === editorSelectedDay || row.diaSemana === "").length === 0 && (
+                      <p className="rounded-lg border border-dashed border-slate-300 bg-white px-3 py-2 text-xs text-[#566166]">
+                        No hay pausas configuradas para {editorSelectedDay}
+                      </p>
+                    )}
                   </div>
                 )}
               </div>
@@ -1940,13 +1986,13 @@ export default function StaffPage() {
     lastName: "",
     major: "",
     phone: "",
-    contractPlan: "Plan 1" as ContractPlan,
+    contractPlan: "" as ContractPlan,
     birthDate: "",
     password: "",
     passwordConfirm: "",
     habilidadIds: [] as string[],
     role: "",
-    roleId: 3 as StaffAccessRoleId,
+    roleId: 0 as StaffAccessRoleId,
   });
   const [editStaff, setEditStaff] = useState({
     staffNumber: "",
@@ -2817,7 +2863,7 @@ export default function StaffPage() {
     event.preventDefault();
 
     if (!canManageStaff) {
-      alert("Solo el perfil Administrador puede agregar personal.");
+      toast.error("Solo el perfil Administrador puede agregar personal.");
       return;
     }
 
@@ -2830,27 +2876,27 @@ export default function StaffPage() {
 
       // Validar campos requeridos
       if (!newStaff.firstName || !newStaff.lastName) {
-        alert("Por favor completa los campos de nombre y apellido.");
+        toast.error("Por favor completa los campos de nombre y apellido.");
         return;
       }
 
       if (!resolvedBirthDate) {
-        alert("Por favor selecciona una fecha de nacimiento valida (ano, mes y dia).");
+        toast.error("Por favor selecciona una fecha de nacimiento valida (ano, mes y dia).");
         return;
       }
 
       if (!isAdultBirthDate(resolvedBirthDate)) {
-        alert("Solo se pueden registrar personas mayores de edad (18+).");
+        toast.error("Solo se pueden registrar personas mayores de edad (18+).");
         return;
       }
 
       if (requiresCredential && newStaff.password.trim().length < 8) {
-        alert("Administrador y Monitor requieren una contraseña de al menos 8 caracteres.");
+        toast.error("Administrador y Monitor requieren una contraseña de al menos 8 caracteres.");
         return;
       }
 
       if (requiresCredential && newStaff.password !== newStaff.passwordConfirm) {
-        alert("La contraseña y su confirmación no coinciden.");
+        toast.error("La contraseña y su confirmación no coinciden.");
         return;
       }
 
@@ -2859,7 +2905,7 @@ export default function StaffPage() {
         (slot) => !slot.day || !slot.startTime || !slot.endTime,
       );
       if (hasIncompleteSlot) {
-        alert("Hay bloques de horario incompletos. Completa hora inicio y hora fin, o elimina el bloque.");
+        toast.error("Hay bloques de horario incompletos. Completa hora inicio y hora fin, o elimina el bloque.");
         return;
       }
 
@@ -2870,13 +2916,13 @@ export default function StaffPage() {
         }));
 
       if (hasAnySlot && bloqueosClase.length === 0) {
-        alert("Debes completar al menos un bloque valido o eliminar todos los bloques.");
+        toast.error("Debes completar al menos un bloque valido o eliminar todos los bloques.");
         return;
       }
 
       const blockValidationError = validateClassBlocks(bloqueosClase);
       if (blockValidationError) {
-        alert(`Error en horarios de clase: ${blockValidationError}`);
+        toast.error(`Error en horarios de clase: ${blockValidationError}`);
         return;
       }
 
@@ -2903,13 +2949,13 @@ export default function StaffPage() {
         }),
       });
 
-      alert(`Colaborador ${newStaff.firstName} ${newStaff.lastName} creado correctamente.`);
+      toast.success(`Colaborador ${newStaff.firstName} ${newStaff.lastName} creado correctamente.`);
       closeAddStaffForm();
       setFormFeedback(null);
       await loadStaff();
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "No se pudo guardar el staff.";
-      alert(getFriendlyStaffApiError(errorMessage, "guardar"));
+      toast.error(getFriendlyStaffApiError(errorMessage, "guardar"));
       setFormFeedback(null);
     } finally {
       setIsSavingNewStaff(false);
@@ -2963,12 +3009,12 @@ export default function StaffPage() {
     event.preventDefault();
 
     if (!canManageStaff) {
-      alert("Solo el perfil Administrador puede editar perfiles.");
+      toast.error("Solo el perfil Administrador puede editar perfiles.");
       return;
     }
 
     if (!selectedStaff) {
-      alert("Por favor selecciona un staff para editar.");
+      toast.error("Por favor selecciona un staff para editar.");
       return;
     }
 
@@ -2980,27 +3026,27 @@ export default function StaffPage() {
       const requiresCredential = roleRequiresCredential(editStaff.roleId);
 
       if (!resolvedBirthDate) {
-        alert("Por favor selecciona una fecha de nacimiento valida (ano, mes y dia).");
+        toast.error("Por favor selecciona una fecha de nacimiento valida (ano, mes y dia).");
         return;
       }
 
       if (!isAdultBirthDate(resolvedBirthDate)) {
-        alert("Solo se pueden registrar personas mayores de edad (18+).");
+        toast.error("Solo se pueden registrar personas mayores de edad (18+).");
         return;
       }
 
       if (requiresCredential && !selectedStaff.tieneCredencial && editStaff.password.trim().length < 8) {
-        alert("Este rol requiere contraseña. Ingresa una contraseña de al menos 8 caracteres.");
+        toast.error("Este rol requiere contraseña. Ingresa una contraseña de al menos 8 caracteres.");
         return;
       }
 
       if (editStaff.password.trim().length > 0 && editStaff.password.trim().length < 8) {
-        alert("Si deseas cambiar la contraseña, debe tener al menos 8 caracteres.");
+        toast.error("Si deseas cambiar la contraseña, debe tener al menos 8 caracteres.");
         return;
       }
 
       if (editStaff.password.trim().length > 0 && editStaff.password !== editStaff.passwordConfirm) {
-        alert("La contraseña y su confirmación no coinciden.");
+        toast.error("La contraseña y su confirmación no coinciden.");
         return;
       }
 
@@ -3009,7 +3055,7 @@ export default function StaffPage() {
         (slot) => !slot.day || !slot.startTime || !slot.endTime,
       );
       if (hasIncompleteSlot) {
-        alert("Hay bloques de horario incompletos. Completa hora inicio y hora fin, o elimina el bloque.");
+        toast.error("Hay bloques de horario incompletos. Completa hora inicio y hora fin, o elimina el bloque.");
         return;
       }
 
@@ -3020,13 +3066,13 @@ export default function StaffPage() {
         }));
 
       if (hasAnySlot && bloqueosClase.length === 0) {
-        alert("Debes completar al menos un bloque valido o eliminar todos los bloques.");
+        toast.error("Debes completar al menos un bloque valido o eliminar todos los bloques.");
         return;
       }
 
       const blockValidationError = validateClassBlocks(bloqueosClase);
       if (blockValidationError) {
-        alert(`Error en horarios de clase: ${blockValidationError}`);
+        toast.error(`Error en horarios de clase: ${blockValidationError}`);
         return;
       }
 
@@ -3053,13 +3099,13 @@ export default function StaffPage() {
         }),
       });
 
-      alert(`Perfil de ${editStaff.firstName} ${editStaff.lastName} actualizado correctamente.`);
+      toast.success(`Perfil de ${editStaff.firstName} ${editStaff.lastName} actualizado correctamente.`);
       setShowEditStaffForm(false);
       setFormFeedback(null);
       await loadStaff();
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "No se pudo actualizar el staff.";
-      alert(getFriendlyStaffApiError(errorMessage, "actualizar"));
+      toast.error(getFriendlyStaffApiError(errorMessage, "actualizar"));
       setFormFeedback(null);
     } finally {
       setIsSavingEditStaff(false);
@@ -3070,18 +3116,18 @@ export default function StaffPage() {
     event.preventDefault();
 
     if (!canManageStaff) {
-      alert("Solo el perfil Administrador puede ajustar horas acumuladas.");
+      toast.error("Solo el perfil Administrador puede ajustar horas acumuladas.");
       return;
     }
 
     if (!selectedStaff) {
-      alert("Selecciona un miembro del personal primero.");
+      toast.error("Selecciona un miembro del personal primero.");
       return;
     }
 
     const parsedHours = Number(balanceAdjustmentHours);
     if (!Number.isFinite(parsedHours) || Math.abs(parsedHours) < 0.01) {
-      alert("Ingresa un valor valido diferente de 0. Usa positivo para horas a favor y negativo para horas en contra.");
+      toast.error("Ingresa un valor valido diferente de 0. Usa positivo para horas a favor y negativo para horas en contra.");
       return;
     }
 
@@ -3102,10 +3148,10 @@ export default function StaffPage() {
         loadStaff(),
         loadBalanceMovements(selectedStaff.id),
       ]);
-      alert("Ajuste de horas registrado correctamente.");
+      toast.success("Ajuste de horas registrado correctamente.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "No se pudo registrar el ajuste de horas.";
-      alert(message);
+      toast.error(message);
     } finally {
       setIsSavingBalanceMovement(false);
     }
@@ -3231,16 +3277,19 @@ export default function StaffPage() {
 
   async function handleDeleteStaff() {
     if (!canManageStaff) {
-      alert("Solo el perfil Administrador puede eliminar personal.");
+      toast.error("Solo el perfil Administrador puede eliminar personal.");
       return;
     }
 
     if (!selectedStaff) {
-      alert("Por favor selecciona un staff para eliminar.");
+      toast.error("Por favor selecciona un staff para eliminar.");
       return;
     }
 
-    const confirmDelete = confirm(`¿Estás seguro de que deseas eliminar a ${selectedStaff.nombres} ${selectedStaff.apellidos}? Esta acción no se puede deshacer.`);
+    const confirmDelete = await confirmToast(`¿Estás seguro de que deseas eliminar a ${selectedStaff.nombres} ${selectedStaff.apellidos}? Esta acción no se puede deshacer.`, {
+      title: "Eliminar personal",
+      confirmLabel: "Eliminar",
+    });
     if (!confirmDelete) return;
 
     try {
@@ -3249,12 +3298,12 @@ export default function StaffPage() {
         headers: { "Content-Type": "application/json" },
       });
 
-      alert(`Se eliminó correctamente a ${selectedStaff.nombres} ${selectedStaff.apellidos}.`);
+      toast.success(`Se eliminó correctamente a ${selectedStaff.nombres} ${selectedStaff.apellidos}.`);
       setSelectedStaffId(null);
       await loadStaff();
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "No se pudo eliminar el staff.";
-      alert(getFriendlyStaffApiError(errorMessage, "eliminar"));
+      toast.error(getFriendlyStaffApiError(errorMessage, "eliminar"));
     }
   }
 
@@ -3267,102 +3316,106 @@ export default function StaffPage() {
       ) : null}
 
       {showAddStaffForm ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="flex max-h-[92vh] w-full max-w-2xl flex-col rounded-2xl bg-white p-6 shadow-2xl">
-            <div className="mb-4 flex items-center justify-between">
-              <div>
-                <h3 className="text-xl font-extrabold text-[#2a3439]">Nuevo personal</h3>
-                <p className="text-xs text-[#566166]">Registro conectado al backend con número autogenerado</p>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="flex max-h-[92vh] w-full max-w-4xl flex-col rounded-2xl bg-white shadow-[0_4px_20px_rgba(15,23,42,0.05)] overflow-hidden">
+            <header className="flex h-16 items-center justify-between border-b border-slate-200 bg-white px-8">
+              <div className="flex items-center gap-4">
+                <button
+                  type="button"
+                  onClick={closeAddStaffForm}
+                  disabled={isSavingNewStaff}
+                  className="rounded-full p-2 text-[#295786] transition hover:bg-[#d5e3ff] disabled:cursor-not-allowed disabled:opacity-60"
+                  aria-label="Volver"
+                >
+                  <span className="material-symbols-outlined text-[24px]">arrow_back</span>
+                </button>
+                <div>
+                  <h2 className="text-[20px] font-semibold tracking-[-0.01em] text-[#295786]">Nuevo personal</h2>
+                </div>
               </div>
               <button
-                className="rounded-lg border border-slate-200 px-3 py-1 text-xs font-bold text-[#566166] hover:bg-slate-50"
-                onClick={closeAddStaffForm}
                 type="button"
+                onClick={closeAddStaffForm}
+                disabled={isSavingNewStaff}
+                className="inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium text-[#295786] transition hover:bg-[#d5e3ff] disabled:cursor-not-allowed disabled:opacity-60"
               >
+                <span className="material-symbols-outlined text-[20px]">close</span>
                 Cerrar
               </button>
-            </div>
+            </header>
 
             <form autoComplete="off" className="flex min-h-0 flex-1 flex-col" onSubmit={handleAddStaffSubmit}>
-              <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-y-auto pr-1 md:grid-cols-2">
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-500">Rol</label>
-                <input
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  onChange={(event) => setNewStaff((prev) => ({ ...prev, role: event.target.value }))}
-                  placeholder="Ej: Colaborador"
-                  required
-                  type="text"
-                  value={newStaff.role}
-                />
-              </div>
+              <div className="grid min-h-0 flex-1 grid-cols-1 gap-6 overflow-y-auto p-8 md:grid-cols-2">
+              <div>
+                <h3 className="mb-6 flex items-center gap-2 text-[16px] font-semibold text-[#295786]">
+                  <span className="material-symbols-outlined text-[22px]" style={{fontVariationSettings: "'FILL' 1"}}>person</span>
+                  Información Personal
+                </h3>
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-700">Nombres</label>
+                    <input
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10"
+                      onChange={(event) => setNewStaff((prev) => ({ ...prev, firstName: event.target.value }))}
+                      placeholder="Ej: Erik"
+                      required
+                      type="text"
+                      value={newStaff.firstName}
+                    />
+                  </div>
 
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-500">Cédula de ciudadanía</label>
-                <input
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  onChange={(event) => setNewStaff((prev) => ({ ...prev, citizenshipId: event.target.value }))}
-                  placeholder="Ej: 1032485901"
-                  required
-                  type="text"
-                  value={newStaff.citizenshipId}
-                />
-              </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-700">Apellidos</label>
+                    <input
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10"
+                      onChange={(event) => setNewStaff((prev) => ({ ...prev, lastName: event.target.value }))}
+                      placeholder="Ej: Valencia Cardona"
+                      required
+                      type="text"
+                      value={newStaff.lastName}
+                    />
+                  </div>
 
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-500">Nombres</label>
-                <input
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  onChange={(event) => setNewStaff((prev) => ({ ...prev, firstName: event.target.value }))}
-                  placeholder="Ej: Erik"
-                  required
-                  type="text"
-                  value={newStaff.firstName}
-                />
-              </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-700">Cédula de ciudadanía</label>
+                    <input
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10"
+                      onChange={(event) => setNewStaff((prev) => ({ ...prev, citizenshipId: event.target.value }))}
+                      placeholder="10.XXX.XXX"
+                      required
+                      type="text"
+                      value={newStaff.citizenshipId}
+                    />
+                  </div>
 
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-500">Apellidos</label>
-                <input
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  onChange={(event) => setNewStaff((prev) => ({ ...prev, lastName: event.target.value }))}
-                  placeholder="Ej: Valencia Cardona"
-                  required
-                  type="text"
-                  value={newStaff.lastName}
-                />
-              </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-700">Número de teléfono</label>
+                    <input
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10"
+                      onChange={(event) => setNewStaff((prev) => ({ ...prev, phone: event.target.value }))}
+                      placeholder="+57 3XX XXX XXXX"
+                      required
+                      type="tel"
+                      value={newStaff.phone}
+                    />
+                  </div>
 
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-500">Carrera</label>
-                <input
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  onChange={(event) => setNewStaff((prev) => ({ ...prev, major: event.target.value }))}
-                  placeholder="Ej: Ingenieria de Sistemas"
-                  type="text"
-                  value={newStaff.major}
-                />
-              </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-700">Carrera (Monitor/Estudiante)</label>
+                    <input
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10"
+                      onChange={(event) => setNewStaff((prev) => ({ ...prev, major: event.target.value }))}
+                      placeholder="Ej: Ingeniería de Sistemas"
+                      type="text"
+                      value={newStaff.major}
+                    />
+                  </div>
 
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-500">Número de teléfono</label>
-                <input
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  onChange={(event) => setNewStaff((prev) => ({ ...prev, phone: event.target.value }))}
-                  placeholder="Ej: +57 300 000 0000"
-                  required
-                  type="tel"
-                  value={newStaff.phone}
-                />
-              </div>
-
-              <div className="space-y-1 md:col-span-2 lg:col-span-2">
-                <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.45fr_1fr_1fr]">
-                  <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-500">Fecha de nacimiento</label>
-                    <div className="grid grid-cols-3 gap-2">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-700">Fecha de nacimiento</label>
+                    <div className="grid grid-cols-3 gap-3">
                       <select
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                        className="h-10 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10"
                         onChange={(event) => updateNewBirthDate("year", event.target.value)}
                         required
                         value={newBirthDateParts.year}
@@ -3376,7 +3429,7 @@ export default function StaffPage() {
                       </select>
 
                       <select
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                        className="h-10 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10"
                         disabled={!newBirthDateParts.year}
                         onChange={(event) => updateNewBirthDate("month", event.target.value)}
                         required
@@ -3391,7 +3444,7 @@ export default function StaffPage() {
                       </select>
 
                       <select
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                        className="h-10 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10"
                         disabled={!newBirthDateParts.year || !newBirthDateParts.month}
                         onChange={(event) => updateNewBirthDate("day", event.target.value)}
                         required
@@ -3406,16 +3459,37 @@ export default function StaffPage() {
                       </select>
                     </div>
                   </div>
+                </div>
+              </div>
 
-                  <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-500">Rol de acceso</label>
+              <div>
+                <h3 className="mb-6 flex items-center gap-2 text-[16px] font-semibold text-[#295786]">
+                  <span className="material-symbols-outlined text-[22px]" style={{fontVariationSettings: "'FILL' 1"}}>work</span>
+                  Configuración Laboral
+                </h3>
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-700">Rol</label>
+                    <input
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10"
+                      onChange={(event) => setNewStaff((prev) => ({ ...prev, role: event.target.value }))}
+                      placeholder="Ej: Colaborador"
+                      required
+                      type="text"
+                      value={newStaff.role}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-700">Rol de acceso</label>
                     <select
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10"
                       onChange={(event) =>
                         setNewStaff((prev) => ({ ...prev, roleId: Number(event.target.value) as StaffAccessRoleId }))
                       }
                       value={newStaff.roleId}
                     >
+                      <option value="">Seleccione un rol</option>
                       {ACCESS_ROLE_OPTIONS.map((option) => (
                         <option key={option.value} value={option.value}>
                           {option.label}
@@ -3424,13 +3498,14 @@ export default function StaffPage() {
                     </select>
                   </div>
 
-                  <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-500">Tipo de contrato</label>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-700">Tipo de contrato</label>
                     <select
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10"
                       onChange={(event) => setNewStaff((prev) => ({ ...prev, contractPlan: event.target.value as ContractPlan }))}
                       value={newStaff.contractPlan}
                     >
+                      <option value="">Seleccione un plan</option>
                       <option value="Plan 1">Plan 1</option>
                       <option value="Plan 2">Plan 2</option>
                       <option value="Plan 3">Plan 3</option>
@@ -3440,140 +3515,115 @@ export default function StaffPage() {
                   </div>
                 </div>
               </div>
+            </div>
 
-              <div className="space-y-2 md:col-span-2">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-bold text-slate-500">Horas de clase no disponibles</label>
-                  <button
-                    className="rounded-md border border-slate-300 px-2 py-1 text-[10px] font-bold text-[#566166]"
+            <div className="grid gap-6 p-8 md:grid-cols-2 max-h-[300px] overflow-y-auto">
+              <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-[0_4px_20px_rgba(15,23,42,0.05)]">
+                 <div className="mb-3 flex items-center justify-between border-b border-slate-200 pb-3">
+                   <h3 className="flex items-center gap-2 text-[14px] font-semibold text-[#295786]">
+                    <span className="material-symbols-outlined text-[22px]" style={{fontVariationSettings: "'FILL' 1"}}>event_busy</span>
+                    Horas no disponibles
+                  </h3>
+                   <button
+                     className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-[#295786] transition hover:bg-[#d5e3ff]"
                     onClick={addUnavailableClassSlot}
                     type="button"
                   >
-                    + Agregar bloque
+                     <span className="material-symbols-outlined text-[16px]">add</span>
+                    Agregar bloque
                   </button>
                 </div>
 
                 {unavailableClassSlots.length === 0 ? (
-                    <p className="rounded-lg border border-dashed border-slate-300 px-3 py-2 text-xs text-[#566166]">
-                    No hay horarios de clase cargados. Este campo es opcional.
-                  </p>
-                ) : (
-                  unavailableClassSlots.map((slot, index) => (
-                    <div className="grid grid-cols-1 gap-2 rounded-lg border border-slate-200 p-2 md:grid-cols-[1fr_1fr_1fr_auto]" key={slot.id}>
-                      <select
-                        className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                        onChange={(event) => updateUnavailableClassSlot(slot.id, "day", event.target.value)}
-                        value={slot.day}
-                      >
-                        <option value="">Selecciona un día</option>
-                        {WEEK_DAYS.map((day) => (
-                          <option key={day} value={day}>
-                            {day}
-                          </option>
-                        ))}
-                      </select>
-
-                      <select
-                        className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                        onChange={(event) => updateUnavailableClassSlot(slot.id, "startTime", event.target.value)}
-                        value={slot.startTime}
-                      >
-                        <option value="">Hora de inicio</option>
-                        {CLASS_TIME_OPTIONS.map((time) => (
-                          <option key={time} value={time}>
-                            {time}
-                          </option>
-                        ))}
-                      </select>
-
-                      <select
-                        className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                        onChange={(event) => updateUnavailableClassSlot(slot.id, "endTime", event.target.value)}
-                        value={slot.endTime}
-                      >
-                        <option value="">Hora de fin</option>
-                        {CLASS_TIME_OPTIONS.map((time) => (
-                          <option key={time} value={time}>
-                            {time}
-                          </option>
-                        ))}
-                      </select>
-
-                      <button
-                        className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold text-[#9f403d]"
-                        onClick={() => removeUnavailableClassSlot(slot.id)}
-                        type="button"
-                      >
-                        Quitar
-                      </button>
-
-                      <p className="text-[10px] text-[#566166] md:col-span-4">Bloque {index + 1}: horario no disponible por clase</p>
+                   <div className="flex flex-col items-center justify-center py-4 text-center h-[200px]">
+                     <div className="mb-2 flex size-10 items-center justify-center rounded-full bg-slate-100">
+                       <span className="material-symbols-outlined text-slate-400 text-[18px]">info</span>
                     </div>
-                  ))
+                     <p className="text-xs text-slate-500">No hay horarios de clase cargados. Este campo es opcional.</p>
+                  </div>
+                 ) : (
+                   <div className="space-y-2 max-h-[200px] overflow-y-auto pr-2">
+                    {unavailableClassSlots.map((slot, index) => (
+                       <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 space-y-1" key={slot.id}>
+                         <div className="grid grid-cols-3 gap-1">
+                          <select
+                             className="rounded-lg border border-slate-300 px-2 py-1 text-xs"
+                            onChange={(event) => updateUnavailableClassSlot(slot.id, "day", event.target.value)}
+                            value={slot.day}
+                          >
+                             <option value="">Día</option>
+                            {WEEK_DAYS.map((day) => (
+                              <option key={day} value={day}>
+                                {day}
+                              </option>
+                            ))}
+                          </select>
+
+                          <select
+                             className="rounded-lg border border-slate-300 px-2 py-1 text-xs"
+                            onChange={(event) => updateUnavailableClassSlot(slot.id, "startTime", event.target.value)}
+                            value={slot.startTime}
+                          >
+                             <option value="">Inicio</option>
+                            {CLASS_TIME_OPTIONS.map((time) => (
+                              <option key={time} value={time}>
+                                {time}
+                              </option>
+                            ))}
+                          </select>
+
+                          <select
+                             className="rounded-lg border border-slate-300 px-2 py-1 text-xs"
+                            onChange={(event) => updateUnavailableClassSlot(slot.id, "endTime", event.target.value)}
+                            value={slot.endTime}
+                          >
+                             <option value="">Fin</option>
+                            {CLASS_TIME_OPTIONS.map((time) => (
+                              <option key={time} value={time}>
+                                {time}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="flex items-center justify-between">
+                           <p className="text-[10px] text-slate-500">Bloque {index + 1}</p>
+                          <button
+                             className="rounded-lg text-xs text-red-600 hover:bg-red-50 px-2 py-0.5"
+                            onClick={() => removeUnavailableClassSlot(slot.id)}
+                            type="button"
+                          >
+                            Quitar
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 )}
-              </div>
+              </section>
 
-              {roleRequiresCredential(newStaff.roleId) ? (
-                <div className="space-y-1 md:col-span-2">
-                  <label className="text-xs font-bold text-slate-500">Contraseña de acceso</label>
-                  <div className="relative">
-                    <input
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2 pr-20 text-sm"
-                      onChange={(event) => setNewStaff((prev) => ({ ...prev, password: event.target.value }))}
-                      placeholder="Mínimo 8 caracteres"
-                      required
-                      type={showNewPassword ? "text" : "password"}
-                      value={newStaff.password}
-                    />
-                    <button
-                      className="absolute top-1/2 right-2 -translate-y-1/2 rounded-md border border-slate-300 bg-white px-2 py-1 text-[10px] font-bold text-[#566166]"
-                      onClick={() => setShowNewPassword((prev) => !prev)}
-                      type="button"
-                    >
-                      {showNewPassword ? "Ocultar" : "Ver"}
-                    </button>
-                  </div>
-                  <label className="text-xs font-bold text-slate-500">Repetir contraseña</label>
-                  <div className="relative">
-                    <input
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2 pr-20 text-sm"
-                      onChange={(event) => setNewStaff((prev) => ({ ...prev, passwordConfirm: event.target.value }))}
-                      placeholder="Repite la contraseña"
-                      required
-                      type={showNewPasswordConfirm ? "text" : "password"}
-                      value={newStaff.passwordConfirm}
-                    />
-                    <button
-                      className="absolute top-1/2 right-2 -translate-y-1/2 rounded-md border border-slate-300 bg-white px-2 py-1 text-[10px] font-bold text-[#566166]"
-                      onClick={() => setShowNewPasswordConfirm((prev) => !prev)}
-                      type="button"
-                    >
-                      {showNewPasswordConfirm ? "Ocultar" : "Ver"}
-                    </button>
-                  </div>
-                  <p className="text-[10px] text-[#566166]">Obligatoria para Administrador y Monitor.</p>
-                </div>
-              ) : null}
-
-              <div className="space-y-2 md:col-span-2">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-bold text-slate-500">Habilidades</label>
-                  {isLoadingSkills ? <span className="text-[10px] text-[#566166]">Cargando...</span> : null}
+              <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-[0_4px_20px_rgba(15,23,42,0.05)]">
+                <div className="mb-4 flex items-center gap-2 border-b border-slate-200 pb-4">
+                  <span className="material-symbols-outlined text-[22px] text-[#295786]" style={{fontVariationSettings: "'FILL' 1"}}>psychology</span>
+                  <h3 className="text-[16px] font-semibold text-[#295786]">Habilidades</h3>
                 </div>
 
                 {skillsCatalog.length === 0 ? (
-                  <p className="rounded-lg border border-dashed border-slate-300 px-3 py-2 text-xs text-[#566166]">
-                    No hay habilidades cargadas en el sistema.
-                  </p>
+                  <div className="flex flex-col items-center justify-center py-8 text-center">
+                    <div className="mb-3 flex size-12 items-center justify-center rounded-full bg-slate-100">
+                      <span className="material-symbols-outlined text-slate-400">search_off</span>
+                    </div>
+                    <p className="text-sm text-slate-500 max-w-[200px]">No hay habilidades cargadas en el sistema.</p>
+                  </div>
                 ) : (
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <div className="grid grid-cols-1 gap-3">
                     {skillsCatalog.map((skill) => {
                       const isSelected = newStaff.habilidadIds.includes(skill.id);
                       return (
-                        <label className="flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm text-[#2a3439]" key={skill.id}>
+                        <label className={`flex items-center gap-3 rounded-2xl border p-3 transition ${ isSelected ? "border-[#295786] bg-[#d5e3ff]" : "border-slate-200 bg-[#fafcff] hover:bg-[#f4f7ff]"}`} key={skill.id}>
                           <input
                             checked={isSelected}
-                            className="rounded border-slate-300 text-[#3a5f94] focus:ring-[#3a5f94]"
+                            className="h-5 w-5 rounded border-slate-300 text-[#295786] focus:ring-[#295786]"
                             onChange={(event) =>
                               setNewStaff((prev) => ({
                                 ...prev,
@@ -3584,29 +3634,86 @@ export default function StaffPage() {
                             }
                             type="checkbox"
                           />
-                          {skill.nombre}
+                          <span className="text-sm font-medium text-slate-700">{skill.nombre}</span>
                         </label>
                       );
                     })}
                   </div>
                 )}
-              </div>
+              </section>
+            </div>
 
-              </div>
+            {roleRequiresCredential(newStaff.roleId) ? (
+              <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-[0_4px_20px_rgba(15,23,42,0.05)] mx-8 md:col-span-2">
+                <h3 className="mb-6 flex items-center gap-2 text-[16px] font-semibold text-[#295786] border-b border-slate-200 pb-4">
+                  <span className="material-symbols-outlined text-[22px]" style={{fontVariationSettings: "'FILL' 1"}}>lock</span>
+                  Credenciales de Acceso
+                </h3>
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-700">Contraseña de acceso</label>
+                    <div className="relative">
+                      <input
+                        className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 pr-16 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10"
+                        onChange={(event) => setNewStaff((prev) => ({ ...prev, password: event.target.value }))}
+                        placeholder="Mínimo 8 caracteres"
+                        required
+                        type={showNewPassword ? "text" : "password"}
+                        value={newStaff.password}
+                      />
+                      <button
+                        className="absolute top-1/2 right-2 -translate-y-1/2 rounded-lg px-2 py-1 text-xs font-medium text-[#295786] hover:bg-[#d5e3ff]"
+                        onClick={() => setShowNewPassword((prev) => !prev)}
+                        type="button"
+                      >
+                        {showNewPassword ? "Ocultar" : "Ver"}
+                      </button>
+                    </div>
+                  </div>
 
-              <div className="mt-4 flex justify-end gap-2 border-t border-slate-200 bg-white pt-4">
-                <button
-                  className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-bold text-[#566166]"
-                  disabled={isSavingNewStaff}
-                  onClick={closeAddStaffForm}
-                  type="button"
-                >
-                  Cancelar
-                </button>
-                <button className="rounded-lg bg-[#3a5f94] px-4 py-2 text-xs font-bold text-white disabled:opacity-60" disabled={isSavingNewStaff} type="submit">
-                  {isSavingNewStaff ? "Guardando..." : "Guardar"}
-                </button>
-              </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-700">Repetir contraseña</label>
+                    <div className="relative">
+                      <input
+                        className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 pr-16 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10"
+                        onChange={(event) => setNewStaff((prev) => ({ ...prev, passwordConfirm: event.target.value }))}
+                        placeholder="Repite la contraseña"
+                        required
+                        type={showNewPasswordConfirm ? "text" : "password"}
+                        value={newStaff.passwordConfirm}
+                      />
+                      <button
+                        className="absolute top-1/2 right-2 -translate-y-1/2 rounded-lg px-2 py-1 text-xs font-medium text-[#295786] hover:bg-[#d5e3ff]"
+                        onClick={() => setShowNewPasswordConfirm((prev) => !prev)}
+                        type="button"
+                      >
+                        {showNewPasswordConfirm ? "Ocultar" : "Ver"}
+                      </button>
+                    </div>
+                  </div>
+
+                  <p className="text-xs text-slate-500 pt-2">Obligatoria para Administrador y Monitor.</p>
+                </div>
+              </section>
+            ) : null}
+
+            <div className="flex justify-end gap-3 border-t border-slate-200 bg-white px-8 py-6">
+              <button
+                className="rounded-xl border border-[#295786] px-6 py-3 text-sm font-medium text-[#295786] transition hover:bg-[#d5e3ff] disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={isSavingNewStaff}
+                onClick={closeAddStaffForm}
+                type="button"
+              >
+                Descartar cambios
+              </button>
+              <button 
+                className="rounded-xl bg-[#295786] px-6 py-3 text-sm font-semibold text-white shadow-[0_12px_24px_rgba(41,87,134,0.24)] transition hover:bg-[#1f4a74] disabled:cursor-not-allowed disabled:opacity-70" 
+                disabled={isSavingNewStaff} 
+                type="submit"
+              >
+                {isSavingNewStaff ? "Guardando..." : "Guardar"}
+              </button>
+            </div>
             </form>
           </div>
         </div>

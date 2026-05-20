@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { fetchApiJson } from "@/lib/api-client";
 import { readAuthSession } from "@/lib/auth-session";
 import { getDisabledRoomKeys, isRoomDisabled, loadSharedScheduleState, setSharedRoomDisabledState } from "@/lib/disabled-rooms";
+import toast from "react-hot-toast";
+import { confirmToast, promptToast } from "@/lib/toast-dialog";
 
 type RoomStatus = "Available" | "Occupied" | "Starting Soon";
 
@@ -557,7 +559,12 @@ export default function RoomsPage() {
 
     const nextDefective = !item.defective;
     const motivo = nextDefective
-      ? window.prompt(`Motivo para marcar "${item.name}" como defectuoso`, item.motivo ?? "")?.trim() ?? null
+      ? await promptToast(`Motivo para marcar "${item.name}" como defectuoso`, {
+          title: "Marcar como defectuoso",
+          defaultValue: item.motivo ?? "",
+          placeholder: "Describe el motivo",
+          confirmLabel: "Guardar",
+        })
       : item.motivo ?? null;
 
     if (nextDefective && !motivo) {
@@ -583,13 +590,21 @@ export default function RoomsPage() {
         eq.id === item.id ? { ...eq, defective: nextDefective, motivo } : eq
       );
       setRoomEquipment(updatedEquipment);
+      toast.success(nextDefective ? "Elemento marcado como defectuoso." : "Elemento marcado como operativo.");
     } catch (error) {
-      console.error("Error toggling defect status:", error);
+      const message = error instanceof Error ? error.message : "No se pudo actualizar el estado del elemento.";
+      toast.error(message);
     }
   };
 
   const handleDeleteItem = async (itemId: string) => {
     if (authSession?.role !== "admin") return;
+
+    const accepted = await confirmToast("¿Estás seguro de que deseas eliminar este elemento?", {
+      title: "Eliminar elemento",
+      confirmLabel: "Eliminar",
+    });
+    if (!accepted) return;
 
     try {
       await fetchApiJson(`/api/inventory/items/${itemId}`, {
@@ -598,15 +613,17 @@ export default function RoomsPage() {
 
       const updatedEquipment = roomEquipment.filter((eq) => eq.id !== itemId);
       setRoomEquipment(updatedEquipment);
+      toast.success("Elemento eliminado correctamente.");
     } catch (error) {
-      console.error("Error deleting item:", error);
+      const message = error instanceof Error ? error.message : "No se pudo eliminar el elemento.";
+      toast.error(message);
     }
   };
 
   const handleMoveRoom = (itemId: string) => {
     // This would require opening an edit dialog or modal
-    // For now, we'll show an alert
-    alert("Editar sala: Esta función aún no está implementada. Dirígete a Inventario para editar el salón del elemento.");
+    // For now, we'll show a toast instead of a browser alert.
+    toast("Editar sala: Esta función aún no está implementada. Dirígete a Inventario para editar el salón del elemento.");
   };
 
   if (loading) {
@@ -1009,10 +1026,16 @@ function Equip({
   const handleDelete = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!onDelete) return;
-    if (confirm("¿Estás seguro de que deseas eliminar este elemento?")) {
-      onDelete(item.id);
-    }
-    setIsMenuOpen(false);
+    void (async () => {
+      const accepted = await confirmToast("¿Estás seguro de que deseas eliminar este elemento?", {
+        title: "Eliminar elemento",
+        confirmLabel: "Eliminar",
+      });
+      if (accepted) {
+        onDelete(item.id);
+      }
+      setIsMenuOpen(false);
+    })();
   };
 
   return (

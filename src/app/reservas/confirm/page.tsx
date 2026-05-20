@@ -121,9 +121,6 @@ function ConfirmReservationContent() {
               <h1 className="text-2xl font-black text-[#2a3439]">Error en la Confirmación</h1>
               <p className="mt-2 text-sm text-slate-600">{message}</p>
             </div>
-            <div className="rounded-xl border border-rose-100 bg-rose-50 p-4">
-              <p className="text-sm text-rose-700">El enlace de confirmación puede estar inválido o haber expirado. Por favor, solicita un nuevo enlace de confirmación.</p>
-            </div>
             <a href="/" className="inline-block rounded-xl bg-[#3a5f94] px-6 py-3 text-sm font-bold text-white transition hover:bg-[#2d5387]">Volver al Inicio</a>
           </div>
         )}
