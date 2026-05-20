@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { readAuthSession } from "@/lib/auth-session";
 import { fetchApiJson } from "@/lib/api-client";
 import toast from "react-hot-toast";
+import { confirmToast, promptToast } from "@/lib/toast-dialog";
 
 type ResourceType = "rooms" | "equipment";
 
@@ -27,6 +28,7 @@ type InventoryItem = { id: string; groupId: string; groupName: string; groupIcon
 type ReservationFeedItem = {
     id: string;
     resourceType: ResourceType;
+    resourceId: string;
     resourceLabel: string;
     resourceContext: string | null;
     resourceOriginalRoomLabel: string | null;
@@ -40,6 +42,7 @@ type ReservationFeedItem = {
     status: string;
     destinationRoomLabel: string | null;
     returnedAt: string | null;
+    reportReason?: string | null;
     createdAt: string;
 };
 
@@ -96,6 +99,19 @@ function getDefaultBookingTimeRange() {
     };
 }
 
+function timeToMinutes(timeStr: string): number {
+    const [hours = "0", minutes = "0"] = timeStr.split(":");
+    return Number(hours) * 60 + Number(minutes);
+}
+
+function timeRangesOverlap(aStart: string, aEnd: string, bStart: string, bEnd: string): boolean {
+    const aStartMin = timeToMinutes(aStart);
+    const aEndMin = timeToMinutes(aEnd);
+    const bStartMin = timeToMinutes(bStart);
+    const bEndMin = timeToMinutes(bEnd);
+    return aStartMin < bEndMin && bStartMin < aEndMin;
+}
+
 function formatTime(value: string) {
     if (!value) {
         return "--:--";
@@ -134,6 +150,26 @@ function normalizeDocumentNumber(value: string) {
     return value.trim().replace(/[\s.-]/g, "").toLowerCase();
 }
 
+function summarizeDefectReasons(reservations: ReservationFeedItem[], documentNumber: string) {
+    const normalizedDocument = normalizeDocumentNumber(documentNumber);
+    const matches = reservations.filter((reservation) => {
+        try {
+            return normalizeDocumentNumber(reservation.requesterDocument) === normalizedDocument && reservation.status.toLowerCase() === "reportado";
+        } catch {
+            return false;
+        }
+    });
+
+    const reasons = matches
+        .map((reservation) => reservation.reportReason?.trim())
+        .filter((reason): reason is string => Boolean(reason));
+
+    return {
+        count: matches.length,
+        reasons: Array.from(new Set(reasons)),
+    };
+}
+
 export default function ReservasPage() {
     const todayKey = useMemo(() => getBogotaTodayKey(), []);
     const defaultBookingTimeRange = useMemo(() => getDefaultBookingTimeRange(), []);
@@ -169,7 +205,31 @@ export default function ReservasPage() {
     const [prefilledRequesterDocument, setPrefilledRequesterDocument] = useState<string>("");
     const [requesterStage, setRequesterStage] = useState<'id-only' | 'full'>('id-only');
 
-    const availableInventoryItems = inventoryItems.filter((it) => (it.status ?? "").toLowerCase() === "disponible");
+    const availableInventoryItems = useMemo(() => {
+        const desiredDate = bookingDate;
+        const desiredStart = startTime;
+        const desiredEnd = endTime;
+
+        return inventoryItems.filter((it) => {
+            if (((it.status ?? "").toLowerCase() !== "disponible")) return false;
+
+            // If there exists an active reservation for this item on the same date that overlaps the desired range, exclude it
+            const conflicting = allReservations.some((res) => {
+                try {
+                    if (!res.resourceId) return false;
+                    if (String(res.resourceId) !== String(it.id)) return false;
+                    const statusLower = (res.status ?? "").toLowerCase();
+                    if (["devuelto", "reportado", "rechazada", "cancelada"].includes(statusLower)) return false;
+                    if (res.bookingDate !== desiredDate) return false;
+                    return timeRangesOverlap(res.startTime, res.endTime, desiredStart, desiredEnd);
+                } catch {
+                    return false;
+                }
+            });
+
+            return !conflicting;
+        });
+    }, [inventoryItems, allReservations, bookingDate, startTime, endTime]);
 
     const authSession = useMemo(() => readAuthSession(), []);
     const canViewReservations = authSession?.role === "admin" || authSession?.role === "monitor";
@@ -299,16 +359,15 @@ export default function ReservasPage() {
     }, [selectedGroupId, resourceType]);
 
     useEffect(() => {
-        const nextDefault = visibleResources[0]?.id ?? "";
-        setSelectedResourceId((current) => (visibleResources.some((resource) => resource.id === current) ? current : nextDefault));
-        setSelectedCardId((current) => (visibleResources.some((resource) => resource.id === current) ? current : nextDefault));
+        setSelectedResourceId((current) => (visibleResources.some((resource) => resource.id === current) ? current : ""));
+        setSelectedCardId((current) => (visibleResources.some((resource) => resource.id === current) ? current : null));
         if (!selectedDestinationRoomId && roomsCatalog.length > 0) {
             setSelectedDestinationRoomId(roomsCatalog[0].id);
         }
     }, [resourceType, roomsCatalog, selectedDestinationRoomId, visibleResources]);
 
     const selectedResource = useMemo(
-        () => visibleResources.find((resource) => resource.id === selectedResourceId) ?? visibleResources[0] ?? null,
+        () => visibleResources.find((resource) => resource.id === selectedResourceId) ?? null,
         [selectedResourceId, visibleResources],
     );
 
@@ -502,10 +561,49 @@ export default function ReservasPage() {
 
         try {
             if (modalType === 'close') {
+                // capture reservation snapshot before closing so we know which inventory item to update
+                const snapshot = allReservations.find((r) => String(r.id) === String(modalReservationId));
+
                 const response = await fetchApiJson<{ message: string; reservationId: string }>(`/api/reservas/${modalReservationId}/close`, {
                     method: 'PATCH',
                 });
                 setStatusMessage(response.message);
+
+                // If it was equipment, ask where the item remains and update inventory accordingly
+                try {
+                    if (snapshot && snapshot.resourceType === 'equipment' && snapshot.resourceId) {
+                        const location = await promptToast(
+                            '¿Dónde quedará el equipo tras cerrar la reserva? Escribe el nombre del salón o "Monitoría".',
+                            { title: 'Ubicación final del equipo', placeholder: 'Monitoría' }
+                        );
+
+                        if (location !== null) {
+                            const item = inventoryItems.find((i) => String(i.id) === String(snapshot.resourceId));
+                            if (item) {
+                                const updatePayload: any = {
+                                    groupId: item.groupId,
+                                    name: item.name,
+                                    code: item.code,
+                                    room: location,
+                                    status: item.status,
+                                    defective: !!item.defective,
+                                    motivo: item.motivo || null,
+                                    price: (item as any).price ?? null,
+                                };
+
+                                await fetchApiJson(`/api/inventory/items/${item.id}`, {
+                                    method: 'PUT',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify(updatePayload),
+                                });
+
+                                setInventoryItems((prev) => prev.map((p) => (String(p.id) === String(item.id) ? { ...p, room: location } : p)));
+                            }
+                        }
+                    }
+                } catch (err) {
+                    console.error('No se pudo actualizar ubicación del inventario al cerrar reserva', err);
+                }
             } else if (modalType === 'report') {
                 const trimmed = reportReason.trim();
                 const response = await fetchApiJson<{ message: string; reservationId: string }>(`/api/reservas/${modalReservationId}/report`, {
@@ -569,6 +667,27 @@ export default function ReservasPage() {
         setStatusMessage(null);
 
         try {
+            // If requester has prior defect reports, warn and require confirmation
+            if (documentNumber.trim()) {
+                const defectSummary = summarizeDefectReasons(allReservations, documentNumber);
+                const hadDefects = defectSummary.count > 0;
+
+                if (hadDefects) {
+                    const reasonText = defectSummary.reasons.length > 0
+                        ? `\n\nMotivos registrados:\n${defectSummary.reasons.map((reason) => `- ${reason}`).join("\n")}`
+                        : "\n\nMotivos registrados: no disponibles en el historial cargado.";
+
+                    const proceed = await confirmToast(
+                        `Este solicitante registra devoluciones reportadas como defectuosas anteriormente.${reasonText}\n\n¿Deseas continuar con la reserva?`,
+                        { title: "Advertencia: devoluciones previas", confirmLabel: "Continuar", cancelLabel: "Cancelar" }
+                    );
+                    if (!proceed) {
+                        setIsSubmitting(false);
+                        return;
+                    }
+                }
+            }
+
             const payload = {
                 resourceType,
                 resourceId: selectedResourceId,
@@ -595,6 +714,37 @@ export default function ReservasPage() {
             setPrefilledRequesterDocument("");
             setRequesterStage('id-only');
             void loadReservationsFeed();
+
+            // If equipment was reserved, update item room to the destination room
+            try {
+                if (resourceType === 'equipment' && selectedResourceId) {
+                    const item = inventoryItems.find((i) => String(i.id) === String(selectedResourceId));
+                    if (item) {
+                        const updatePayload: any = {
+                            groupId: item.groupId,
+                            name: item.name,
+                            code: item.code,
+                            room: selectedDestinationRoomId ? selectedDestinationRoomId : item.room,
+                            status: item.status,
+                            defective: !!item.defective,
+                            motivo: item.motivo || null,
+                            price: (item as any).price ?? null,
+                        };
+
+                        await fetchApiJson(`/api/inventory/items/${item.id}`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(updatePayload),
+                        });
+
+                        // Optimistic update of local inventory list
+                        setInventoryItems((prev) => prev.map((p) => (String(p.id) === String(item.id) ? { ...p, room: updatePayload.room } : p)));
+                    }
+                }
+            } catch (err) {
+                // non-fatal: log and continue
+                console.error('No se pudo actualizar ubicación del inventario tras crear reserva', err);
+            }
         } catch (error) {
             const msg = error instanceof Error ? error.message : "No se pudo registrar la reserva.";
             setStatusMessage(msg);

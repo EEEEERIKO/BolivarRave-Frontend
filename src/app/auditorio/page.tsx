@@ -442,6 +442,7 @@ export default function AuditorioPage() {
   const [isMonthPickerOpen, setIsMonthPickerOpen] = useState(false);
   const [pickerYear, setPickerYear] = useState(colombiaToday.getFullYear());
   const [visibleMonthCount, setVisibleMonthCount] = useState(2);
+  const [staffSearchQuery, setStaffSearchQuery] = useState<string>("");
 
   const syncReservas = useCallback(async () => {
     const response = await fetchApiJson<{ reservas?: AuditorioReservaApi[] }>("/api/auditorio/reservas", {
@@ -1414,341 +1415,408 @@ export default function AuditorioPage() {
       </div>
 
       {isCreateOpen && canManageAuditorio ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
-          <div className="max-h-[90vh] w-full max-w-3xl overflow-auto rounded-xl border border-slate-200 bg-white p-5 shadow-xl">
-            <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-lg font-bold text-slate-900">
-                {editingEventId ? "Editar evento del auditorio" : "Agregar evento al auditorio"}
-              </h2>
-              <button
-                type="button"
-                onClick={closeCreateModal}
-                disabled={isSaving}
-                className="rounded-md border border-slate-200 px-3 py-1 text-sm text-slate-600 hover:bg-slate-50"
-              >
-                Cerrar
-              </button>
-            </div>
-
-            {formError ? (
-              <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                {formError}
-              </div>
-            ) : null}
-
-            <form className="space-y-4" onSubmit={handleCreateEventSubmit}>
-              <div className="grid gap-3 md:grid-cols-2">
-                <label className="text-sm text-slate-700">
-                  Nombre del evento
-                  <input
-                    type="text"
-                    value={formState.title}
-                    onChange={(event) => {
-                      clearFieldError("title");
-                      setFormState((current) => ({ ...current, title: event.target.value }));
-                    }}
-                    className={`mt-1 w-full rounded-md border px-3 py-2 text-sm ${fieldErrors.title ? "border-red-400 bg-red-50" : "border-slate-300"}`}
-                    required
-                  />
-                  {fieldErrors.title ? <p className="mt-1 text-xs text-red-600">{fieldErrors.title}</p> : null}
-                </label>
-
-                <label className="text-sm text-slate-700">
-                  Quien lo organiza
-                  <input
-                    type="text"
-                    value={formState.organizer}
-                    onChange={(event) => {
-                      clearFieldError("organizer");
-                      setFormState((current) => ({ ...current, organizer: event.target.value }));
-                    }}
-                    className={`mt-1 w-full rounded-md border px-3 py-2 text-sm ${fieldErrors.organizer ? "border-red-400 bg-red-50" : "border-slate-300"}`}
-                    required
-                  />
-                  {fieldErrors.organizer ? <p className="mt-1 text-xs text-red-600">{fieldErrors.organizer}</p> : null}
-                </label>
-              </div>
-
-              <div className="grid gap-3 md:grid-cols-3">
-                <label className="text-sm text-slate-700">
-                  Fecha inicio
-                  <input
-                    type="date"
-                    value={formState.startDate}
-                    onChange={(event) => {
-                      clearFieldError("startDate");
-                      setFormState((current) => ({ ...current, startDate: event.target.value }));
-                    }}
-                    className={`mt-1 w-full rounded-md border px-3 py-2 text-sm ${fieldErrors.startDate ? "border-red-400 bg-red-50" : "border-slate-300"}`}
-                  />
-                  {fieldErrors.startDate ? <p className="mt-1 text-xs text-red-600">{fieldErrors.startDate}</p> : null}
-                </label>
-
-                <label className="text-sm text-slate-700">
-                  Fecha fin
-                  <input
-                    type="date"
-                    value={formState.endDate}
-                    onChange={(event) => {
-                      clearFieldError("endDate");
-                      setFormState((current) => ({ ...current, endDate: event.target.value }));
-                    }}
-                    className={`mt-1 w-full rounded-md border px-3 py-2 text-sm ${fieldErrors.endDate ? "border-red-400 bg-red-50" : "border-slate-300"}`}
-                  />
-                  {fieldErrors.endDate ? <p className="mt-1 text-xs text-red-600">{fieldErrors.endDate}</p> : null}
-                </label>
-
-                <label className="text-sm text-slate-700">
-                  Estado
-                  <select
-                    value={formState.status}
-                    onChange={(event) => {
-                      clearFieldError("status");
-                      setFormState((current) => ({
-                        ...current,
-                        status: event.target.value as AuditorioEstado | "",
-                      }));
-                    }}
-                    className={`mt-1 w-full rounded-md border px-3 py-2 text-sm ${fieldErrors.status ? "border-red-400 bg-red-50" : "border-slate-300"}`}
-                  >
-                    <option value="" disabled>
-                      Selecciona un estado
-                    </option>
-                    <option value="Pendiente">Pendiente</option>
-                    <option value="Aprobada">Aprobada</option>
-                  </select>
-                  {fieldErrors.status ? <p className="mt-1 text-xs text-red-600">{fieldErrors.status}</p> : null}
-                </label>
-
-                <label className="text-sm text-slate-700">
-                  Numero de asistentes
-                  <input
-                    type="number"
-                    min={1}
-                    value={formState.attendees}
-                    onChange={(event) => {
-                      clearFieldError("attendees");
-                      setFormState((current) => ({ ...current, attendees: event.target.value }));
-                    }}
-                    className={`mt-1 w-full rounded-md border px-3 py-2 text-sm ${fieldErrors.attendees ? "border-red-400 bg-red-50" : "border-slate-300"}`}
-                  />
-                  {fieldErrors.attendees ? <p className="mt-1 text-xs text-red-600">{fieldErrors.attendees}</p> : null}
-                </label>
-              </div>
-
-              <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
-                <p className="mb-2 text-sm font-semibold text-slate-800">Que necesitan</p>
-                <div className="flex flex-wrap gap-4 text-sm text-slate-700">
-                  <label className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={formState.needsScreen}
-                      onChange={(event) => setFormState((current) => ({ ...current, needsScreen: event.target.checked }))}
-                    />
-                    Pantalla
-                  </label>
-                  <label className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={formState.needsSound}
-                      onChange={(event) => setFormState((current) => ({ ...current, needsSound: event.target.checked }))}
-                    />
-                    Sonido
-                  </label>
-                  <label className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={formState.needsMonitor}
-                      onChange={(event) => setFormState((current) => ({ ...current, needsMonitor: event.target.checked }))}
-                    />
-                    Monitor
-                  </label>
-                  <label className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={formState.needsProjector}
-                      onChange={(event) => setFormState((current) => ({ ...current, needsProjector: event.target.checked }))}
-                    />
-                    Proyector
-                  </label>
-                  <label className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={formState.needsWaterFilter}
-                      onChange={(event) => setFormState((current) => ({ ...current, needsWaterFilter: event.target.checked }))}
-                    />
-                    Filtro de Agua
-                  </label>
-                </div>
-              </div>
-
-              <div className="rounded-md border border-slate-200 p-3">
-                <p className="mb-2 text-sm font-semibold text-slate-800">Trabajadores encargados del evento</p>
-                {staffCatalog.length > 0 ? (
-                  <div className="max-h-72 overflow-auto rounded-md border border-slate-200 bg-slate-50 p-2">
-                    <div className="grid gap-2 md:grid-cols-2">
-                    {staffCatalog.map((staffMember) => {
-                      const checked = formState.assignedStaffIds.includes(staffMember.id);
-                      const label = `${staffMember.nombres} ${staffMember.apellidos}`.trim();
-
-                      return (
-                        <label
-                          key={`staff-${staffMember.id}`}
-                          className={`flex cursor-pointer items-center gap-3 rounded-lg border p-2 text-sm transition ${
-                            checked ? "border-[#295786] bg-[#295786]/5" : "border-slate-200 bg-white hover:bg-slate-50"
-                          }`}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={(event) => {
-                              const isChecked = event.target.checked;
-                              setFormState((current) => ({
-                                ...current,
-                                assignedStaffIds: isChecked
-                                  ? Array.from(new Set([...current.assignedStaffIds, staffMember.id]))
-                                  : current.assignedStaffIds.filter((id) => id !== staffMember.id),
-                              }));
-                            }}
-                          />
-                          <div className="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[#295786] text-[10px] font-bold text-white">
-                            <img
-                              src={getStaffPhotoUrl(staffMember.cedula)}
-                              alt={`Foto de ${label}`}
-                              className="h-full w-full object-cover"
-                              onError={(event) => {
-                                const image = event.currentTarget;
-                                image.style.display = "none";
-                                const fallback = image.parentElement?.querySelector<HTMLElement>("[data-staff-fallback='true']");
-                                fallback?.classList.remove("hidden");
-                              }}
-                              onLoad={(event) => {
-                                const image = event.currentTarget;
-                                const fallback = image.parentElement?.querySelector<HTMLElement>("[data-staff-fallback='true']");
-                                fallback?.classList.add("hidden");
-                                image.style.display = "block";
-                              }}
-                            />
-                            <div data-staff-fallback="true" className="hidden items-center justify-center">
-                              {getStaffInitials(label)}
-                            </div>
-                          </div>
-                          <div className="min-w-0">
-                            <p className="truncate font-semibold text-slate-900">{label}</p>
-                            <p className="text-xs text-slate-500">{staffMember.rol}</p>
-                          </div>
-                        </label>
-                      );
-                    })}
-                    </div>
-                  </div>
-                ) : (
-                  <p className="text-xs text-slate-500">No hay personal disponible para asignar.</p>
-                )}
-              </div>
-
-              <div className="rounded-md border border-slate-200 p-3">
-                <div className="mb-2 flex items-center justify-between">
-                  <p className="text-sm font-semibold text-slate-800">Dias y horarios intercalados</p>
-                  <button
-                    type="button"
-                    onClick={addScheduleBlock}
-                    className="rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
-                  >
-                    Agregar dia/horario
-                  </button>
-                </div>
-
-                <div className="space-y-2">
-                  {formState.scheduleBlocks.map((block, index) => {
-                    const blockDateError = fieldErrors[`block-${block.id}-date`];
-                    const blockStartError = fieldErrors[`block-${block.id}-startTime`];
-                    const blockEndError = fieldErrors[`block-${block.id}-endTime`];
-                    const blockRangeError = fieldErrors[`block-${block.id}-range`];
-
-                    return (
-                      <div key={block.id} className="rounded-md border border-slate-200 p-2">
-                        <div className="grid gap-2 md:grid-cols-[1fr_1fr_1fr_auto]">
-                          <input
-                            type="date"
-                            value={block.date}
-                            onChange={(event) => updateScheduleBlock(block.id, "date", event.target.value)}
-                            className={`rounded-md border px-2 py-1.5 text-sm ${blockDateError ? "border-red-400 bg-red-50" : "border-slate-300"}`}
-                          />
-                          <select
-                            value={block.startTime}
-                            onChange={(event) => updateScheduleBlock(block.id, "startTime", event.target.value)}
-                            className={`rounded-md border px-2 py-1.5 text-sm ${blockStartError || blockRangeError ? "border-red-400 bg-red-50" : "border-slate-300"}`}
-                          >
-                            <option value="">Hora de inicio</option>
-                            {TIME_SLOT_OPTIONS.map((option) => (
-                              <option key={`start-${block.id}-${option.value}`} value={option.value}>
-                                {option.label}
-                              </option>
-                            ))}
-                          </select>
-                          <select
-                            value={block.endTime}
-                            onChange={(event) => updateScheduleBlock(block.id, "endTime", event.target.value)}
-                            className={`rounded-md border px-2 py-1.5 text-sm ${blockEndError || blockRangeError ? "border-red-400 bg-red-50" : "border-slate-300"}`}
-                          >
-                            <option value="">Hora de fin</option>
-                            {TIME_SLOT_OPTIONS.map((option) => (
-                              <option key={`end-${block.id}-${option.value}`} value={option.value}>
-                                {option.label}
-                              </option>
-                            ))}
-                          </select>
-                          <button
-                            type="button"
-                            onClick={() => removeScheduleBlock(block.id)}
-                            className="rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
-                          >
-                            Quitar
-                          </button>
-                        </div>
-                        {blockDateError || blockStartError || blockEndError || blockRangeError ? (
-                          <p className="mt-1 text-xs text-red-600">
-                            {blockDateError ?? blockStartError ?? blockEndError ?? blockRangeError}
-                          </p>
-                        ) : null}
-                        {index < formState.scheduleBlocks.length - 1 ? <div className="mt-2 border-t border-slate-100" /> : null}
-                      </div>
-                    );
-                  })}
-                </div>
-                {fieldErrors.scheduleBlocks ? (
-                  <p className="mt-2 text-xs text-red-600 whitespace-pre-line">{fieldErrors.scheduleBlocks}</p>
-                ) : null}
-              </div>
-
-              <label className="block text-sm text-slate-700">
-                Observaciones
-                <textarea
-                  value={formState.observations}
-                  onChange={(event) => setFormState((current) => ({ ...current, observations: event.target.value }))}
-                  className="mt-1 min-h-28 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                />
-              </label>
-
-              <div className="flex justify-end gap-2">
+        <div className="fixed inset-0 z-50 bg-slate-950/45 p-4 backdrop-blur-[2px]">
+          <div className="mx-auto flex h-[calc(100vh-2rem)] w-full max-w-6xl flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-[#faf8ff] shadow-[0_24px_70px_rgba(15,23,42,0.18)]">
+            <header className="flex h-16 items-center justify-between border-b border-slate-200 bg-white px-6 md:px-8">
+              <div className="flex items-center gap-4">
                 <button
                   type="button"
                   onClick={closeCreateModal}
                   disabled={isSaving}
-                  className="rounded-md border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                  className="rounded-full p-2 text-[#295786] transition hover:bg-[#d5e3ff] disabled:cursor-not-allowed disabled:opacity-60"
+                  aria-label="Volver"
                 >
-                  Cancelar
+                  <span className="material-symbols-outlined text-[24px]">arrow_back</span>
                 </button>
-                <button
-                  type="submit"
-                  disabled={isSaving}
-                  className="rounded-md bg-[#295786] px-4 py-2 text-sm font-semibold text-white hover:bg-[#1f466d] disabled:cursor-not-allowed disabled:opacity-70"
-                >
-                  {isSaving ? "Guardando..." : editingEventId ? "Guardar cambios" : "Guardar"}
-                </button>
+                <h2 className="text-[20px] font-semibold tracking-[-0.01em] text-[#295786] md:text-[22px]">
+                  {editingEventId ? "Editar evento del auditorio" : "Agregar evento al auditorio"}
+                </h2>
               </div>
-            </form>
+              <button
+                type="button"
+                onClick={closeCreateModal}
+                disabled={isSaving}
+                className="inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium text-[#295786] transition hover:bg-[#d5e3ff] disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <span className="material-symbols-outlined text-[20px]">close</span>
+                Cerrar
+              </button>
+            </header>
+
+            <div className="flex-1 overflow-y-auto px-4 py-4 md:px-6 md:py-6">
+              {formError ? (
+                <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700 shadow-sm">
+                  {formError}
+                </div>
+              ) : null}
+
+              <form className="grid grid-cols-12 gap-6" onSubmit={handleCreateEventSubmit}>
+                <div className="col-span-12 lg:col-span-8 space-y-6">
+                  <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-[0_4px_20px_rgba(15,23,42,0.05)]">
+                    <h3 className="mb-6 flex items-center gap-2 text-[16px] font-semibold text-[#295786]">
+                      <span className="material-symbols-outlined text-[22px]">info</span>
+                      Información del Evento
+                    </h3>
+
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                      <label className="md:col-span-2">
+                        <span className="mb-2 block text-sm font-medium text-slate-700">Nombre del evento</span>
+                        <input
+                          type="text"
+                          value={formState.title}
+                          onChange={(event) => {
+                            clearFieldError("title");
+                            setFormState((current) => ({ ...current, title: event.target.value }));
+                          }}
+                          placeholder="Ej: Simposio de Arquitectura Sostenible"
+                          className={`w-full rounded-xl border bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10 ${fieldErrors.title ? "border-red-400 bg-red-50" : "border-slate-200"}`}
+                          required
+                        />
+                        {fieldErrors.title ? <p className="mt-2 text-xs font-medium text-red-600">{fieldErrors.title}</p> : null}
+                      </label>
+
+                      <label className="md:col-span-1">
+                        <span className="mb-2 block text-sm font-medium text-slate-700">Organizador</span>
+                        <input
+                          type="text"
+                          value={formState.organizer}
+                          onChange={(event) => {
+                            clearFieldError("organizer");
+                            setFormState((current) => ({ ...current, organizer: event.target.value }));
+                          }}
+                          placeholder="Nombre de la entidad o persona"
+                          className={`w-full rounded-xl border bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10 ${fieldErrors.organizer ? "border-red-400 bg-red-50" : "border-slate-200"}`}
+                          required
+                        />
+                        {fieldErrors.organizer ? <p className="mt-2 text-xs font-medium text-red-600">{fieldErrors.organizer}</p> : null}
+                      </label>
+
+                      <label className="md:col-span-1">
+                        <span className="mb-2 block text-sm font-medium text-slate-700">Estado</span>
+                        <select
+                          value={formState.status}
+                          onChange={(event) => {
+                            clearFieldError("status");
+                            setFormState((current) => ({
+                              ...current,
+                              status: event.target.value as AuditorioEstado | "",
+                            }));
+                          }}
+                          className={`w-full rounded-xl border bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10 ${fieldErrors.status ? "border-red-400 bg-red-50" : "border-slate-200"}`}
+                        >
+                          <option value="" disabled>
+                            Selecciona un estado
+                          </option>
+                          <option value="Pendiente">Pendiente</option>
+                          <option value="Aprobada">Aprobada</option>
+                        </select>
+                        {fieldErrors.status ? <p className="mt-2 text-xs font-medium text-red-600">{fieldErrors.status}</p> : null}
+                      </label>
+
+                      <label>
+                        <span className="mb-2 block text-sm font-medium text-slate-700">Fecha inicio</span>
+                        <input
+                          type="date"
+                          value={formState.startDate}
+                          onChange={(event) => {
+                            clearFieldError("startDate");
+                            setFormState((current) => ({ ...current, startDate: event.target.value }));
+                          }}
+                          className={`w-full rounded-xl border bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10 ${fieldErrors.startDate ? "border-red-400 bg-red-50" : "border-slate-200"}`}
+                        />
+                        {fieldErrors.startDate ? <p className="mt-2 text-xs font-medium text-red-600">{fieldErrors.startDate}</p> : null}
+                      </label>
+
+                      <label>
+                        <span className="mb-2 block text-sm font-medium text-slate-700">Fecha fin</span>
+                        <input
+                          type="date"
+                          value={formState.endDate}
+                          onChange={(event) => {
+                            clearFieldError("endDate");
+                            setFormState((current) => ({ ...current, endDate: event.target.value }));
+                          }}
+                          className={`w-full rounded-xl border bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10 ${fieldErrors.endDate ? "border-red-400 bg-red-50" : "border-slate-200"}`}
+                        />
+                        {fieldErrors.endDate ? <p className="mt-2 text-xs font-medium text-red-600">{fieldErrors.endDate}</p> : null}
+                      </label>
+
+                      <label>
+                        <span className="mb-2 block text-sm font-medium text-slate-700">Número de asistentes</span>
+                        <input
+                          type="number"
+                          min={1}
+                          value={formState.attendees}
+                          onChange={(event) => {
+                            clearFieldError("attendees");
+                            setFormState((current) => ({ ...current, attendees: event.target.value }));
+                          }}
+                          placeholder="0"
+                          className={`w-full rounded-xl border bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10 ${fieldErrors.attendees ? "border-red-400 bg-red-50" : "border-slate-200"}`}
+                        />
+                        {fieldErrors.attendees ? <p className="mt-2 text-xs font-medium text-red-600">{fieldErrors.attendees}</p> : null}
+                      </label>
+                    </div>
+                  </section>
+
+                  <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-[0_4px_20px_rgba(15,23,42,0.05)]">
+                    <h3 className="mb-4 flex items-center gap-2 text-[16px] font-semibold text-[#295786]">
+                      <span className="material-symbols-outlined text-[22px]">schedule</span>
+                      Días y Horarios Intercalados
+                    </h3>
+
+                    <div className="space-y-3">
+                      <div className="flex justify-end">
+                        <button
+                          type="button"
+                          onClick={addScheduleBlock}
+                          className="inline-flex items-center gap-1 rounded-xl px-3 py-2 text-sm font-medium text-[#295786] transition hover:bg-[#d5e3ff]"
+                        >
+                          <span className="material-symbols-outlined text-[18px]">add</span>
+                          Agregar bloque horario
+                        </button>
+                      </div>
+
+                      {formState.scheduleBlocks.map((block, index) => {
+                        const blockDateError = fieldErrors[`block-${block.id}-date`];
+                        const blockStartError = fieldErrors[`block-${block.id}-startTime`];
+                        const blockEndError = fieldErrors[`block-${block.id}-endTime`];
+                        const blockRangeError = fieldErrors[`block-${block.id}-range`];
+
+                        return (
+                          <div key={block.id} className="rounded-2xl border border-dashed border-[#c7d4ea] bg-[#f7f9ff] p-4">
+                            <div className="grid gap-3 md:grid-cols-[1fr_1fr_1fr_auto] md:items-end">
+                              <label>
+                                <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Hora de inicio</span>
+                                <select
+                                  value={block.startTime}
+                                  onChange={(event) => updateScheduleBlock(block.id, "startTime", event.target.value)}
+                                  className={`w-full rounded-xl border bg-white px-3 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10 ${blockStartError || blockRangeError ? "border-red-400 bg-red-50" : "border-slate-200"}`}
+                                >
+                                  <option value="">Selecciona hora</option>
+                                  {TIME_SLOT_OPTIONS.map((option) => (
+                                    <option key={`start-${block.id}-${option.value}`} value={option.value}>
+                                      {option.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+
+                              <label>
+                                <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Hora de fin</span>
+                                <select
+                                  value={block.endTime}
+                                  onChange={(event) => updateScheduleBlock(block.id, "endTime", event.target.value)}
+                                  className={`w-full rounded-xl border bg-white px-3 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10 ${blockEndError || blockRangeError ? "border-red-400 bg-red-50" : "border-slate-200"}`}
+                                >
+                                  <option value="">Selecciona hora</option>
+                                  {TIME_SLOT_OPTIONS.map((option) => (
+                                    <option key={`end-${block.id}-${option.value}`} value={option.value}>
+                                      {option.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+
+                              <label>
+                                <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Fecha</span>
+                                <input
+                                  type="date"
+                                  value={block.date}
+                                  onChange={(event) => updateScheduleBlock(block.id, "date", event.target.value)}
+                                  className={`w-full rounded-xl border bg-white px-3 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10 ${blockDateError ? "border-red-400 bg-red-50" : "border-slate-200"}`}
+                                />
+                              </label>
+
+                              <button
+                                type="button"
+                                onClick={() => removeScheduleBlock(block.id)}
+                                className="inline-flex h-11 items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-slate-500 transition hover:bg-slate-50 hover:text-red-600"
+                                title="Quitar"
+                              >
+                                <span className="material-symbols-outlined text-[20px]">delete</span>
+                              </button>
+                            </div>
+
+                            {blockDateError || blockStartError || blockEndError || blockRangeError ? (
+                              <p className="mt-3 text-xs font-medium text-red-600">
+                                {blockDateError ?? blockStartError ?? blockEndError ?? blockRangeError}
+                              </p>
+                            ) : null}
+
+                            {index < formState.scheduleBlocks.length - 1 ? <div className="mt-3 border-t border-slate-100" /> : null}
+                          </div>
+                        );
+                      })}
+
+                      {fieldErrors.scheduleBlocks ? (
+                        <p className="text-xs font-medium text-red-600 whitespace-pre-line">{fieldErrors.scheduleBlocks}</p>
+                      ) : null}
+                    </div>
+                  </section>
+
+                  <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-[0_4px_20px_rgba(15,23,42,0.05)]">
+                    <h3 className="mb-4 flex items-center gap-2 text-[16px] font-semibold text-[#295786]">
+                      <span className="material-symbols-outlined text-[22px]">notes</span>
+                      Notas Adicionales
+                    </h3>
+                    <label className="block">
+                      <span className="mb-2 block text-sm font-medium text-slate-700">Observaciones</span>
+                      <textarea
+                        value={formState.observations}
+                        onChange={(event) => setFormState((current) => ({ ...current, observations: event.target.value }))}
+                        placeholder="Detalles específicos del montaje, requerimientos especiales de seguridad, etc."
+                        className="min-h-[140px] w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10"
+                      />
+                    </label>
+                  </section>
+                </div>
+
+                <div className="col-span-12 lg:col-span-4 space-y-6">
+                  <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-[0_4px_20px_rgba(15,23,42,0.05)]">
+                    <h3 className="mb-4 flex items-center gap-2 text-[16px] font-semibold text-[#295786]">
+                      <span className="material-symbols-outlined text-[22px]">inventory_2</span>
+                      Equipamiento
+                    </h3>
+
+                    <div className="grid gap-3">
+                      {[
+                        ["needsScreen", "Pantalla", "tv"],
+                        ["needsSound", "Sonido", "volume_up"],
+                        ["needsMonitor", "Monitor", "desktop_windows"],
+                        ["needsProjector", "Proyector", "videocam"],
+                        ["needsWaterFilter", "Filtro de Agua", "water_drop"],
+                      ].map(([key, label, icon]) => (
+                        <label
+                          key={String(key)}
+                          className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-[#fafcff] p-3 transition hover:bg-[#f4f7ff]"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={formState[key as keyof Pick<NewEventFormState, "needsScreen" | "needsSound" | "needsMonitor" | "needsProjector" | "needsWaterFilter">] as boolean}
+                            onChange={(event) => setFormState((current) => ({ ...current, [key]: event.target.checked }))}
+                            className="h-4 w-4 rounded border-slate-300 text-[#295786] focus:ring-[#295786]"
+                          />
+                          <span className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                            <span className="material-symbols-outlined text-[#295786]">{icon}</span>
+                            {label}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  </section>
+
+                  <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-[0_4px_20px_rgba(15,23,42,0.05)]">
+                    <h3 className="mb-4 flex items-center gap-2 text-[16px] font-semibold text-[#295786]">
+                      <span className="material-symbols-outlined text-[22px]">group</span>
+                      Personal Encargado
+                    </h3>
+
+                    {staffCatalog.length > 0 ? (
+                      <>
+                        <div className="relative mb-4">
+                          <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">search</span>
+                          <input
+                            type="text"
+                            placeholder="Buscar personal..."
+                            value={staffSearchQuery}
+                            onChange={(e) => setStaffSearchQuery(e.target.value)}
+                            className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 pl-10 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10"
+                          />
+                        </div>
+                        <div className="max-h-[300px] space-y-3 overflow-auto pr-1">
+                        {staffCatalog
+                          .filter((staffMember) => {
+                            const fullName = `${staffMember.nombres} ${staffMember.apellidos}`.toLowerCase();
+                            return fullName.includes(staffSearchQuery.toLowerCase());
+                          })
+                          .map((staffMember) => {
+                            const checked = formState.assignedStaffIds.includes(staffMember.id);
+                            const label = `${staffMember.nombres} ${staffMember.apellidos}`.trim();
+
+                          return (
+                            <label
+                              key={`staff-${staffMember.id}`}
+                              className={`flex items-center justify-between gap-3 rounded-2xl border p-3 transition ${
+                                checked ? "border-[#295786] bg-[#d5e3ff]" : "border-slate-200 bg-[#fafcff] hover:bg-[#f4f7ff]"
+                              }`}
+                            >
+                              <div className="flex min-w-0 items-center gap-3">
+                                <div className="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[#295786] text-[10px] font-bold text-white">
+                                  <img
+                                    src={getStaffPhotoUrl(staffMember.cedula)}
+                                    alt={`Foto de ${label}`}
+                                    className="h-full w-full object-cover"
+                                    onError={(event) => {
+                                      const image = event.currentTarget;
+                                      image.style.display = "none";
+                                      const fallback = image.parentElement?.querySelector<HTMLElement>("[data-staff-fallback='true']");
+                                      fallback?.classList.remove("hidden");
+                                    }}
+                                    onLoad={(event) => {
+                                      const image = event.currentTarget;
+                                      const fallback = image.parentElement?.querySelector<HTMLElement>("[data-staff-fallback='true']");
+                                      fallback?.classList.add("hidden");
+                                      image.style.display = "block";
+                                    }}
+                                  />
+                                  <div data-staff-fallback="true" className="hidden items-center justify-center">
+                                    {getStaffInitials(label)}
+                                  </div>
+                                </div>
+                                <div className="min-w-0">
+                                  <p className="truncate text-sm font-semibold text-slate-900">{label}</p>
+                                  <p className="text-xs text-slate-500">{staffMember.rol}</p>
+                                </div>
+                              </div>
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={(event) => {
+                                  const isChecked = event.target.checked;
+                                  setFormState((current) => ({
+                                    ...current,
+                                    assignedStaffIds: isChecked
+                                      ? Array.from(new Set([...current.assignedStaffIds, staffMember.id]))
+                                      : current.assignedStaffIds.filter((id) => id !== staffMember.id),
+                                  }));
+                                }}
+                                className="h-5 w-5 rounded-full border-slate-300 text-[#295786] focus:ring-[#295786]"
+                              />
+                            </label>
+                          );
+                        })}
+                        </div>
+                      </>
+                    ) : (
+                      <p className="text-sm text-slate-500">No hay personal disponible para asignar.</p>
+                    )}
+                  </section>
+
+                  
+
+                  
+
+                  <div className="flex gap-3 lg:flex-col">
+                    <button
+                      type="button"
+                      onClick={closeCreateModal}
+                      disabled={isSaving}
+                      className="flex-1 rounded-xl border border-[#295786] px-5 py-3 text-sm font-medium text-[#295786] transition hover:bg-[#d5e3ff] disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      Descartar cambios
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isSaving}
+                      className="flex-1 rounded-xl bg-[#295786] px-5 py-3 text-sm font-semibold text-white shadow-[0_12px_24px_rgba(41,87,134,0.24)] transition hover:bg-[#1f4a74] disabled:cursor-not-allowed disabled:opacity-70"
+                    >
+                      {isSaving ? "Guardando..." : editingEventId ? "Guardar cambios" : "Crear Evento"}
+                    </button>
+                  </div>
+                </div>
+              </form>
+            </div>
           </div>
         </div>
       ) : null}

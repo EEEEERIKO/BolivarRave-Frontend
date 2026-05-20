@@ -1686,7 +1686,7 @@ function StaffScheduleBoard({
       </div>
 
       {isEditorOpen && editingStaff ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-md">
           <div className="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
             <div className="mb-4 flex items-start justify-between gap-4">
               <div>
@@ -1986,13 +1986,13 @@ export default function StaffPage() {
     lastName: "",
     major: "",
     phone: "",
-    contractPlan: "Plan 1" as ContractPlan,
+    contractPlan: "" as ContractPlan,
     birthDate: "",
     password: "",
     passwordConfirm: "",
     habilidadIds: [] as string[],
     role: "",
-    roleId: 3 as StaffAccessRoleId,
+    roleId: 0 as StaffAccessRoleId,
   });
   const [editStaff, setEditStaff] = useState({
     staffNumber: "",
@@ -2859,6 +2859,23 @@ export default function StaffPage() {
     void loadSkills();
   }, []);
 
+  useEffect(() => {
+    if (!showAddStaffForm && !showEditStaffForm) {
+      return;
+    }
+
+    const previousOverflow = document.body.style.overflow;
+    const previousOverscrollBehavior = document.body.style.overscrollBehavior;
+
+    document.body.style.overflow = "hidden";
+    document.body.style.overscrollBehavior = "none";
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.body.style.overscrollBehavior = previousOverscrollBehavior;
+    };
+  }, [showAddStaffForm, showEditStaffForm]);
+
   async function handleAddStaffSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -3316,102 +3333,97 @@ export default function StaffPage() {
       ) : null}
 
       {showAddStaffForm ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="flex max-h-[92vh] w-full max-w-2xl flex-col rounded-2xl bg-white p-6 shadow-2xl">
-            <div className="mb-4 flex items-center justify-between">
-              <div>
-                <h3 className="text-xl font-extrabold text-[#2a3439]">Nuevo personal</h3>
-                <p className="text-xs text-[#566166]">Registro conectado al backend con número autogenerado</p>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-md">
+          <div className="flex max-h-[92vh] w-full max-w-4xl flex-col rounded-2xl bg-white shadow-[0_4px_20px_rgba(15,23,42,0.05)] overflow-hidden">
+            <header className="flex h-16 items-center justify-between border-b border-slate-200 bg-white px-8">
+              <div className="flex items-center gap-4">
+                <button
+                  type="button"
+                  onClick={closeAddStaffForm}
+                  disabled={isSavingNewStaff}
+                  className="rounded-full p-2 text-[#295786] transition hover:bg-[#d5e3ff] disabled:cursor-not-allowed disabled:opacity-60"
+                  aria-label="Volver"
+                >
+                  <span className="material-symbols-outlined text-[24px]">arrow_back</span>
+                </button>
+                <div>
+                  <h2 className="text-[20px] font-semibold tracking-[-0.01em] text-[#295786]">Nuevo personal</h2>
+                </div>
               </div>
               <button
-                className="rounded-lg border border-slate-200 px-3 py-1 text-xs font-bold text-[#566166] hover:bg-slate-50"
-                onClick={closeAddStaffForm}
                 type="button"
+                onClick={closeAddStaffForm}
+                disabled={isSavingNewStaff}
+                className="inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium text-[#295786] transition hover:bg-[#d5e3ff] disabled:cursor-not-allowed disabled:opacity-60"
               >
+                <span className="material-symbols-outlined text-[20px]">close</span>
                 Cerrar
               </button>
-            </div>
+            </header>
 
             <form autoComplete="off" className="flex min-h-0 flex-1 flex-col" onSubmit={handleAddStaffSubmit}>
-              <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-y-auto pr-1 md:grid-cols-2">
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-500">Rol</label>
-                <input
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  onChange={(event) => setNewStaff((prev) => ({ ...prev, role: event.target.value }))}
-                  placeholder="Ej: Colaborador"
-                  required
-                  type="text"
-                  value={newStaff.role}
-                />
-              </div>
+              <div className="grid min-h-0 flex-1 grid-cols-1 gap-6 overflow-y-auto p-8 md:grid-cols-2">
+              <div>
+                <h3 className="mb-6 flex items-center gap-2 text-[16px] font-semibold text-[#295786]">
+                  <span className="material-symbols-outlined text-[22px]" style={{fontVariationSettings: "'FILL' 1"}}>person</span>
+                  Información Personal
+                </h3>
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-700">Nombres</label>
+                    <input
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10"
+                      onChange={(event) => setNewStaff((prev) => ({ ...prev, firstName: event.target.value }))}
+                      placeholder="Ej: Erik"
+                      required
+                      type="text"
+                      value={newStaff.firstName}
+                    />
+                  </div>
 
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-500">Cédula de ciudadanía</label>
-                <input
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  onChange={(event) => setNewStaff((prev) => ({ ...prev, citizenshipId: event.target.value }))}
-                  placeholder="Ej: 1032485901"
-                  required
-                  type="text"
-                  value={newStaff.citizenshipId}
-                />
-              </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-700">Apellidos</label>
+                    <input
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10"
+                      onChange={(event) => setNewStaff((prev) => ({ ...prev, lastName: event.target.value }))}
+                      placeholder="Ej: Valencia Cardona"
+                      required
+                      type="text"
+                      value={newStaff.lastName}
+                    />
+                  </div>
 
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-500">Nombres</label>
-                <input
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  onChange={(event) => setNewStaff((prev) => ({ ...prev, firstName: event.target.value }))}
-                  placeholder="Ej: Erik"
-                  required
-                  type="text"
-                  value={newStaff.firstName}
-                />
-              </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-700">Cédula de ciudadanía</label>
+                    <input
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10"
+                      onChange={(event) => setNewStaff((prev) => ({ ...prev, citizenshipId: event.target.value }))}
+                      placeholder="10.XXX.XXX"
+                      required
+                      type="text"
+                      value={newStaff.citizenshipId}
+                    />
+                  </div>
 
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-500">Apellidos</label>
-                <input
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  onChange={(event) => setNewStaff((prev) => ({ ...prev, lastName: event.target.value }))}
-                  placeholder="Ej: Valencia Cardona"
-                  required
-                  type="text"
-                  value={newStaff.lastName}
-                />
-              </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-700">Número de teléfono</label>
+                    <input
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10"
+                      onChange={(event) => setNewStaff((prev) => ({ ...prev, phone: event.target.value }))}
+                      placeholder="+57 3XX XXX XXXX"
+                      required
+                      type="tel"
+                      value={newStaff.phone}
+                    />
+                  </div>
 
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-500">Carrera</label>
-                <input
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  onChange={(event) => setNewStaff((prev) => ({ ...prev, major: event.target.value }))}
-                  placeholder="Ej: Ingenieria de Sistemas"
-                  type="text"
-                  value={newStaff.major}
-                />
-              </div>
+                  
 
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-500">Número de teléfono</label>
-                <input
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  onChange={(event) => setNewStaff((prev) => ({ ...prev, phone: event.target.value }))}
-                  placeholder="Ej: +57 300 000 0000"
-                  required
-                  type="tel"
-                  value={newStaff.phone}
-                />
-              </div>
-
-              <div className="space-y-1 md:col-span-2 lg:col-span-2">
-                <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.45fr_1fr_1fr]">
-                  <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-500">Fecha de nacimiento</label>
-                    <div className="grid grid-cols-3 gap-2">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-700">Fecha de nacimiento</label>
+                    <div className="grid grid-cols-3 gap-3">
                       <select
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                        className="h-10 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10"
                         onChange={(event) => updateNewBirthDate("year", event.target.value)}
                         required
                         value={newBirthDateParts.year}
@@ -3425,7 +3437,7 @@ export default function StaffPage() {
                       </select>
 
                       <select
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                        className="h-10 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10"
                         disabled={!newBirthDateParts.year}
                         onChange={(event) => updateNewBirthDate("month", event.target.value)}
                         required
@@ -3440,7 +3452,7 @@ export default function StaffPage() {
                       </select>
 
                       <select
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                        className="h-10 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10"
                         disabled={!newBirthDateParts.year || !newBirthDateParts.month}
                         onChange={(event) => updateNewBirthDate("day", event.target.value)}
                         required
@@ -3455,16 +3467,37 @@ export default function StaffPage() {
                       </select>
                     </div>
                   </div>
+                </div>
+              </div>
 
-                  <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-500">Rol de acceso</label>
+              <div>
+                <h3 className="mb-6 flex items-center gap-2 text-[16px] font-semibold text-[#295786]">
+                  <span className="material-symbols-outlined text-[22px]" style={{fontVariationSettings: "'FILL' 1"}}>work</span>
+                  Configuración Laboral
+                </h3>
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-700">Rol</label>
+                    <input
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10"
+                      onChange={(event) => setNewStaff((prev) => ({ ...prev, role: event.target.value }))}
+                      placeholder="Ej: Colaborador"
+                      required
+                      type="text"
+                      value={newStaff.role}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-700">Rol de acceso</label>
                     <select
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10"
                       onChange={(event) =>
                         setNewStaff((prev) => ({ ...prev, roleId: Number(event.target.value) as StaffAccessRoleId }))
                       }
                       value={newStaff.roleId}
                     >
+                      <option value="">Seleccione un rol</option>
                       {ACCESS_ROLE_OPTIONS.map((option) => (
                         <option key={option.value} value={option.value}>
                           {option.label}
@@ -3473,13 +3506,14 @@ export default function StaffPage() {
                     </select>
                   </div>
 
-                  <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-500">Tipo de contrato</label>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-700">Tipo de contrato</label>
                     <select
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10"
                       onChange={(event) => setNewStaff((prev) => ({ ...prev, contractPlan: event.target.value as ContractPlan }))}
                       value={newStaff.contractPlan}
                     >
+                      <option value="">Seleccione un plan</option>
                       <option value="Plan 1">Plan 1</option>
                       <option value="Plan 2">Plan 2</option>
                       <option value="Plan 3">Plan 3</option>
@@ -3487,182 +3521,231 @@ export default function StaffPage() {
                       <option value="Plan Especial">Plan Especial</option>
                     </select>
                   </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-700">Carrera (Monitor/Estudiante)</label>
+                    <input
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10"
+                      onChange={(event) => setNewStaff((prev) => ({ ...prev, major: event.target.value }))}
+                      placeholder="Ej: Ingeniería de Sistemas"
+                      type="text"
+                      value={newStaff.major}
+                    />
+                  </div>
+
+                  
                 </div>
               </div>
+            </div>
 
-              <div className="space-y-2 md:col-span-2">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-bold text-slate-500">Horas de clase no disponibles</label>
-                  <button
-                    className="rounded-md border border-slate-300 px-2 py-1 text-[10px] font-bold text-[#566166]"
-                    onClick={addUnavailableClassSlot}
-                    type="button"
-                  >
-                    + Agregar bloque
-                  </button>
-                </div>
+            
 
-                {unavailableClassSlots.length === 0 ? (
-                    <p className="rounded-lg border border-dashed border-slate-300 px-3 py-2 text-xs text-[#566166]">
-                    No hay horarios de clase cargados. Este campo es opcional.
-                  </p>
-                ) : (
-                  unavailableClassSlots.map((slot, index) => (
-                    <div className="grid grid-cols-1 gap-2 rounded-lg border border-slate-200 p-2 md:grid-cols-[1fr_1fr_1fr_auto]" key={slot.id}>
-                      <select
-                        className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                        onChange={(event) => updateUnavailableClassSlot(slot.id, "day", event.target.value)}
-                        value={slot.day}
-                      >
-                        <option value="">Selecciona un día</option>
-                        {WEEK_DAYS.map((day) => (
-                          <option key={day} value={day}>
-                            {day}
-                          </option>
-                        ))}
-                      </select>
+            <div className="px-8 pb-4">
+              <div className="grid items-start gap-3 md:grid-cols-2">
+                <section className="rounded-2xl border border-slate-200 bg-white p-3 shadow-[0_4px_12px_rgba(15,23,42,0.04)]">
+                  <div className="mb-2 flex items-center justify-between border-b border-slate-200 pb-2">
+                    <h3 className="flex items-center gap-2 text-[13px] font-semibold text-[#295786]">
+                      <span className="material-symbols-outlined text-[22px]" style={{fontVariationSettings: "'FILL' 1"}}>event_busy</span>
+                      Horas no disponibles
+                    </h3>
+                    <button
+                      className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-[#295786] transition hover:bg-[#d5e3ff]"
+                      onClick={addUnavailableClassSlot}
+                      type="button"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">add</span>
+                      Agregar bloque
+                    </button>
+                  </div>
 
-                      <select
-                        className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                        onChange={(event) => updateUnavailableClassSlot(slot.id, "startTime", event.target.value)}
-                        value={slot.startTime}
-                      >
-                        <option value="">Hora de inicio</option>
-                        {CLASS_TIME_OPTIONS.map((time) => (
-                          <option key={time} value={time}>
-                            {time}
-                          </option>
-                        ))}
-                      </select>
+                  {unavailableClassSlots.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-3 text-center h-[104px]">
+                      <div className="mb-2 flex h-9 w-9 items-center justify-center rounded-full bg-slate-100">
+                        <span className="material-symbols-outlined text-slate-400 text-[18px]">info</span>
+                      </div>
+                      <p className="text-[11px] leading-4 text-slate-500">No hay horarios de clase cargados. Este campo es opcional.</p>
+                    </div>
+                  ) : (
+                    <div className="max-h-[130px] space-y-2 overflow-y-auto pr-2">
+                      {unavailableClassSlots.map((slot, index) => (
+                        <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 space-y-1" key={slot.id}>
+                          <div className="grid grid-cols-3 gap-1">
+                            <select
+                              className="rounded-lg border border-slate-300 px-2 py-1 text-xs"
+                              onChange={(event) => updateUnavailableClassSlot(slot.id, "day", event.target.value)}
+                              value={slot.day}
+                            >
+                              <option value="">Día</option>
+                              {WEEK_DAYS.map((day) => (
+                                <option key={day} value={day}>
+                                  {day}
+                                </option>
+                              ))}
+                            </select>
 
-                      <select
-                        className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                        onChange={(event) => updateUnavailableClassSlot(slot.id, "endTime", event.target.value)}
-                        value={slot.endTime}
-                      >
-                        <option value="">Hora de fin</option>
-                        {CLASS_TIME_OPTIONS.map((time) => (
-                          <option key={time} value={time}>
-                            {time}
-                          </option>
-                        ))}
-                      </select>
+                            <select
+                              className="rounded-lg border border-slate-300 px-2 py-1 text-xs"
+                              onChange={(event) => updateUnavailableClassSlot(slot.id, "startTime", event.target.value)}
+                              value={slot.startTime}
+                            >
+                              <option value="">Inicio</option>
+                              {CLASS_TIME_OPTIONS.map((time) => (
+                                <option key={time} value={time}>
+                                  {time}
+                                </option>
+                              ))}
+                            </select>
 
+                            <select
+                              className="rounded-lg border border-slate-300 px-2 py-1 text-xs"
+                              onChange={(event) => updateUnavailableClassSlot(slot.id, "endTime", event.target.value)}
+                              value={slot.endTime}
+                            >
+                              <option value="">Fin</option>
+                              {CLASS_TIME_OPTIONS.map((time) => (
+                                <option key={time} value={time}>
+                                  {time}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div className="flex items-center justify-between">
+                            <p className="text-[10px] text-slate-500">Bloque {index + 1}</p>
+                            <button
+                              className="rounded-lg px-2 py-0.5 text-[11px] text-red-600 hover:bg-red-50"
+                              onClick={() => removeUnavailableClassSlot(slot.id)}
+                              type="button"
+                            >
+                              Quitar
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </section>
+
+                <section className="rounded-2xl border border-slate-200 bg-white p-3 shadow-[0_4px_12px_rgba(15,23,42,0.04)]">
+                  <div className="mb-2 flex items-center gap-2 border-b border-slate-200 pb-2">
+                    <span className="material-symbols-outlined text-[20px] text-[#295786]" style={{fontVariationSettings: "'FILL' 1"}}>psychology</span>
+                    <h3 className="text-[13px] font-semibold text-[#295786]">Habilidades</h3>
+                  </div>
+
+                  {skillsCatalog.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-4 text-center">
+                      <div className="mb-2 flex h-10 w-10 items-center justify-center rounded-full bg-slate-100">
+                        <span className="material-symbols-outlined text-slate-400">search_off</span>
+                      </div>
+                      <p className="max-w-[200px] text-[11px] leading-4 text-slate-500">No hay habilidades cargadas en el sistema.</p>
+                    </div>
+                  ) : (
+                    <div className="max-h-[130px] grid grid-cols-1 gap-2 overflow-y-auto pr-1">
+                      {skillsCatalog.map((skill) => {
+                        const isSelected = newStaff.habilidadIds.includes(skill.id);
+                        return (
+                          <label className={`flex items-center gap-3 rounded-2xl border p-2 transition ${isSelected ? "border-[#295786] bg-[#d5e3ff]" : "border-slate-200 bg-[#fafcff] hover:bg-[#f4f7ff]"}`} key={skill.id}>
+                            <input
+                              checked={isSelected}
+                              className="h-4 w-4 rounded border-slate-300 text-[#295786] focus:ring-[#295786]"
+                              onChange={(event) =>
+                                setNewStaff((prev) => ({
+                                  ...prev,
+                                  habilidadIds: event.target.checked
+                                    ? [...prev.habilidadIds, skill.id]
+                                    : prev.habilidadIds.filter((id) => id !== skill.id),
+                                }))
+                              }
+                              type="checkbox"
+                            />
+                            <span className="text-sm font-medium text-slate-700">{skill.nombre}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
+                </section>
+              </div>
+            </div>
+
+            {roleRequiresCredential(newStaff.roleId) ? (
+              <section className="mx-8 rounded-2xl border border-slate-200 bg-white p-6 shadow-[0_4px_20px_rgba(15,23,42,0.05)]">
+                <h3 className="mb-6 flex items-center gap-2 text-[16px] font-semibold text-[#295786] border-b border-slate-200 pb-4">
+                  <span className="material-symbols-outlined text-[22px]" style={{fontVariationSettings: "'FILL' 1"}}>lock</span>
+                  Credenciales de Acceso
+                </h3>
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-700">Contraseña de acceso</label>
+                    <div className="relative">
+                      <input
+                        className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 pr-16 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10"
+                        onChange={(event) => setNewStaff((prev) => ({ ...prev, password: event.target.value }))}
+                        placeholder="Mínimo 8 caracteres"
+                        required
+                        type={showNewPassword ? "text" : "password"}
+                        value={newStaff.password}
+                      />
                       <button
-                        className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold text-[#9f403d]"
-                        onClick={() => removeUnavailableClassSlot(slot.id)}
+                        className="absolute top-1/2 right-2 -translate-y-1/2 rounded-lg px-2 py-1 text-xs font-medium text-[#295786] hover:bg-[#d5e3ff]"
+                        onClick={() => setShowNewPassword((prev) => !prev)}
                         type="button"
                       >
-                        Quitar
+                        {showNewPassword ? "Ocultar" : "Ver"}
                       </button>
-
-                      <p className="text-[10px] text-[#566166] md:col-span-4">Bloque {index + 1}: horario no disponible por clase</p>
                     </div>
-                  ))
-                )}
-              </div>
+                  </div>
 
-              {roleRequiresCredential(newStaff.roleId) ? (
-                <div className="space-y-1 md:col-span-2">
-                  <label className="text-xs font-bold text-slate-500">Contraseña de acceso</label>
-                  <div className="relative">
-                    <input
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2 pr-20 text-sm"
-                      onChange={(event) => setNewStaff((prev) => ({ ...prev, password: event.target.value }))}
-                      placeholder="Mínimo 8 caracteres"
-                      required
-                      type={showNewPassword ? "text" : "password"}
-                      value={newStaff.password}
-                    />
-                    <button
-                      className="absolute top-1/2 right-2 -translate-y-1/2 rounded-md border border-slate-300 bg-white px-2 py-1 text-[10px] font-bold text-[#566166]"
-                      onClick={() => setShowNewPassword((prev) => !prev)}
-                      type="button"
-                    >
-                      {showNewPassword ? "Ocultar" : "Ver"}
-                    </button>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-700">Repetir contraseña</label>
+                    <div className="relative">
+                      <input
+                        className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 pr-16 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10"
+                        onChange={(event) => setNewStaff((prev) => ({ ...prev, passwordConfirm: event.target.value }))}
+                        placeholder="Repite la contraseña"
+                        required
+                        type={showNewPasswordConfirm ? "text" : "password"}
+                        value={newStaff.passwordConfirm}
+                      />
+                      <button
+                        className="absolute top-1/2 right-2 -translate-y-1/2 rounded-lg px-2 py-1 text-xs font-medium text-[#295786] hover:bg-[#d5e3ff]"
+                        onClick={() => setShowNewPasswordConfirm((prev) => !prev)}
+                        type="button"
+                      >
+                        {showNewPasswordConfirm ? "Ocultar" : "Ver"}
+                      </button>
+                    </div>
                   </div>
-                  <label className="text-xs font-bold text-slate-500">Repetir contraseña</label>
-                  <div className="relative">
-                    <input
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2 pr-20 text-sm"
-                      onChange={(event) => setNewStaff((prev) => ({ ...prev, passwordConfirm: event.target.value }))}
-                      placeholder="Repite la contraseña"
-                      required
-                      type={showNewPasswordConfirm ? "text" : "password"}
-                      value={newStaff.passwordConfirm}
-                    />
-                    <button
-                      className="absolute top-1/2 right-2 -translate-y-1/2 rounded-md border border-slate-300 bg-white px-2 py-1 text-[10px] font-bold text-[#566166]"
-                      onClick={() => setShowNewPasswordConfirm((prev) => !prev)}
-                      type="button"
-                    >
-                      {showNewPasswordConfirm ? "Ocultar" : "Ver"}
-                    </button>
-                  </div>
-                  <p className="text-[10px] text-[#566166]">Obligatoria para Administrador y Monitor.</p>
+
+                  <p className="text-xs text-slate-500 pt-2">Obligatoria para Administrador y Monitor.</p>
                 </div>
-              ) : null}
+              </section>
+            ) : null}
 
-              <div className="space-y-2 md:col-span-2">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-bold text-slate-500">Habilidades</label>
-                  {isLoadingSkills ? <span className="text-[10px] text-[#566166]">Cargando...</span> : null}
-                </div>
-
-                {skillsCatalog.length === 0 ? (
-                  <p className="rounded-lg border border-dashed border-slate-300 px-3 py-2 text-xs text-[#566166]">
-                    No hay habilidades cargadas en el sistema.
-                  </p>
-                ) : (
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                    {skillsCatalog.map((skill) => {
-                      const isSelected = newStaff.habilidadIds.includes(skill.id);
-                      return (
-                        <label className="flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm text-[#2a3439]" key={skill.id}>
-                          <input
-                            checked={isSelected}
-                            className="rounded border-slate-300 text-[#3a5f94] focus:ring-[#3a5f94]"
-                            onChange={(event) =>
-                              setNewStaff((prev) => ({
-                                ...prev,
-                                habilidadIds: event.target.checked
-                                  ? [...prev.habilidadIds, skill.id]
-                                  : prev.habilidadIds.filter((id) => id !== skill.id),
-                              }))
-                            }
-                            type="checkbox"
-                          />
-                          {skill.nombre}
-                        </label>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              </div>
-
-              <div className="mt-4 flex justify-end gap-2 border-t border-slate-200 bg-white pt-4">
-                <button
-                  className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-bold text-[#566166]"
-                  disabled={isSavingNewStaff}
-                  onClick={closeAddStaffForm}
-                  type="button"
-                >
-                  Cancelar
-                </button>
-                <button className="rounded-lg bg-[#3a5f94] px-4 py-2 text-xs font-bold text-white disabled:opacity-60" disabled={isSavingNewStaff} type="submit">
-                  {isSavingNewStaff ? "Guardando..." : "Guardar"}
-                </button>
-              </div>
+            <div className="flex items-center justify-between gap-3 border-t border-slate-200 bg-white px-8 py-6">
+              <button
+                className="rounded-xl border border-[#295786] px-6 py-3 text-sm font-medium text-[#295786] transition hover:bg-[#d5e3ff] disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={isSavingNewStaff}
+                onClick={closeAddStaffForm}
+                type="button"
+              >
+                Descartar cambios
+              </button>
+              <button
+                className="rounded-xl bg-[#295786] px-6 py-3 text-sm font-semibold text-white shadow-[0_12px_24px_rgba(41,87,134,0.24)] transition hover:bg-[#1f4a74] disabled:cursor-not-allowed disabled:opacity-70" 
+                disabled={isSavingNewStaff} 
+                type="submit"
+              >
+                {isSavingNewStaff ? "Guardando..." : "Guardar"}
+              </button>
+            </div>
             </form>
           </div>
         </div>
       ) : null}
 
       {showEditStaffForm ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-md">
           <div className="flex max-h-[92vh] w-full max-w-2xl flex-col rounded-2xl bg-white p-6 shadow-2xl">
             <div className="mb-4">
               <div>
@@ -4253,25 +4336,6 @@ export default function StaffPage() {
                 ))}
               </div>
                 </div>
-              <div className="mt-3 space-y-2">
-                <div className="flex items-center justify-center gap-4 text-[10px] text-[#566166]">
-                  <span className="inline-flex items-center gap-1">
-                    <span className="h-2 w-2 rounded-full bg-[#3a5f94]" /> No disponible
-                  </span>
-                  <span className="inline-flex items-center gap-1">
-                    <span className="h-2 w-2 rounded-full bg-[#f0f4f7] border border-slate-300" /> Disponible
-                  </span>
-                </div>
-              </div>
-              {hasAcademicUnavailability ? (
-                <p className="mt-2 text-center text-[10px] italic text-[#566166]">
-                  Los bloques resaltados indican horarios de clase.
-                </p>
-              ) : (
-                <p className="mt-2 text-center text-[10px] italic text-[#566166]">
-                  No hay bloques de clase registrados para este personal.
-                </p>
-              )}
               {academicBlockedSlotDetails.length > 0 ? (
                 <div className="mt-3 space-y-1 rounded-lg border border-slate-200 bg-white p-3">
                   <p className="text-[10px] font-bold tracking-wider text-slate-400 uppercase">Detalle de Bloques</p>
@@ -4634,7 +4698,7 @@ export default function StaffPage() {
         )}
 
         {!isCollaborador && isStaffDetailModalOpen && selectedStaff ? (
-          <div className="fixed inset-0 z-50 flex items-end bg-black/50 p-0 xl:hidden" role="dialog" aria-modal="true">
+          <div className="fixed inset-0 z-50 flex items-end bg-slate-950/55 p-0 backdrop-blur-md xl:hidden" role="dialog" aria-modal="true">
             <button
               type="button"
               aria-label="Cerrar detalle del personal"
