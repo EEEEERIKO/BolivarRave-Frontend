@@ -115,6 +115,31 @@ function getLocationSortKey(room: string): { floor: number; label: string } {
   };
 }
 
+const INVENTORY_GROUP_PRIORITY: Record<string, number> = {
+  televisores: 0,
+  equipos: 1,
+  "clases de sábado": 2,
+};
+
+const sortInventoryGroups = (groups: InventoryGroup[]) => {
+  return [...groups].sort((left, right) => {
+    const leftName = left.name.trim().toLowerCase();
+    const rightName = right.name.trim().toLowerCase();
+    const leftPriority = INVENTORY_GROUP_PRIORITY[leftName] ?? 99;
+    const rightPriority = INVENTORY_GROUP_PRIORITY[rightName] ?? 99;
+
+    if (leftPriority !== rightPriority) {
+      return leftPriority - rightPriority;
+    }
+
+    if (left.order !== right.order) {
+      return left.order - right.order;
+    }
+
+    return leftName.localeCompare(rightName);
+  });
+};
+
 export default function InventoryPage() {
   const LOCAL_DEFECTIVE_REASON_KEY = "inventory_defective_reason_overrides_v1";
 
@@ -221,7 +246,7 @@ export default function InventoryPage() {
           return current;
         }
 
-        return nextGroups[0]?.id ?? "";
+        return sortInventoryGroups(nextGroups)[0]?.id ?? "";
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "No se pudo cargar el inventario";
@@ -239,9 +264,16 @@ export default function InventoryPage() {
     void loadInventory();
   }, []);
 
+  const orderedInventoryGroups = useMemo(() => sortInventoryGroups(inventoryGroups), [inventoryGroups]);
+
+  const equipmentGroupOptions = useMemo(
+    () => orderedInventoryGroups.filter((group) => group.name.trim().toLowerCase() !== "televisores"),
+    [orderedInventoryGroups],
+  );
+
   const selectedGroup = useMemo(
-    () => inventoryGroups.find((group) => group.id === selectedGroupId) ?? inventoryGroups[0] ?? null,
-    [inventoryGroups, selectedGroupId],
+    () => orderedInventoryGroups.find((group) => group.id === selectedGroupId) ?? orderedInventoryGroups[0] ?? null,
+    [orderedInventoryGroups, selectedGroupId],
   );
 
   const selectedItems = useMemo(
@@ -770,7 +802,7 @@ export default function InventoryPage() {
             ref={groupsScrollRef}
           >
             <div className="flex w-max flex-nowrap gap-4 pr-1">
-              {inventoryGroups.map((group) => {
+              {orderedInventoryGroups.map((group) => {
                 const groupCount = countByGroup.get(group.id) ?? 0;
                 const badge = getGroupBadge(group);
                 return (
@@ -1246,7 +1278,7 @@ export default function InventoryPage() {
                         onChange={(event) => setItemForm((current) => ({ ...current, groupId: event.target.value }))}
                         value={itemForm.groupId}
                       >
-                        {inventoryGroups.map((group) => (
+                        {equipmentGroupOptions.map((group) => (
                           <option key={group.id} value={group.id}>
                             {group.name}
                           </option>
