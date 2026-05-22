@@ -1883,7 +1883,7 @@ export default function ReservasPage() {
                                     <span className="material-symbols-outlined text-[#3a5f94]">meeting_room</span>
                                 </div>
                                 <div>
-                                    <p className="text-[10px] font-bold uppercase text-slate-500">Resource</p>
+                                    <p className="text-[10px] font-bold uppercase text-slate-500">Reserva</p>
                                     <p className="text-sm font-bold text-slate-900">{requestSummary.resource}</p>
                                 </div>
                             </div>
@@ -1893,7 +1893,7 @@ export default function ReservasPage() {
                                     <span className="material-symbols-outlined text-[#3a5f94]">schedule</span>
                                 </div>
                                 <div>
-                                    <p className="text-[10px] font-bold uppercase text-slate-500">Timeframe</p>
+                                    <p className="text-[10px] font-bold uppercase text-slate-500">Tiempo de resrva</p>
                                     <p className="text-sm font-bold text-slate-900">{requestSummary.timeframe}</p>
                                     <p className="text-xs text-slate-500">{requestSummary.date}</p>
                                 </div>
@@ -1905,22 +1905,13 @@ export default function ReservasPage() {
                                         <span className="material-symbols-outlined text-[#3a5f94]">person</span>
                                     </div>
                                     <div>
-                                        <p className="text-[10px] font-bold uppercase text-slate-500">Requester</p>
+                                        <p className="text-[10px] font-bold uppercase text-slate-500">Responsable de Reserva</p>
                                         <p className="text-sm font-bold text-slate-900">{requestSummary.requester}</p>
                                         <p className="text-xs text-slate-500">{requestSummary.document}</p>
                                     </div>
                                 </div>
                             ) : (
-                                <div className="flex gap-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4">
-                                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[#e8eff3]">
-                                        <span className="material-symbols-outlined text-[#3a5f94]">tv</span>
-                                    </div>
-                                    <div>
-                                        <p className="text-[10px] font-bold uppercase text-slate-500">Televisor</p>
-                                        <p className="text-sm font-bold text-slate-900">Asignación automática</p>
-                                        <p className="text-xs text-slate-500">El sistema elegirá el TV y te avisará si no requiere traslado.</p>
-                                    </div>
-                                </div>
+                                <>  </>
                             )}
 
                             {requestSummary.destination ? (
