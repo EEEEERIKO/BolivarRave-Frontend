@@ -83,6 +83,7 @@ const navItems: NavItem[] = [
   { label: "Auditorio", icon: "theater_comedy", href: "/auditorio", isRoute: true, allowedRoles: ["admin", "monitor"] },
   { label: "Reservas", icon: "", iconElement: <CalendarRange size={18} strokeWidth={2.2} />, href: "/reservas", isRoute: true, allowedRoles: ["admin", "monitor"] },
   { label: "Personal", icon: "groups", href: "/staff", isRoute: true },
+  { label: "Registro", icon: "badge", href: "/registro", isRoute: true, allowedRoles: ["admin"] },
   { label: "Tareas", icon: "assignment_turned_in", href: "/tasks", isRoute: true, allowedRoles: ["admin", "monitor"] },
   { label: "Inventario", icon: "inventory_2", href: "/inventory", isRoute: true, allowedRoles: ["admin", "monitor"] },
   { label: "Importar Excel", icon: "upload_file", href: "/excel-import", isRoute: true, allowedRoles: ["admin"] },

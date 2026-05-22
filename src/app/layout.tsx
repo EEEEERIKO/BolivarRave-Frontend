@@ -24,6 +24,10 @@ const routeMetadata: Record<string, { title: string; description: string }> = {
     title: "UNAC Bolivar | Gestión de Personal",
     description: "Administra el personal y colaboradores del Auditorio Bolivar.",
   },
+  "/registro": {
+    title: "UNAC Bolivar | Registro de Turno",
+    description: "Registra la entrada y salida del personal según su jornada laboral.",
+  },
   "/auditorio": {
     title: "UNAC Bolivar | Reservas de Espacios",
     description: "Reserva y administra los espacios del Auditorio Bolivar.",

@@ -585,6 +585,19 @@ function findTasksInSlot(
   });
 }
 
+function pickEditableScheduleTask(tasks: ScheduleTaskItem[]): ScheduleTaskItem | null {
+  if (tasks.length === 0) {
+    return null;
+  }
+
+  return (
+    tasks.find((task) => task.tipo === "Recurrente" && (task.diasSemana?.length ?? 0) > 0) ??
+    tasks.find((task) => task.tipo === "Recurrente") ??
+    tasks[0] ??
+    null
+  );
+}
+
 function buildPreviewMatrix(
   tasks: ScheduleTaskItem[],
   jornadas: StaffJornadaItem[],
@@ -3470,6 +3483,7 @@ export default function TasksPage() {
                                                 const cell = worker.matrix[dayIndex]?.[slotStart] ?? { label: "FUERA DE TURNO", status: "off" as const };
                                                 const tasksInSlot = cell.status === "task" ? findTasksInSlot(worker.tasks, dayIndex, slotStart) : [];
                                                 const isClickable = (cell.status === "task" && tasksInSlot.length > 0) || cell.status === "available";
+                                                const selectedTask = pickEditableScheduleTask(tasksInSlot);
 
                                                 return (
                                                   <td
@@ -3480,7 +3494,7 @@ export default function TasksPage() {
                                                           staffId: worker.staff.id,
                                                           dayIndex,
                                                           slotStart,
-                                                          taskId: tasksInSlot[0]?.id,
+                                                          taskId: selectedTask?.id,
                                                         });
                                                       }
                                                     }}
@@ -3709,6 +3723,18 @@ export default function TasksPage() {
                             });
                           } finally {
                             setBusyAction(null);
+                          }
+                        })();
+
+                        return;
+                      }
+
+                      if (showQuickCatalogEditor && editingCatalogId) {
+                        void (async () => {
+                          const saved = await submitCatalog(e);
+                          if (saved) {
+                            setShowQuickCatalogEditor(false);
+                            setSelectedScheduleCell(null);
                           }
                         })();
 

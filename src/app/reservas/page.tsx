@@ -26,6 +26,16 @@ const ROOM_RESOURCES: BookingResource[] = [];
 // Inventory integration: load groups and items from backend and map to BookingResource
 type InventoryGroup = { id: string; name: string; icon?: string; order?: number; itemCount?: number };
 type InventoryItem = { id: string; groupId: string; groupName: string; groupIcon?: string; name: string; code: string; room: string; status: string; defective: boolean; motivo?: string | null };
+type TelevisorReservationCandidate = {
+    id: string;
+    name: string;
+    code: string;
+    room: string;
+    roomTvCount: number;
+    priority: number;
+    note: string | null;
+    needsReturnReminder: boolean;
+};
 type ReservationFeedItem = {
     id: string;
     resourceType: ResourceType;
@@ -252,6 +262,9 @@ export default function ReservasPage() {
     const [requesterLookupMessage, setRequesterLookupMessage] = useState<string | null>(null);
     const [prefilledRequesterDocument, setPrefilledRequesterDocument] = useState<string>("");
     const [requesterStage, setRequesterStage] = useState<'id-only' | 'full'>('id-only');
+    const [televisorCandidates, setTelevisorCandidates] = useState<TelevisorReservationCandidate[]>([]);
+    const [televisorCandidatesMessage, setTelevisorCandidatesMessage] = useState<string | null>(null);
+    const [televisorCandidatesLoading, setTelevisorCandidatesLoading] = useState(false);
 
     const availableInventoryItems = useMemo(() => {
         const desiredDate = bookingDate;
@@ -282,10 +295,7 @@ export default function ReservasPage() {
     const authSession = useMemo(() => readAuthSession(), []);
     const canViewReservations = authSession?.role === "admin" || authSession?.role === "monitor";
 
-    const tvReservationItems = useMemo(() => availableInventoryItems.filter((item) => {
-        const groupName = item.groupName.trim().toLowerCase();
-        return groupName === "televisores";
-    }), [availableInventoryItems]);
+    const tvReservationItems = televisorCandidates;
 
     const equipmentGroupOptions = useMemo(
         () => inventoryGroups.filter((group) => group.name.trim().toLowerCase() !== "televisores"),
@@ -431,12 +441,67 @@ export default function ReservasPage() {
     }, [selectedGroupId, resourceType]);
 
     useEffect(() => {
+        if (resourceType === "televisor") {
+            const selectedIsValid = televisorCandidates.some((candidate) => candidate.id === selectedResourceId);
+            const nextSelectedId = selectedIsValid ? selectedResourceId : (televisorCandidates[0]?.id ?? "");
+
+            setSelectedResourceId(nextSelectedId);
+            setSelectedCardId(nextSelectedId || null);
+            return;
+        }
+
         setSelectedResourceId((current) => (visibleResources.some((resource) => resource.id === current) ? current : ""));
         setSelectedCardId((current) => (visibleResources.some((resource) => resource.id === current) ? current : null));
         if (!selectedDestinationRoomId && roomsCatalog.length > 0) {
             setSelectedDestinationRoomId(roomsCatalog[0].id);
         }
-    }, [resourceType, roomsCatalog, selectedDestinationRoomId, visibleResources]);
+    }, [resourceType, roomsCatalog, selectedDestinationRoomId, selectedResourceId, televisorCandidates, visibleResources]);
+
+    useEffect(() => {
+        if (resourceType !== "televisor") {
+            setTelevisorCandidates([]);
+            setTelevisorCandidatesMessage(null);
+            setTelevisorCandidatesLoading(false);
+            return;
+        }
+
+        let cancelled = false;
+
+        const loadTelevisorCandidates = async () => {
+            setTelevisorCandidatesLoading(true);
+            try {
+                const params = new URLSearchParams({ bookingDate, startTime, endTime });
+                const response = await fetchApiJson<{ candidates?: TelevisorReservationCandidate[]; recommendedResourceId?: string | null; message?: string }>(
+                    `/api/reservas/televisor-candidates?${params.toString()}`,
+                    { cache: "no-store" },
+                ).catch(() => ({ candidates: [], recommendedResourceId: null, message: null }));
+
+                if (cancelled) return;
+
+                const nextCandidates = response.candidates ?? [];
+                setTelevisorCandidates(nextCandidates);
+                setTelevisorCandidatesMessage(response.message ?? null);
+
+                setSelectedResourceId((current) => {
+                    if (nextCandidates.some((candidate) => candidate.id === current)) {
+                        return current;
+                    }
+
+                    return response.recommendedResourceId ?? nextCandidates[0]?.id ?? "";
+                });
+            } finally {
+                if (!cancelled) {
+                    setTelevisorCandidatesLoading(false);
+                }
+            }
+        };
+
+        void loadTelevisorCandidates();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [bookingDate, endTime, resourceType, startTime]);
 
     const selectedResource = useMemo(
         () => visibleResources.find((resource) => resource.id === selectedResourceId) ?? null,
@@ -451,6 +516,11 @@ export default function ReservasPage() {
     const selectedEquipmentResource = useMemo(
         () => inventoryItems.find((item) => item.id === selectedResourceId) ?? null,
         [inventoryItems, selectedResourceId],
+    );
+
+    const selectedTelevisorResource = useMemo(
+        () => televisorCandidates.find((candidate) => candidate.id === selectedResourceId) ?? null,
+        [selectedResourceId, televisorCandidates],
     );
 
     const selectedDestinationRoom = useMemo(
@@ -1015,6 +1085,18 @@ export default function ReservasPage() {
 
         
 
+        if (resourceType === "televisor") {
+            if (tvReservationItems.length === 0) {
+                setStatusMessage("No hay televisores disponibles por los conflictos de horario.");
+                return;
+            }
+
+            if (!selectedResourceId) {
+                setStatusMessage("Selecciona una pantalla válida de la lista para continuar.");
+                return;
+            }
+        }
+
         if (resourceType !== "televisor" && !selectedResourceId) {
             let message = "Debes seleccionar un recurso para continuar.";
 
@@ -1032,7 +1114,7 @@ export default function ReservasPage() {
                 if (tvReservationItems.length === 0) {
                     message = "No hay televisores disponibles en el intervalo horario seleccionado. Ajusta la hora o intenta con otro horario.";
                 } else {
-                    message = "El sistema asignará automáticamente un televisor disponible según el horario.";
+                    message = "Selecciona una pantalla válida de la lista o deja la sugerida por el sistema.";
                 }
             }
 
@@ -1080,7 +1162,7 @@ export default function ReservasPage() {
 
             const payload = {
                 resourceType,
-                resourceId: resourceType === "televisor" ? "AUTO" : selectedResourceId,
+                resourceId: resourceType === "televisor" ? (selectedResourceId || "AUTO") : selectedResourceId,
                 bookingDate,
                 startTime,
                 endTime,
@@ -1320,7 +1402,56 @@ export default function ReservasPage() {
                                         </div>
                                     </div>
 
-                                    
+                                    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                                        <p className="text-[10px] font-bold tracking-[0.24em] text-slate-500 uppercase">Selección manual</p>
+                                        <h3 className="mt-1 text-lg font-black text-slate-900">Pantalla sugerida y alternativas válidas</h3>
+
+                                        {televisorCandidatesLoading ? (
+                                            <div className="mt-3 rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">Cargando candidatos válidos...</div>
+                                        ) : tvReservationItems.length > 0 ? (
+                                            <div className="mt-3 space-y-3">
+                                                <div className="relative">
+                                                    <select
+                                                        value={selectedResourceId}
+                                                        onChange={(event) => {
+                                                            const nextId = event.target.value;
+                                                            setSelectedResourceId(nextId);
+                                                            setSelectedCardId(nextId || null);
+                                                        }}
+                                                        className="w-full appearance-none rounded-xl border border-slate-200 bg-white p-3 pr-10 text-sm text-slate-700 shadow-sm outline-none transition focus:border-[#3a5f94]"
+                                                    >
+                                                        {tvReservationItems.map((candidate) => (
+                                                            <option key={candidate.id} value={candidate.id}>
+                                                                {candidate.name} — {candidate.code} · {candidate.room}{candidate.roomTvCount >= 2 ? " · Preferido" : ""}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                    <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-slate-600">
+                                                        <span className="material-symbols-outlined">expand_more</span>
+                                                    </span>
+                                                </div>
+
+                                                {selectedTelevisorResource ? (
+                                                    <div className="rounded-xl border border-sky-100 bg-sky-50 p-4 text-sm text-sky-800">
+                                                        <p className="text-[10px] font-bold uppercase tracking-widest text-sky-600">Televisor seleccionado</p>
+                                                        <p className="mt-1 font-bold text-sky-900">{selectedTelevisorResource.name} — {selectedTelevisorResource.code}</p>
+                                                        <p className="mt-1">{selectedTelevisorResource.room}</p>
+                                                        {selectedTelevisorResource.note ? (
+                                                            <p className="mt-2 text-sm">{selectedTelevisorResource.note}</p>
+                                                        ) : null}
+                                                    </div>
+                                                ) : null}
+
+                                                {televisorCandidatesMessage ? (
+                                                    <p className="text-sm text-slate-600">{televisorCandidatesMessage}</p>
+                                                ) : null}
+                                            </div>
+                                        ) : (
+                                            <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+                                                No hay televisores disponibles por los conflictos de horario.
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
                             )}
                         </section>
