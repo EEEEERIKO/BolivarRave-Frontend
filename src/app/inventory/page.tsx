@@ -169,6 +169,7 @@ export default function InventoryPage() {
   const [defectiveReason, setDefectiveReason] = useState<string>("");
   const [modalError, setModalError] = useState<string | null>(null);
   const [isModalSubmitting, setIsModalSubmitting] = useState(false);
+  const [groupItemSearch, setGroupItemSearch] = useState<string>("");
   const [hdmiSearchQuery, setHdmiSearchQuery] = useState<string>("");
   const [hdmiAssignedLabel, setHdmiAssignedLabel] = useState<string>("");
   const [showHdmiSelector, setShowHdmiSelector] = useState(false);
@@ -266,11 +267,6 @@ export default function InventoryPage() {
 
   const orderedInventoryGroups = useMemo(() => sortInventoryGroups(inventoryGroups), [inventoryGroups]);
 
-  const equipmentGroupOptions = useMemo(
-    () => orderedInventoryGroups.filter((group) => group.name.trim().toLowerCase() !== "televisores"),
-    [orderedInventoryGroups],
-  );
-
   const selectedGroup = useMemo(
     () => orderedInventoryGroups.find((group) => group.id === selectedGroupId) ?? orderedInventoryGroups[0] ?? null,
     [orderedInventoryGroups, selectedGroupId],
@@ -307,6 +303,19 @@ export default function InventoryPage() {
     },
     [inventoryItems, selectedGroup],
   );
+
+  const filteredSelectedItems = useMemo(() => {
+    const query = groupItemSearch.trim().toLowerCase();
+
+    if (!query) {
+      return selectedItems;
+    }
+
+    return selectedItems.filter((item) => {
+      const searchBlob = [item.name, item.code, item.room, item.groupName].join(" ").toLowerCase();
+      return searchBlob.includes(query);
+    });
+  }, [groupItemSearch, selectedItems]);
 
   const selectedGroupItemCount = useMemo(
     () => selectedGroup?.itemCount ?? selectedItems.length,
@@ -388,6 +397,7 @@ export default function InventoryPage() {
     setModalError(null);
     setIsModalSubmitting(false);
     setDefectiveReason("");
+    setGroupItemSearch("");
     setHdmiSearchQuery("");
     setShowCreateHdmiModal(false);
     setShowHdmiSelector(false);
@@ -873,6 +883,20 @@ export default function InventoryPage() {
           <div className="xl:col-span-2">
             <div className="mb-3 flex items-center justify-between gap-2">
               <h4 className="text-sm font-bold text-[#2a3439]">Lista de Elementos</h4>
+              <div className="w-full max-w-xs">
+                <label className="sr-only" htmlFor="inventory-group-item-search">Buscar dentro del grupo</label>
+                <div className="relative">
+                  <input
+                    id="inventory-group-item-search"
+                    type="text"
+                    value={groupItemSearch}
+                    onChange={(event) => setGroupItemSearch(event.target.value)}
+                    placeholder="Buscar por nombre, código o salón"
+                    className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 pl-9 text-xs text-[#2a3439] outline-none transition focus:border-[#3a5f94]"
+                  />
+                  <span className="material-symbols-outlined pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[18px] text-slate-400">search</span>
+                </div>
+              </div>
               {canManageInventory && selectedGroup ? (
                 <button className="rounded-md border border-[#3a5f94] bg-[#3a5f94] px-3 py-1.5 text-xs font-bold text-white hover:bg-[#2f4f7a]" type="button" onClick={createItem}>
                   Nuevo elemento
@@ -881,10 +905,10 @@ export default function InventoryPage() {
             </div>
             {isLoadingInventory ? (
               <p className="text-xs text-[#566166]">Cargando inventario...</p>
-            ) : selectedItems.length > 0 ? (
+            ) : filteredSelectedItems.length > 0 ? (
               (() => {
-                const monitoria = selectedItems.filter((item) => item.room.toLowerCase().includes("monitoría") || item.room.toLowerCase().includes("monitorio"));
-                const salones = selectedItems.filter((item) => !item.room.toLowerCase().includes("monitoría") && !item.room.toLowerCase().includes("monitorio"));
+                const monitoria = filteredSelectedItems.filter((item) => item.room.toLowerCase().includes("monitoría") || item.room.toLowerCase().includes("monitorio"));
+                const salones = filteredSelectedItems.filter((item) => !item.room.toLowerCase().includes("monitoría") && !item.room.toLowerCase().includes("monitorio"));
 
                 return (
                   <div className="space-y-8">
@@ -1138,7 +1162,7 @@ export default function InventoryPage() {
                 );
               })()
             ) : (
-              <p className="text-xs text-[#566166]">No hay elementos para este grupo.</p>
+              <p className="text-xs text-[#566166]">No hay elementos para este grupo con ese filtro.</p>
             )}
           </div>
         </div>
@@ -1278,7 +1302,7 @@ export default function InventoryPage() {
                         onChange={(event) => setItemForm((current) => ({ ...current, groupId: event.target.value }))}
                         value={itemForm.groupId}
                       >
-                        {equipmentGroupOptions.map((group) => (
+                        {orderedInventoryGroups.map((group) => (
                           <option key={group.id} value={group.id}>
                             {group.name}
                           </option>
@@ -1375,15 +1399,20 @@ export default function InventoryPage() {
                     
                     if (!isTV) return null;
                     
-                    const filteredHdmis = hdmiItems.filter((h) => 
-                      h.name.toLowerCase().includes(hdmiSearchQuery.toLowerCase()) || 
-                      h.code.toLowerCase().includes(hdmiSearchQuery.toLowerCase())
-                    );
+                    const filteredHdmis = hdmiItems.filter((h) => {
+                      const query = hdmiSearchQuery.toLowerCase();
+                      return (
+                        h.name.toLowerCase().includes(query) ||
+                        h.code.toLowerCase().includes(query) ||
+                        h.room.toLowerCase().includes(query)
+                      );
+                    });
                     const normalizedHdmiQuery = hdmiSearchQuery.trim().toLowerCase();
                     const exactHdmiMatch = normalizedHdmiQuery.length > 0 && hdmiItems.some((h) => {
                       const name = h.name.trim().toLowerCase();
                       const code = h.code.trim().toLowerCase();
-                      return name === normalizedHdmiQuery || code === normalizedHdmiQuery;
+                      const room = h.room.trim().toLowerCase();
+                      return name === normalizedHdmiQuery || code === normalizedHdmiQuery || room === normalizedHdmiQuery;
                     });
                     
                     const selectedHdmi = itemForm.hdmiItemId ? inventoryItems.find((h) => h.id === itemForm.hdmiItemId) : null;
@@ -1408,7 +1437,7 @@ export default function InventoryPage() {
                               <input
                                 type="text"
                                 className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm text-[#2a3439] outline-none transition focus:border-[#3a5f94]"
-                                placeholder="Buscar HDMI por nombre o código..."
+                                placeholder="Buscar HDMI por nombre, código o salón..."
                                 value={selectedHdmi ? `${selectedHdmi.name} — ${selectedHdmi.code}` : hdmiSearchQuery || hdmiAssignedLabel}
                                 onChange={(e) => {
                                   if (selectedHdmi) {
