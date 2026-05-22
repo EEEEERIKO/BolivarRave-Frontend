@@ -3,6 +3,7 @@
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import toast from "react-hot-toast";
 import { fetchApiJson } from "@/lib/api-client";
+import { readAuthSession } from "@/lib/auth-session";
 import { confirmToast } from "@/lib/toast-dialog";
 
 type TaskType = "Recurrente" | "Esporadica";
@@ -867,6 +868,11 @@ function summarizeWorkerPreviewSegments(
 }
 
 export default function TasksPage() {
+  const authSession = useMemo(() => readAuthSession(), []);
+  const isLimitedTaskAccess = authSession?.role === "monitor" || authSession?.role === "colaborador";
+  const canEditTaskSchedule = authSession?.role === "admin";
+  const currentStaffIdentifier = authSession?.staffId ?? authSession?.cedula ?? null;
+
   const [catalog, setCatalog] = useState<TaskCatalogItem[]>([]);
   const [instances, setInstances] = useState<TaskInstanceItem[]>([]);
   const [skills, setSkills] = useState<SkillItem[]>([]);
@@ -908,7 +914,7 @@ export default function TasksPage() {
   const [requirementDraft, setRequirementDraft] = useState("");
   const [scheduleManualRequirementDraft, setScheduleManualRequirementDraft] = useState("");
   const [selectedCatalogLocations, setSelectedCatalogLocations] = useState<string[]>([]);
-  const [tasksSubtab, setTasksSubtab] = useState<TasksSubtab>("gestion");
+  const [tasksSubtab, setTasksSubtab] = useState<TasksSubtab>("horario");
   const [catalogSearchQuery, setCatalogSearchQuery] = useState("");
   const [catalogTypeFilter, setCatalogTypeFilter] = useState<TaskType | "todos">("todos");
   const [catalogSectorFilter, setCatalogSectorFilter] = useState("todos");
@@ -932,6 +938,21 @@ export default function TasksPage() {
     horaFinalizacion: "09:00",
     tiempoEstimadoMin: "25",
   });
+
+  const visibleStaff = useMemo(() => {
+    if (!isLimitedTaskAccess) {
+      return staff;
+    }
+
+    return staff.filter((person) => {
+      if (currentStaffIdentifier && person.id === currentStaffIdentifier) {
+        return true;
+      }
+
+      return authSession?.cedula ? person.cedula === authSession.cedula : false;
+    });
+  }, [authSession?.cedula, currentStaffIdentifier, isLimitedTaskAccess, staff]);
+
   const [instanceForm, setInstanceForm] = useState<InstanceFormState>({
     tareaCatalogoId: "",
     salonId: "",
@@ -1273,7 +1294,7 @@ export default function TasksPage() {
       tasksByStaffId.set(staffId, bucket);
     });
 
-    const baseWorkers = staff
+    const baseWorkers = visibleStaff
       .filter(
         (person) =>
           tasksByStaffId.has(person.id) ||
@@ -1327,7 +1348,7 @@ export default function TasksPage() {
         .filter((worker) => worker.shiftId === shift.id)
         .sort((a, b) => staffLabel(a.staff).localeCompare(staffLabel(b.staff), "es")),
     }));
-  }, [allAssignedCatalogTasks, assignedInstanceTasks, staff, staffJornadasByStaffId]);
+  }, [allAssignedCatalogTasks, assignedInstanceTasks, staffJornadasByStaffId, staffPausasByStaffId, visibleStaff]);
 
   const previewStaffCount = useMemo(() => {
     const uniqueIds = new Set<string>();
@@ -1364,6 +1385,18 @@ export default function TasksPage() {
 
     return uniqueIds.size;
   }, [filteredSchedulePreviewByShift]);
+
+  useEffect(() => {
+    if (isLimitedTaskAccess && tasksSubtab !== "horario") {
+      setTasksSubtab("horario");
+    }
+  }, [isLimitedTaskAccess, tasksSubtab]);
+
+  useEffect(() => {
+    if (isLimitedTaskAccess) {
+      setSelectedScheduleCell(null);
+    }
+  }, [isLimitedTaskAccess]);
 
   const loadData = async (options?: { preserveNotice?: boolean }) => {
     const preserveNotice = options?.preserveNotice ?? false;
@@ -1772,10 +1805,7 @@ export default function TasksPage() {
         habilidadesRequeridasIds: catalogForm.habilidadesRequeridasIds,
         requerimientos: catalogForm.requerimientos,
         staffAsignadosIds: effectiveStaffIds,
-        diasSemana:
-          (catalogForm.tipo || DEFAULT_CATALOG_TASK_TYPE) === "Recurrente" && catalogForm.programacionRecurrente === "programada"
-            ? catalogForm.diasSemana
-            : [],
+        diasSemana: Array.from(new Set(catalogForm.diasSemana)).sort((left, right) => left - right),
         horaProgramada:
           (catalogForm.tipo || DEFAULT_CATALOG_TASK_TYPE) === "Recurrente" && catalogForm.programacionRecurrente === "programada"
             ? catalogForm.horaProgramada
@@ -1790,51 +1820,8 @@ export default function TasksPage() {
       };
 
       let createdCount = 1;
-      
-      // When editing from schedule cell, create a new catalog copy and assign to staff instead of updating the global catalog
-      if (isEditing && editingCatalogId && selectedScheduleCell?.isEditing) {
-        // Create a new catalog task from the modified form
-        const createdCatalogResponse = await fetchApiJson<{ message: string; ids: string[] }>("/api/tasks/catalog", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            ...basePayload,
-            sector: catalogForm.sector.trim(),
-          }),
-        });
-        
-        const newCatalogId = createdCatalogResponse.ids?.[0];
-        if (!newCatalogId) {
-          throw new Error("No se pudo crear la tarea del catálogo.");
-        }
-        
-        // If there's a selected schedule cell, also create an instance and assign to that staff
-        if (selectedScheduleCell?.staffId) {
-          const fechaProgramada = getDateForWeekday(selectedScheduleCell.dayIndex);
-          const instanceResponse = await fetchApiJson<{ message: string; id: string }>("/api/tasks/instances", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              tareaCatalogoId: newCatalogId,
-              salonId: null,
-              detalleAdicional: null,
-              prioridad: "Media",
-              fechaProgramada,
-              horaProgramada: minutesToHHMM(selectedScheduleCell.slotStart),
-              asignacionAutomatica: false,
-            }),
-          });
-          
-          await fetchApiJson<{ message: string; asignacionId: string }>("/api/tasks/assignments", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              tareaInstanciaId: instanceResponse.id,
-              staffId: selectedScheduleCell.staffId,
-            }),
-          });
-        }
-      } else if (isEditing && editingCatalogId) {
+
+      if (isEditing && editingCatalogId) {
         await fetchApiJson<{ message: string; id: string }>(`/api/tasks/catalog/${editingCatalogId}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
@@ -1982,7 +1969,7 @@ export default function TasksPage() {
       habilidadesRequeridasIds: task.habilidadesRequeridasIds,
       requerimientos: task.requerimientos,
       staffAsignadosIds: task.staffAsignadosIds,
-      diasSemana: task.diasSemana,
+      diasSemana: [...task.diasSemana],
       horaProgramada: task.horaProgramada ?? "08:00",
       fechaEsporadica: task.fechaEsporadica ?? new Date().toISOString().slice(0, 10),
       horaEsporadica: task.horaEsporadica ?? "08:00",
@@ -2057,9 +2044,13 @@ export default function TasksPage() {
 
   const removeScheduleTask = async (task: ScheduleTaskItem, staffId: string) => {
     const taskInstance = instances.find((item) => item.id === task.id);
+    const taskCatalogId = taskInstance?.tareaCatalogoId ?? task.id;
+    const shouldDeleteLinkedCatalog = task.tipo === "Recurrente" && task.diasSemana.length > 0;
     const confirmMessage = taskInstance?.asignacionId
       ? "¿Estás seguro de que deseas quitar esta asignación del horario?"
-      : "¿Estás seguro de que deseas quitar esta tarea predefinida de este trabajador?";
+      : shouldDeleteLinkedCatalog
+        ? "¿Estás seguro de que deseas eliminar esta tarea recurrente y todos sus días vinculados?"
+        : "¿Estás seguro de que deseas quitar esta tarea predefinida de este trabajador?";
 
     if (!(await confirmToast(confirmMessage, {
       title: "Quitar tarea",
@@ -2075,8 +2066,12 @@ export default function TasksPage() {
         await fetchApiJson<{ message: string; asignacionId: string; tareaInstanciaId: string }>(`/api/tasks/assignments/${taskInstance.asignacionId}`, {
           method: "DELETE",
         });
+      } else if (shouldDeleteLinkedCatalog) {
+        await fetchApiJson<{ message: string; id: string }>(`/api/tasks/catalog/${taskCatalogId}`, {
+          method: "DELETE",
+        });
       } else {
-        await fetchApiJson<{ message: string; tareaCatalogoId: string; staffId: string }>(`/api/tasks/catalog/${task.id}/staff/${staffId}`, {
+        await fetchApiJson<{ message: string; tareaCatalogoId: string; staffId: string }>(`/api/tasks/catalog/${taskCatalogId}/staff/${staffId}`, {
           method: "DELETE",
         });
       }
@@ -2202,12 +2197,13 @@ export default function TasksPage() {
   } as const;
   const primaryButtonClass =
     "inline-flex items-center gap-2 rounded-md bg-[#3a5f94] px-4 py-2 text-[11px] font-bold tracking-[0.24em] text-white uppercase transition-transform hover:brightness-110 disabled:opacity-60";
+  const visibleTaskSubtabs: TasksSubtab[] = isLimitedTaskAccess ? ["horario"] : ["horario", "tareas-creadas", "lugares"];
 
   return (
     <main className="min-h-screen bg-background text-on-surface">
       <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-5 px-4 py-6 sm:px-6 lg:px-8">
         <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
-          <div className="flex flex-col gap-4 bg-[linear-gradient(180deg,#f7f9fb_0%,#eef3f8_100%)] px-5 py-4 sm:px-6 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex flex-col gap-2 bg-[linear-gradient(180deg,#f7f9fb_0%,#eef3f8_100%)] px-5 py-4 sm:px-6">
             <div className="max-w-3xl space-y-1">
               <p className="text-[9px] font-black tracking-[0.34em] text-slate-500 uppercase">Inteligencia Institucional</p>
               <h1 className="text-2xl font-black tracking-tight text-slate-900 sm:text-3xl">Centro de Control de Tareas</h1>
@@ -2215,113 +2211,26 @@ export default function TasksPage() {
                 Tareas reales, habilidades reales y revisiones trazables.
               </p>
             </div>
-
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:min-w-[480px]">
-              {[
-                { label: "Catalogo", value: catalog.length, tone: "bg-white/12" },
-                { label: "Instancias", value: instances.length, tone: "bg-white/12" },
-                { label: "Pendientes", value: pendingInstances.length, tone: "bg-white/12" },
-                { label: "Revision", value: reviewableCount, tone: "bg-white/12" },
-              ].map((item) => (
-                <div key={item.label} className="rounded-lg border border-slate-200 bg-white px-3 py-2 shadow-[0_10px_30px_rgba(42,52,57,0.06)]">
-                  <p className="text-[9px] font-bold tracking-[0.26em] text-slate-500 uppercase">{item.label}</p>
-                  <p className="mt-1 text-xl font-black text-slate-900">{item.value}</p>
-                  <div className="mt-2 h-1 rounded-full bg-slate-100">
-                    <div className="h-full rounded-full bg-[#3a5f94]" style={{ width: `${Math.max(20, Math.min(100, item.value * 18))}%` }} />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2 border-t border-slate-200 px-5 py-3 sm:px-6">
-            <div className="rounded-md bg-slate-100 px-3 py-1 text-[10px] font-semibold text-slate-600">
-              {staff.filter((person) => eligibleStaffIds.has(person.id)).length} staff compatibles · {linkedSkillsCount} vinculaciones activas
-            </div>
-            {refreshing ? (
-              <div className="rounded-md bg-[#3a5f94]/10 px-3 py-1 text-[10px] font-semibold text-[#3a5f94]">
-                Actualizando datos...
-              </div>
-            ) : null}
-            {notice ? (
-              <div className={`rounded-md px-3 py-1 text-[10px] font-semibold ${notice.kind === "success" ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"}`}>
-                {notice.text}
-              </div>
-            ) : null}
           </div>
         </section>
 
         <section className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-[0_10px_30px_rgba(42,52,57,0.06)] sm:px-5">
           <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setTasksSubtab("gestion")}
-              className={`rounded-md px-4 py-2 text-[11px] font-bold tracking-[0.18em] uppercase transition ${
-                tasksSubtab === "gestion"
-                  ? "bg-[#3a5f94] text-white shadow-sm"
-                  : "border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100"
-              }`}
-            >
-              Gestión
-            </button>
-            <button
-              type="button"
-              onClick={() => setTasksSubtab("tareas-creadas")}
-              className={`rounded-md px-4 py-2 text-[11px] font-bold tracking-[0.18em] uppercase transition ${
-                tasksSubtab === "tareas-creadas"
-                  ? "bg-[#3a5f94] text-white shadow-sm"
-                  : "border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100"
-              }`}
-            >
-              Tareas Creadas
-            </button>
-            <button
-              type="button"
-              onClick={() => setTasksSubtab("tareas-asignadas")}
-              className={`rounded-md px-4 py-2 text-[11px] font-bold tracking-[0.18em] uppercase transition ${
-                tasksSubtab === "tareas-asignadas"
-                  ? "bg-[#3a5f94] text-white shadow-sm"
-                  : "border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100"
-              }`}
-            >
-              Tareas Asignadas
-            </button>
-            <button
-              type="button"
-              onClick={() => setTasksSubtab("horario")}
-              className={`rounded-md px-4 py-2 text-[11px] font-bold tracking-[0.18em] uppercase transition ${
-                tasksSubtab === "horario"
-                  ? "bg-[#3a5f94] text-white shadow-sm"
-                  : "border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100"
-              }`}
-            >
-              Horario
-            </button>
-            <button
-              type="button"
-              onClick={() => setTasksSubtab("habilidades")}
-              className={`rounded-md px-4 py-2 text-[11px] font-bold tracking-[0.18em] uppercase transition ${
-                tasksSubtab === "habilidades"
-                  ? "bg-[#3a5f94] text-white shadow-sm"
-                  : "border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100"
-              }`}
-            >
-              Habilidades
-            </button>
-            <button
-              type="button"
-              onClick={() => setTasksSubtab("lugares")}
-              className={`rounded-md px-4 py-2 text-[11px] font-bold tracking-[0.18em] uppercase transition ${
-                tasksSubtab === "lugares"
-                  ? "bg-[#3a5f94] text-white shadow-sm"
-                  : "border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100"
-              }`}
-            >
-              Lugares
-            </button>
-            <span className="ml-auto rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-600">
-              {filteredCatalog.length} visibles de {catalog.length}
-            </span>
+            {visibleTaskSubtabs.map((subtab) => (
+              <button
+                key={subtab}
+                type="button"
+                onClick={() => setTasksSubtab(subtab)}
+                className={`rounded-md px-4 py-2 text-[11px] font-bold tracking-[0.18em] uppercase transition ${
+                  tasksSubtab === subtab
+                    ? "bg-[#3a5f94] text-white shadow-sm"
+                    : "border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100"
+                }`}
+              >
+                {subtab === "horario" ? "Horario" : subtab === "tareas-creadas" ? "Tareas Creadas" : "Lugares"}
+              </button>
+            ))}
+
           </div>
         </section>
 
@@ -2689,12 +2598,13 @@ export default function TasksPage() {
                                 checked={catalogForm.diasSemana.includes(dayIndex)}
                                 onChange={(event) => {
                                   const enabled = event.target.checked;
-                                  setCatalogForm((current) => ({
-                                    ...current,
-                                    diasSemana: enabled
-                                      ? [...current.diasSemana, dayIndex].sort((a, b) => a - b)
-                                      : current.diasSemana.filter((day) => day !== dayIndex),
-                                  }));
+                                  setCatalogForm((current) => {
+                                    const nextDays = enabled
+                                      ? Array.from(new Set([...current.diasSemana, dayIndex])).sort((left, right) => left - right)
+                                      : current.diasSemana.filter((day) => day !== dayIndex);
+
+                                    return { ...current, diasSemana: nextDays };
+                                  });
                                 }}
                                 className="h-4 w-4 rounded border-slate-300 text-slate-900"
                               />
@@ -3423,9 +3333,12 @@ export default function TasksPage() {
         <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-[0_10px_30px_rgba(42,52,57,0.06)] sm:p-5">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <p className="text-[9px] font-bold tracking-[0.24em] text-slate-500 uppercase">Previsualización tipo CSV</p>
-              <h3 className="mt-0.5 text-sm font-black text-slate-900">Horario alimentado con tareas</h3>
+              <p className="text-[9px] font-bold tracking-[0.24em] text-slate-500 uppercase">Previsualización tipo EXCEL</p>
+              <h3 className="mt-0.5 text-sm font-black text-slate-900">Horario con tareas asignadas</h3>
               <p className="mt-1 text-[11px] text-slate-500">Los trabajadores se agrupan por mañana, tarde y noche. Los huecos libres se marcan como DISPONIBLE.</p>
+              {isLimitedTaskAccess ? (
+                <p className="mt-1 text-[11px] font-semibold text-slate-500">Vista de solo lectura para tu usuario.</p>
+              ) : null}
             </div>
             <div className="flex w-full flex-col gap-2 sm:w-auto sm:items-end">
               <label className="w-full sm:w-72">
@@ -3445,6 +3358,11 @@ export default function TasksPage() {
           </div>
 
           <div className="mt-4 space-y-4">
+            {isLimitedTaskAccess && visibleStaff.length === 0 ? (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                No se encontró el usuario asociado a tu sesión para mostrar su horario.
+              </div>
+            ) : null}
             {filteredSchedulePreviewByShift.map((shiftGroup) => (
               <section key={shiftGroup.id} className="rounded-xl border border-slate-200 bg-slate-50 shadow-sm">
                 <div className="flex items-center justify-between gap-2 px-4 py-3">
@@ -3557,7 +3475,7 @@ export default function TasksPage() {
                                                   <td
                                                     key={`${worker.staff.id}-${shiftGroup.id}-${segmentIndex}-${dayIndex}-${slotStart}`}
                                                     onClick={() => {
-                                                      if (isClickable) {
+                                                        if (canEditTaskSchedule && isClickable) {
                                                         setSelectedScheduleCell({
                                                           staffId: worker.staff.id,
                                                           dayIndex,
@@ -3566,8 +3484,8 @@ export default function TasksPage() {
                                                         });
                                                       }
                                                     }}
-                                                    className={`border-b border-r border-slate-200 px-2 py-2 align-top last:border-r-0 transition-colors ${
-                                                      isClickable ? "cursor-pointer hover:brightness-95" : ""
+                                                      className={`border-b border-r border-slate-200 px-2 py-2 align-top last:border-r-0 transition-colors ${
+                                                        canEditTaskSchedule && isClickable ? "cursor-pointer hover:brightness-95" : "cursor-default"
                                                     } ${
                                                       cell.status === "off"
                                                         ? "bg-slate-100 text-slate-400"
@@ -3609,7 +3527,7 @@ export default function TasksPage() {
         </section>
         ) : null}
 
-        {tasksSubtab === "horario" && selectedScheduleCell ? (
+        {tasksSubtab === "horario" && selectedScheduleCell && canEditTaskSchedule ? (
         <div className="fixed bottom-0 right-0 top-0 z-40 w-full max-w-md overflow-y-auto border-l border-slate-200 bg-white shadow-xl">
           {(() => {
             const selectedWorker = filteredSchedulePreviewByShift
@@ -3917,7 +3835,7 @@ export default function TasksPage() {
                             beginEditCatalog(task, {
                               cantidadPersonal: "1",
                               horaProgramada: minutesToHHMM(slotStart),
-                              diasSemana: [dayIndex],
+                              diasSemana: task.diasSemana.length > 0 ? task.diasSemana : [dayIndex],
                             });
 
                             // Show quick editor and open the editing panel for this schedule cell
@@ -4377,10 +4295,14 @@ export default function TasksPage() {
                                 type="checkbox"
                                 checked={catalogForm.diasSemana.includes(idx)}
                                 onChange={(e) => {
-                                  const newDays = e.target.checked
-                                    ? [...catalogForm.diasSemana, idx]
-                                    : catalogForm.diasSemana.filter((d) => d !== idx);
-                                  setCatalogForm((c) => ({ ...c, diasSemana: newDays }));
+                                  const enabled = e.target.checked;
+                                  setCatalogForm((current) => {
+                                    const nextDays = enabled
+                                      ? Array.from(new Set([...current.diasSemana, idx])).sort((left, right) => left - right)
+                                      : current.diasSemana.filter((day) => day !== idx);
+
+                                    return { ...current, diasSemana: nextDays };
+                                  });
                                 }}
                                 className="rounded border-slate-200"
                               />
@@ -4478,7 +4400,7 @@ export default function TasksPage() {
                           beginEditCatalog(taskCatalog, {
                             cantidadPersonal: "1",
                             horaProgramada: minutesToHHMM(slotStart),
-                            diasSemana: [selectedScheduleCell.dayIndex],
+                            diasSemana: taskCatalog.diasSemana.length > 0 ? taskCatalog.diasSemana : [selectedScheduleCell.dayIndex],
                           });
                           setShowQuickCatalogEditor(true);
                           setSelectedScheduleCell((current) => (current ? { ...current, isEditing: true } : null));

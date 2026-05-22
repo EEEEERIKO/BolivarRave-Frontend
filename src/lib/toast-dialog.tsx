@@ -33,7 +33,7 @@ export function confirmToast(message: string, options?: ConfirmToastOptions): Pr
   return new Promise((resolve) => {
     function Modal() {
       return (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/50 px-4 py-6 backdrop-blur-sm">
+        <div style={{ zIndex: 2147483647 }} className="fixed inset-0 flex items-center justify-center bg-slate-950/50 px-4 py-6 backdrop-blur-sm">
           <div className="w-[calc(100vw-2rem)] max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl dark:border-slate-800 dark:bg-slate-900">
             <div className="flex items-start gap-3">
               <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
@@ -81,7 +81,7 @@ export function promptToast(message: string, options?: PromptToastOptions): Prom
     function Prompt() {
       const [value, setValue] = useState(options?.defaultValue ?? "");
       return (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/50 px-4 py-6 backdrop-blur-sm">
+        <div style={{ zIndex: 2147483647 }} className="fixed inset-0 flex items-center justify-center bg-slate-950/50 px-4 py-6 backdrop-blur-sm">
           <div className="w-[calc(100vw-2rem)] max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl dark:border-slate-800 dark:bg-slate-900">
             <div className="flex items-start gap-3">
               <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300">

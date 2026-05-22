@@ -29,8 +29,18 @@ function ConfirmReservationContent() {
 
         if (!resp.ok) {
           const body = await resp.json().catch(() => null);
+          const errorText = (body && body.error) || `Error en la confirmación (${resp.status})`;
+
+          // If the server indicates the reservation was already confirmed,
+          // treat it as a successful outcome (idempotent) and show a friendly message.
+          if (String(errorText).toLowerCase().includes("ya fue confirmada") || String(errorText).toLowerCase().includes("ya estaba confirmada") || resp.status === 409) {
+            setStatus("success");
+            setMessage(errorText);
+            return;
+          }
+
           setStatus("error");
-          setMessage((body && body.error) || `Error en la confirmación (${resp.status})`);
+          setMessage(errorText);
           return;
         }
 
@@ -62,7 +72,8 @@ function ConfirmReservationContent() {
           </div>
         )}
 
-        {status === "success" && reservation && (
+        {status === "success" && (
+          reservation ? (
           <div className="rounded-2xl border border-[#e6eef7] bg-white p-8 shadow-lg">
             <div className="flex items-center justify-center gap-4">
               <img src="/logo.png" alt="UNAC Bolivar Logo" className="h-14 w-14 rounded-lg bg-white p-1" />
@@ -108,6 +119,29 @@ function ConfirmReservationContent() {
               <a href="/" className="inline-block rounded-xl bg-[#3a5f94] px-6 py-3 text-sm font-bold text-white transition hover:bg-[#2d5387]">Volver al Inicio</a>
             </div>
           </div>
+          ) : (
+            <div className="rounded-2xl border border-[#e6eef7] bg-white p-8 shadow-lg">
+              <div className="flex items-center justify-center gap-4">
+                <img src="/logo.png" alt="UNAC Bolivar Logo" className="h-14 w-14 rounded-lg bg-white p-1" />
+                <div className="text-left">
+                  <div className="text-xs font-bold uppercase text-slate-500">UNAC</div>
+                  <div className="text-lg font-extrabold text-[#295786]">Administración del Edificio Bolivar Rave</div>
+                </div>
+              </div>
+
+              <div className="mt-6 text-center">
+                <div className="inline-flex items-center justify-center rounded-full bg-emerald-50 p-3">
+                  <span className="material-symbols-outlined text-3xl text-emerald-600">check_circle</span>
+                </div>
+                <h1 className="mt-4 text-3xl font-black text-[#1f2937]">¡Reserva Confirmada!</h1>
+                <p className="mt-2 text-sm text-slate-600">{message}</p>
+              </div>
+
+              <div className="mt-6 flex justify-center">
+                <a href="/" className="inline-block rounded-xl bg-[#3a5f94] px-6 py-3 text-sm font-bold text-white transition hover:bg-[#2d5387]">Volver al Inicio</a>
+              </div>
+            </div>
+          )
         )}
 
         {status === "error" && (

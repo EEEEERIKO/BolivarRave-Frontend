@@ -904,6 +904,21 @@ export default function ExcelImportPage() {
     return keys;
   }, [rowsByClassKey, existingRowsByClassKey]);
 
+  const visibleReviewClasses = useMemo(
+    () => reviewClasses.filter((item) => !unchangedClassKeys.has(item.key)),
+    [reviewClasses, unchangedClassKeys]
+  );
+
+  const visibleConflictClasses = useMemo(
+    () => visibleReviewClasses.filter((item) => item.conflicts.length > 0),
+    [visibleReviewClasses]
+  );
+
+  const visibleNonConflictClasses = useMemo(
+    () => visibleReviewClasses.filter((item) => item.conflicts.length === 0),
+    [visibleReviewClasses]
+  );
+
   const changedClassKeys = useMemo(() => {
     const keys = new Set<string>();
 
@@ -943,10 +958,7 @@ export default function ExcelImportPage() {
     });
   }, [deletedReviewClasses]);
 
-  const actionableReviewClasses = useMemo(
-    () => reviewClasses.filter((item) => !unchangedClassKeys.has(item.key)),
-    [reviewClasses, unchangedClassKeys]
-  );
+  const actionableReviewClasses = visibleReviewClasses;
 
   const effectiveImportClassCount = useMemo(
     () =>
@@ -976,12 +988,12 @@ export default function ExcelImportPage() {
   const canConfirmImport =
     !isImporting &&
     ((manualMode && hasAnalyzed && manualRows.length > 0) ||
-      (hasAnalyzed && hasEffectiveChanges && pendingConflictCount === 0 && pendingDeletedCount === 0));
+      (hasAnalyzed && hasEffectiveChanges && visibleConflictClasses.filter((item) => item.decision === "pending").length === 0 && pendingDeletedCount === 0));
 
   const orderedPreviewRows = useMemo(() => {
     // Keep conflicts grouped first but stable in-place so rows do not "disappear" on decision click.
-    return [...conflictClasses, ...nonConflictClasses].filter((item) => !unchangedClassKeys.has(item.key));
-  }, [conflictClasses, nonConflictClasses, unchangedClassKeys]);
+    return [...visibleConflictClasses, ...visibleNonConflictClasses];
+  }, [visibleConflictClasses, visibleNonConflictClasses]);
 
   const previewRows = useMemo<PreviewRow[]>(
     () => [
@@ -1952,13 +1964,13 @@ export default function ExcelImportPage() {
               </div>
             ) : null}
 
-            {hasAnalyzed && (conflictClasses.length > 0 || pendingDeletedCount > 0) ? (
+            {hasAnalyzed && (visibleConflictClasses.length > 0 || pendingDeletedCount > 0) ? (
               <p className="max-w-lg text-center text-sm text-amber-700">
-                Debes revisar {pendingConflictCount} conflictos y {pendingDeletedCount} clases no encontradas en el Excel antes de continuar.
+                Debes revisar {visibleConflictClasses.filter((item) => item.decision === "pending").length} conflictos y {pendingDeletedCount} clases no encontradas en el Excel antes de continuar.
               </p>
             ) : null}
 
-            {hasAnalyzed && conflictClasses.length === 0 && pendingDeletedCount === 0 ? (
+            {hasAnalyzed && visibleConflictClasses.length === 0 && pendingDeletedCount === 0 ? (
               <p className="max-w-lg text-center text-sm text-green-700">Sin conflictos ni eliminaciones pendientes.</p>
             ) : null}
 

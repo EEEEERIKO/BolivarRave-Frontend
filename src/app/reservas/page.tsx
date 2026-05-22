@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { readAuthSession } from "@/lib/auth-session";
 import { fetchApiJson } from "@/lib/api-client";
 import toast from "react-hot-toast";
 import { confirmToast, promptToast } from "@/lib/toast-dialog";
 
-type ResourceType = "rooms" | "equipment";
+type ResourceType = "rooms" | "equipment" | "televisor";
 
 type BookingResource = {
     id: string;
@@ -144,7 +144,9 @@ function resourceLabel(resource: BookingResource) {
 }
 
 function resourceTypeLabel(type: ResourceType) {
-    return type === "rooms" ? "Clases de Sábado" : "Equipos";
+    if (type === "rooms") return "Clases de Sábado";
+    if (type === "televisor") return "Televisor";
+    return "Equipos";
 }
 
 function normalizeDocumentNumber(value: string) {
@@ -191,6 +193,24 @@ function getReservationDateTimeValue(reservation: ReservationFeedItem) {
     return Number.isFinite(parsed) ? parsed : Date.parse(reservation.createdAt);
 }
 
+function hasFreshPendingReservation(reservations: ReservationFeedItem[], maxAgeSeconds = 90) {
+    const now = Date.now();
+
+    return reservations.some((reservation) => {
+        const statusLower = reservation.status.toLowerCase();
+        if (statusLower !== "no_aceptado") {
+            return false;
+        }
+
+        const createdAtMs = Date.parse(reservation.createdAt);
+        if (!Number.isFinite(createdAtMs)) {
+            return true;
+        }
+
+        return now - createdAtMs <= maxAgeSeconds * 1000;
+    });
+}
+
 function normalizeSearchText(value: string) {
     return value.trim().toLowerCase();
 }
@@ -198,7 +218,7 @@ function normalizeSearchText(value: string) {
 export default function ReservasPage() {
     const todayKey = useMemo(() => getBogotaTodayKey(), []);
     const defaultBookingTimeRange = useMemo(() => getDefaultBookingTimeRange(), []);
-    const [resourceType, setResourceType] = useState<ResourceType>("rooms");
+    const [resourceType, setResourceType] = useState<ResourceType>("televisor");
     const [selectedResourceId, setSelectedResourceId] = useState<string>("");
     const [bookingDate, setBookingDate] = useState(todayKey);
     const [startTime, setStartTime] = useState(defaultBookingTimeRange.startTime);
@@ -262,16 +282,30 @@ export default function ReservasPage() {
     const authSession = useMemo(() => readAuthSession(), []);
     const canViewReservations = authSession?.role === "admin" || authSession?.role === "monitor";
 
-    const visibleResources = resourceType === "rooms" ? roomsCatalog : availableInventoryItems.map((it) => ({
-        id: it.id,
-        type: "equipment" as const,
-        label: it.name,
-        floor: it.groupName ?? "",
-        capacity: 1,
-        accent: "#4d5d73",
-        description: it.room ?? it.code ?? "",
-        tags: [it.code || "", it.status || ""].filter(Boolean),
-    } as BookingResource));
+    const tvReservationItems = useMemo(() => availableInventoryItems.filter((item) => {
+        const groupName = item.groupName.trim().toLowerCase();
+        return groupName === "televisores";
+    }), [availableInventoryItems]);
+
+    const equipmentGroupOptions = useMemo(
+        () => inventoryGroups.filter((group) => group.name.trim().toLowerCase() !== "televisores"),
+        [inventoryGroups],
+    );
+
+    const visibleResources: BookingResource[] = resourceType === "rooms"
+        ? roomsCatalog
+        : resourceType === "equipment"
+            ? availableInventoryItems.map((it) => ({
+                id: it.id,
+                type: "equipment" as const,
+                label: it.name,
+                floor: it.groupName ?? "",
+                capacity: 1,
+                accent: "#4d5d73",
+                description: it.room ?? it.code ?? "",
+                tags: [it.code || "", it.status || ""].filter(Boolean),
+            }))
+            : [];
 
     useEffect(() => {
         let cancelled = false;
@@ -284,7 +318,7 @@ export default function ReservasPage() {
 
                 if (info && Array.isArray(info.roomsByFloor)) {
                     const flattened = info.roomsByFloor.flat().filter(Boolean).map((r: any) => ({
-                        id: r.id ?? r.nombre ?? `${r.nombre ?? "room"}-${Math.random()}`,
+                        id: r.id ?? r.nombre ?? "",
                         type: "rooms" as const,
                         label: r.nombre ?? "",
                         floor: r.piso != null ? `PISO ${r.piso}` : (r.piso ?? ""),
@@ -298,6 +332,7 @@ export default function ReservasPage() {
                     const seen = new Set<string>();
                     const unique = flattened.filter((x: any) => {
                         const key = (x.label || "").trim().toLowerCase();
+                        if (!x.id) return false;
                         if (seen.has(key)) return false;
                         seen.add(key);
                         return true;
@@ -335,7 +370,7 @@ export default function ReservasPage() {
     }, []);
 
     useEffect(() => {
-        if (resourceType !== "equipment") return;
+        if (resourceType === "rooms") return;
 
         let cancelled = false;
 
@@ -361,7 +396,16 @@ export default function ReservasPage() {
     }, [resourceType]);
 
     useEffect(() => {
-        if (resourceType !== "equipment") return;
+        if (resourceType !== "televisor") return;
+
+        const tvGroup = inventoryGroups.find((group) => group.name.trim().toLowerCase() === "televisores");
+        if (tvGroup && selectedGroupId !== tvGroup.id) {
+            setSelectedGroupId(tvGroup.id);
+        }
+    }, [inventoryGroups, resourceType, selectedGroupId]);
+
+    useEffect(() => {
+        if (resourceType === "rooms") return;
         if (!selectedGroupId) {
             setInventoryItems([]);
             return;
@@ -436,16 +480,18 @@ export default function ReservasPage() {
 
     const requestSummary = useMemo(() => {
         return {
-            resource: selectedResource ? resourceLabel(selectedResource) : "Sin recurso seleccionado",
+            resource: resourceType === "televisor"
+                ? "Televisor (asignación automática)"
+                : selectedResource ? resourceLabel(selectedResource) : "Sin recurso seleccionado",
             timeframe: formatDuration(startTime, endTime),
             date: bookingDate,
-            requester: fullName.trim() || "Sin nombre",
-            document: documentNumber.trim() || "Sin documento",
+            requester: resourceType === "televisor" ? (authSession?.name ?? "Solicitud automática") : (fullName.trim() || "Sin nombre"),
+            document: resourceType === "televisor" ? (authSession?.cedula ?? "Asignado automáticamente") : (documentNumber.trim() || "Sin documento"),
             contact: email.trim() || phone.trim() ? [email.trim(), phone.trim()].filter(Boolean).join(" · ") : "Sin contacto",
-            purpose: purpose.trim() || "Sin propósito definido",
-            destination: resourceType === "equipment" ? selectedDestinationRoom?.label ?? "Sin salón de destino" : null,
+            purpose: resourceType === "televisor" ? "Solicitud automática de televisor" : (purpose.trim() || "Sin propósito definido"),
+            destination: resourceType !== "rooms" ? selectedDestinationRoom?.label ?? "Sin salón de destino" : null,
         };
-    }, [bookingDate, documentNumber, endTime, email, fullName, phone, purpose, resourceType, selectedDestinationRoom, selectedResource, startTime]);
+    }, [authSession, bookingDate, documentNumber, endTime, email, fullName, phone, purpose, resourceType, selectedDestinationRoom, selectedResource, startTime]);
 
     const activeReservations = useMemo(() => {
         return reservationsFeed.filter((reservation) => {
@@ -453,6 +499,16 @@ export default function ReservasPage() {
             return !['devuelto', 'reportado', 'rechazada', 'cancelada'].includes(statusLower);
         });
     }, [reservationsFeed]);
+
+    const hasActiveTelevisorReservations = useMemo(
+        () => activeReservations.some((reservation) => reservation.resourceType === "televisor"),
+        [activeReservations],
+    );
+
+    const shouldAutoRefreshReservations = useMemo(
+        () => !hasActiveTelevisorReservations && hasFreshPendingReservation(activeReservations),
+        [activeReservations, hasActiveTelevisorReservations]
+    );
 
     const closedReservations = useMemo(() => {
         return allReservations.filter((reservation) => {
@@ -620,7 +676,7 @@ export default function ReservasPage() {
                                                 <div className="flex items-start justify-between gap-3">
                                                     <div className="min-w-0">
                                                         <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">
-                                                            {reservation.resourceType === "rooms" ? "Salón" : "Equipo"}
+                                                            {reservation.resourceType === "rooms" ? "Salón" : reservation.resourceType === "televisor" ? "Televisor" : "Equipo"}
                                                         </p>
                                                         <p className="truncate text-sm font-black text-slate-900">{reservation.resourceLabel}</p>
                                                     </div>
@@ -681,7 +737,7 @@ export default function ReservasPage() {
             )
             : null;
 
-    const loadReservationsFeed = async () => {
+    const loadReservationsFeed = useCallback(async () => {
         if (!canViewReservations) {
             return;
         }
@@ -702,7 +758,7 @@ export default function ReservasPage() {
         } finally {
             setReservationsLoading(false);
         }
-    };
+    }, [canViewReservations]);
 
     const handleRequesterDocumentLookup = () => {
         const normalizedDocument = normalizeDocumentNumber(documentNumber);
@@ -753,6 +809,24 @@ export default function ReservasPage() {
             setStatusMessage(error instanceof Error ? error.message : "No se pudo devolver el elemento.");
         } finally {
             setReturningReservationId(null);
+        }
+    };
+
+    const handleTelevisorDisplaced = async (reservationId: string) => {
+        setActionReservationId(reservationId);
+        setStatusMessage(null);
+
+        try {
+            const response = await fetchApiJson<{ message: string; reservationId: string }>(`/api/reservas/${reservationId}/televisor-displaced`, {
+                method: "PATCH",
+            });
+
+            setStatusMessage(response.message);
+            await loadReservationsFeed();
+        } catch (error) {
+            setStatusMessage(error instanceof Error ? error.message : "No se pudo marcar el televisor como desplazado.");
+        } finally {
+            setActionReservationId(null);
         }
     };
 
@@ -889,7 +963,34 @@ export default function ReservasPage() {
 
     useEffect(() => {
         void loadReservationsFeed();
-    }, [canViewReservations]);
+    }, [loadReservationsFeed]);
+
+    useEffect(() => {
+        if (!canViewReservations) {
+            return;
+        }
+
+        if (!shouldAutoRefreshReservations) {
+            return;
+        }
+
+        const refreshIfVisible = () => {
+            if (typeof document !== "undefined" && document.visibilityState === "visible") {
+                void loadReservationsFeed();
+            }
+        };
+
+        const intervalId = window.setInterval(refreshIfVisible, 5000);
+
+        window.addEventListener("focus", refreshIfVisible);
+        document.addEventListener("visibilitychange", refreshIfVisible);
+
+        return () => {
+            window.clearInterval(intervalId);
+            window.removeEventListener("focus", refreshIfVisible);
+            document.removeEventListener("visibilitychange", refreshIfVisible);
+        };
+    }, [canViewReservations, loadReservationsFeed, shouldAutoRefreshReservations]);
 
     useEffect(() => {
         if (!showReservationHistory) {
@@ -914,7 +1015,7 @@ export default function ReservasPage() {
 
         
 
-        if (!selectedResourceId) {
+        if (resourceType !== "televisor" && !selectedResourceId) {
             let message = "Debes seleccionar un recurso para continuar.";
 
             if (resourceType === "rooms") {
@@ -927,14 +1028,20 @@ export default function ReservasPage() {
                 } else {
                     message = "Selecciona un equipo disponible de la lista para continuar.";
                 }
+            } else if (resourceType === "televisor") {
+                if (tvReservationItems.length === 0) {
+                    message = "No hay televisores disponibles en el intervalo horario seleccionado. Ajusta la hora o intenta con otro horario.";
+                } else {
+                    message = "El sistema asignará automáticamente un televisor disponible según el horario.";
+                }
             }
 
             setStatusMessage(message);
             return;
         }
 
-        if (resourceType === "equipment" && !selectedDestinationRoomId) {
-            setStatusMessage("Debes seleccionar el salón de destino para el equipo.");
+        if (resourceType !== "rooms" && !selectedDestinationRoomId) {
+            setStatusMessage(resourceType === "televisor" ? "Debes seleccionar el salón donde usarás el televisor." : "Debes seleccionar el salón de destino para el equipo.");
             return;
         }
 
@@ -942,8 +1049,16 @@ export default function ReservasPage() {
         setStatusMessage(null);
 
         try {
+            const requesterNameValue = resourceType === "televisor" ? (authSession?.name ?? fullName.trim()) : fullName.trim();
+            const requesterDocumentValue = resourceType === "televisor" ? (authSession?.cedula ?? documentNumber.trim()) : documentNumber.trim();
+            const requesterEmailValue = resourceType === "televisor" ? null : (email.trim() || null);
+            const requesterPhoneValue = resourceType === "televisor" ? null : (phone.trim() || null);
+            const purposeValue = resourceType === "televisor"
+                ? `Préstamo automático de televisor para ${selectedDestinationRoom?.label ?? "salón seleccionado"}`
+                : purpose.trim();
+
             // If requester has prior defect reports, warn and require confirmation
-            if (documentNumber.trim()) {
+            if (resourceType !== "televisor" && requesterDocumentValue) {
                 const defectSummary = summarizeDefectReasons(allReservations, documentNumber, inventoryItems);
                 const hadDefects = defectSummary.count > 0;
 
@@ -965,26 +1080,27 @@ export default function ReservasPage() {
 
             const payload = {
                 resourceType,
-                resourceId: selectedResourceId,
+                resourceId: resourceType === "televisor" ? "AUTO" : selectedResourceId,
                 bookingDate,
                 startTime,
                 endTime,
-                purpose: purpose.trim(),
-                requesterName: fullName.trim(),
-                requesterDocument: documentNumber.trim(),
-                requesterEmail: email.trim() || null,
-                requesterPhone: phone.trim() || null,
+                purpose: purposeValue,
+                requesterName: requesterNameValue,
+                requesterDocument: requesterDocumentValue,
+                requesterEmail: requesterEmailValue,
+                requesterPhone: requesterPhoneValue,
                 
-                destinationRoomId: resourceType === "equipment" ? selectedDestinationRoomId : null,
+                destinationRoomId: resourceType !== "rooms" ? (selectedDestinationRoom?.id || selectedDestinationRoom?.label || selectedDestinationRoomId) : null,
             };
 
-            const response = await fetchApiJson<{ message: string; reservationId: string }>("/api/reservas", {
+            const response = await fetchApiJson<{ message: string; reservationId: string; assignmentLabel?: string | null; returnNote?: string | null }>("/api/reservas", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(payload),
             });
 
-            setStatusMessage(`${response.message} ID: ${response.reservationId}`);
+            const assignmentParts = [response.assignmentLabel ? `TV asignado: ${response.assignmentLabel}` : null, response.returnNote ?? null].filter(Boolean);
+            setStatusMessage([`${response.message} ID: ${response.reservationId}`, ...assignmentParts].join(" · "));
             setRequesterLookupMessage(null);
             setPrefilledRequesterDocument("");
             setRequesterStage('id-only');
@@ -992,14 +1108,16 @@ export default function ReservasPage() {
 
             // If equipment was reserved, update item room to the destination room
             try {
-                if (resourceType === 'equipment' && selectedResourceId) {
+                        if (resourceType === 'equipment' && selectedResourceId) {
                     const item = inventoryItems.find((i) => String(i.id) === String(selectedResourceId));
                     if (item) {
+                        // Use the human-readable room name (label) when updating inventory.
+                        const roomLabel = selectedDestinationRoom ? selectedDestinationRoom.label : item.room;
                         const updatePayload: any = {
                             groupId: item.groupId,
                             name: item.name,
                             code: item.code,
-                            room: selectedDestinationRoomId ? selectedDestinationRoomId : item.room,
+                            room: roomLabel,
                             status: item.status,
                             defective: !!item.defective,
                             motivo: item.motivo || null,
@@ -1014,7 +1132,7 @@ export default function ReservasPage() {
 
                         // Optimistic update of local inventory list
                         setInventoryItems((prev) => prev.map((p) => (String(p.id) === String(item.id) ? { ...p, room: updatePayload.room } : p)));
-                    }
+                        }
                 }
             } catch (err) {
                 // non-fatal: log and continue
@@ -1067,7 +1185,7 @@ export default function ReservasPage() {
 
                     <div className="space-y-8 px-6 py-6 sm:px-8">
                         <div className="flex w-full rounded-xl border border-slate-200 bg-[#f0f4f7] p-1 shadow-sm sm:inline-flex sm:w-auto">
-                            {(["rooms", "equipment"] as ResourceType[]).map((type) => (
+                            {(["televisor", "equipment", "rooms"] as ResourceType[]).map((type) => (
                                 <button
                                     key={type}
                                     type="button"
@@ -1087,11 +1205,11 @@ export default function ReservasPage() {
                                 <div>
                                     <p className="text-[9px] font-bold tracking-[0.24em] text-slate-500 uppercase">{resourceTypeLabel(resourceType)} disponibles</p>
                                     <h2 className="mt-1 text-lg font-black text-slate-900">
-                                        Selecciona un {resourceType === "rooms" ? "salón" : "equipo"} para reservar
+                                        Selecciona un {resourceType === "rooms" ? "salón" : resourceType === "equipment" ? "equipo" : "televisor"} para reservar
                                     </h2>
                                 </div>
                                 <span className="inline-flex w-fit rounded-full bg-[#d5e3ff] px-3 py-1 text-[11px] font-semibold text-[#295786]">
-                                    {visibleResources.length} opciones
+                                    {resourceType === "televisor" ? tvReservationItems.length : visibleResources.length} opciones
                                 </span>
                             </div>
 
@@ -1125,7 +1243,7 @@ export default function ReservasPage() {
                                         })}
                                     </div>
                                 </div>
-                            ) : (
+                            ) : resourceType === "equipment" ? (
                                 <div className="space-y-3">
                                     <div className="mb-3">
                                         <label className="mb-2 block text-xs font-bold text-slate-500 uppercase">Grupo de equipos</label>
@@ -1136,7 +1254,7 @@ export default function ReservasPage() {
                                                     onChange={(e) => setSelectedGroupId(e.target.value)}
                                                     className="w-full appearance-none rounded-xl border border-slate-200 bg-white p-3 pr-10 text-sm text-slate-700 shadow-sm outline-none transition focus:border-[#3a5f94]"
                                                 >
-                                                    {inventoryGroups.map((g) => (
+                                                    {equipmentGroupOptions.map((g) => (
                                                         <option key={g.id} value={g.id}>
                                                             {g.name}
                                                         </option>
@@ -1180,11 +1298,35 @@ export default function ReservasPage() {
                                         )}
                                     </div>
                                 </div>
+                            ) : (
+                                <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                                    <div>
+                                        <p className="text-[9px] font-bold tracking-[0.24em] text-slate-500 uppercase">Asignación automática</p>
+                                        <h3 className="mt-1 text-lg font-black text-slate-900">El sistema elegirá el televisor por ti</h3>
+                                        <p className="mt-2 text-sm text-slate-600">
+                                            Se prioriza un TV de un salón con dos televisores. Si no existe, se elige uno disponible sin choque de horario.
+                                            Si el TV proviene de un salón con un solo televisor, el sistema mostrará un recordatorio de devolución.
+                                        </p>
+                                    </div>
+
+                                    <div className="grid gap-3 sm:grid-cols-2">
+                                        <div className="rounded-xl border border-slate-200 bg-[#f7f9fb] p-4">
+                                            <p className="text-[10px] font-bold uppercase text-slate-500">Televisores disponibles</p>
+                                            <p className="mt-1 text-2xl font-black text-slate-900">{tvReservationItems.length}</p>
+                                        </div>
+                                        <div className="rounded-xl border border-slate-200 bg-[#f7f9fb] p-4">
+                                            <p className="text-[10px] font-bold uppercase text-slate-500">Destino requerido</p>
+                                            <p className="mt-1 text-sm font-bold text-slate-900">Selecciona el salón donde se usará el televisor</p>
+                                        </div>
+                                    </div>
+
+                                    
+                                </div>
                             )}
                         </section>
 
                         <form className="space-y-6 sm:space-y-8" onSubmit={handleSubmit}>
-                            <section className="grid gap-8 lg:grid-cols-2">
+                            <section className={`grid gap-8 ${resourceType === "televisor" ? "lg:grid-cols-1" : "lg:grid-cols-2"}`}>
                                 <div className="space-y-5 rounded-2xl border border-slate-200 bg-[#f7f9fb] p-6">
                                     <div>
                                         <p className="text-[9px] font-bold tracking-[0.24em] text-slate-500 uppercase">HORARIO</p>
@@ -1289,24 +1431,25 @@ export default function ReservasPage() {
                                     </div>
                                 </div>
 
-                                <div className="space-y-5 rounded-2xl border border-slate-200 bg-[#f7f9fb] p-6">
-                                    <div>
-                                        <p className="text-[9px] font-bold tracking-[0.24em] text-slate-500 uppercase">Propósito</p>
-                                        <h3 className="mt-1 text-lg font-black text-slate-900">¿Cuál es el propósito de la reserva?</h3>
-                                    </div>
+                                {resourceType !== "televisor" ? (
+                                    <div className="space-y-5 rounded-2xl border border-slate-200 bg-[#f7f9fb] p-6">
+                                        <div>
+                                            <p className="text-[9px] font-bold tracking-[0.24em] text-slate-500 uppercase">Propósito</p>
+                                            <h3 className="mt-1 text-lg font-black text-slate-900">¿Cuál es el propósito de la reserva?</h3>
+                                        </div>
 
-                                    <label className="block">
-                                        <span className="mb-2 block text-xs font-bold text-slate-500 uppercase">Propósito de uso</span>
-                                        <textarea
-                                            rows={6}
-                                            value={purpose}
-                                            onChange={(event) => setPurpose(event.target.value)}
-                                            placeholder="e.g., final presentation, workshop, team meeting"
-                                            className="w-full resize-none rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-[#3a5f94]"
-                                        />
-                                    </label>
+                                        <label className="block">
+                                            <span className="mb-2 block text-xs font-bold text-slate-500 uppercase">Propósito de uso</span>
+                                            <textarea
+                                                rows={6}
+                                                value={purpose}
+                                                onChange={(event) => setPurpose(event.target.value)}
+                                                placeholder="e.g., final presentation, workshop, team meeting"
+                                                className="w-full resize-none rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-[#3a5f94]"
+                                            />
+                                        </label>
 
-                                    {resourceType === "equipment" ? (
+                                        {resourceType !== "rooms" ? (
                                         <label className="block">
                                             <span className="mb-2 block text-xs font-bold text-slate-500 uppercase">Donde necesita el elemento</span>
                                             {roomsCatalog.length > 0 ? (
@@ -1331,87 +1474,123 @@ export default function ReservasPage() {
                                                 <div className="rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-600">Cargando salones...</div>
                                             )}
                                         </label>
-                                    ) : null}
-                                </div>
-                            </section>
+                                        ) : null}
+                                    </div>
+                                ) : (
+                                    <div className="space-y-5 rounded-2xl border border-slate-200 bg-[#f7f9fb] p-6">
+                                        <div>
+                                            <p className="text-[9px] font-bold tracking-[0.24em] text-slate-500 uppercase">Televisor</p>
+                                            <h3 className="mt-1 text-lg font-black text-slate-900">Dónde necesita el televisor</h3>
+                                        </div>
 
-                            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                                <div className="mb-5">
-                                    <p className="text-[9px] font-bold tracking-[0.24em] text-slate-500 uppercase">Información del solicitante</p>
-                                    <h3 className="mt-1 text-lg font-black text-slate-900">¿Quién está realizando la solicitud?</h3>
-                                </div>
+                                        
 
-                                <div className="grid gap-4">
-                                    {requesterStage === 'id-only' ? (
                                         <label className="block">
-                                            <span className="mb-2 block text-xs font-bold text-slate-500 uppercase">ID / documento</span>
-                                            <input
-                                                type="text"
-                                                value={documentNumber}
-                                                onChange={(event) => setDocumentNumber(event.target.value)}
-                                                onBlur={handleRequesterDocumentLookup}
-                                                placeholder="12938475"
-                                                className="w-full rounded-xl border border-slate-200 bg-[#f7f9fb] p-3 text-sm text-slate-700 shadow-sm outline-none transition focus:border-[#3a5f94]"
-                                            />
-                                            {requesterLookupMessage ? (
-                                                <p className="mt-2 text-[11px] font-medium text-slate-500">{requesterLookupMessage}</p>
-                                            ) : null}
+                                            {roomsCatalog.length > 0 ? (
+                                                <div className="relative">
+                                                    <select
+                                                        value={selectedDestinationRoomId}
+                                                        onChange={(event) => setSelectedDestinationRoomId(event.target.value)}
+                                                        className="w-full appearance-none rounded-xl border border-slate-200 bg-white p-3 pr-10 text-sm text-slate-700 shadow-sm outline-none transition focus:border-[#3a5f94]"
+                                                    >
+                                                        <option value="">Selecciona un salon...</option>
+                                                        {roomsCatalog.map((room) => (
+                                                            <option key={room.id} value={room.id}>
+                                                                {room.floor ? `${room.floor} - ` : ""}{room.label}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                    <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-slate-600">
+                                                        <span className="material-symbols-outlined">expand_more</span>
+                                                    </span>
+                                                </div>
+                                            ) : (
+                                                <div className="rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-600">Cargando salones...</div>
+                                            )}
                                         </label>
-                                    ) : (
-                                        <>
-                                            <div className="grid gap-4 md:grid-cols-2">
-                                                <label className="block">
-                                                    <span className="mb-2 block text-xs font-bold text-slate-500 uppercase">Nombre Completo</span>
-                                                    <input
-                                                        type="text"
-                                                        value={fullName}
-                                                        onChange={(event) => setFullName(event.target.value)}
-                                                        placeholder="Erik Valencia Cardona"
-                                                        className="w-full rounded-xl border border-slate-200 bg-[#f7f9fb] p-3 text-sm text-slate-700 shadow-sm outline-none transition focus:border-[#3a5f94]"
-                                                    />
-                                                </label>
-                                                <label className="block">
-                                                    <span className="mb-2 block text-xs font-bold text-slate-500 uppercase">ID / documento</span>
-                                                    <input
-                                                        type="text"
-                                                        value={documentNumber}
-                                                        onChange={(event) => setDocumentNumber(event.target.value)}
-                                                        onBlur={handleRequesterDocumentLookup}
-                                                        placeholder="12938475"
-                                                        className="w-full rounded-xl border border-slate-200 bg-[#f7f9fb] p-3 text-sm text-slate-700 shadow-sm outline-none transition focus:border-[#3a5f94]"
-                                                    />
-                                                    {requesterLookupMessage ? (
-                                                        <p className="mt-2 text-[11px] font-medium text-slate-500">{requesterLookupMessage}</p>
-                                                    ) : null}
-                                                </label>
-                                            </div>
-
-                                            <div className="grid gap-4 md:grid-cols-2">
-                                                <label className="block">
-                                                    <span className="mb-2 block text-xs font-bold text-slate-500 uppercase">Correo Electrónico</span>
-                                                    <input
-                                                        type="email"
-                                                        value={email}
-                                                        onChange={(event) => setEmail(event.target.value)}
-                                                        placeholder="erik@unac.edu.co"
-                                                        className="w-full rounded-xl border border-slate-200 bg-[#f7f9fb] p-3 text-sm text-slate-700 shadow-sm outline-none transition focus:border-[#3a5f94]"
-                                                    />
-                                                </label>
-                                                <label className="block">
-                                                    <span className="mb-2 block text-xs font-bold text-slate-500 uppercase">Número de teléfono</span>
-                                                    <input
-                                                        type="tel"
-                                                        value={phone}
-                                                        onChange={(event) => setPhone(event.target.value)}
-                                                        placeholder="+57 300 000 0000"
-                                                        className="w-full rounded-xl border border-slate-200 bg-[#f7f9fb] p-3 text-sm text-slate-700 shadow-sm outline-none transition focus:border-[#3a5f94]"
-                                                    />
-                                                </label>
-                                            </div>
-                                        </>
-                                    )}
-                                </div>
+                                    </div>
+                                )}
                             </section>
+
+                            {resourceType !== "televisor" ? (
+                                <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                                    <div className="mb-5">
+                                        <p className="text-[9px] font-bold tracking-[0.24em] text-slate-500 uppercase">Información del solicitante</p>
+                                        <h3 className="mt-1 text-lg font-black text-slate-900">¿Quién está realizando la solicitud?</h3>
+                                    </div>
+
+                                    <div className="grid gap-4">
+                                        {requesterStage === 'id-only' ? (
+                                            <label className="block">
+                                                <span className="mb-2 block text-xs font-bold text-slate-500 uppercase">ID / documento</span>
+                                                <input
+                                                    type="text"
+                                                    value={documentNumber}
+                                                    onChange={(event) => setDocumentNumber(event.target.value)}
+                                                    onBlur={handleRequesterDocumentLookup}
+                                                    placeholder="12938475"
+                                                    className="w-full rounded-xl border border-slate-200 bg-[#f7f9fb] p-3 text-sm text-slate-700 shadow-sm outline-none transition focus:border-[#3a5f94]"
+                                                />
+                                                {requesterLookupMessage ? (
+                                                    <p className="mt-2 text-[11px] font-medium text-slate-500">{requesterLookupMessage}</p>
+                                                ) : null}
+                                            </label>
+                                        ) : (
+                                            <>
+                                                <div className="grid gap-4 md:grid-cols-2">
+                                                    <label className="block">
+                                                        <span className="mb-2 block text-xs font-bold text-slate-500 uppercase">Nombre Completo</span>
+                                                        <input
+                                                            type="text"
+                                                            value={fullName}
+                                                            onChange={(event) => setFullName(event.target.value)}
+                                                            placeholder="Erik Valencia Cardona"
+                                                            className="w-full rounded-xl border border-slate-200 bg-[#f7f9fb] p-3 text-sm text-slate-700 shadow-sm outline-none transition focus:border-[#3a5f94]"
+                                                        />
+                                                    </label>
+                                                    <label className="block">
+                                                        <span className="mb-2 block text-xs font-bold text-slate-500 uppercase">ID / documento</span>
+                                                        <input
+                                                            type="text"
+                                                            value={documentNumber}
+                                                            onChange={(event) => setDocumentNumber(event.target.value)}
+                                                            onBlur={handleRequesterDocumentLookup}
+                                                            placeholder="12938475"
+                                                            className="w-full rounded-xl border border-slate-200 bg-[#f7f9fb] p-3 text-sm text-slate-700 shadow-sm outline-none transition focus:border-[#3a5f94]"
+                                                        />
+                                                        {requesterLookupMessage ? (
+                                                            <p className="mt-2 text-[11px] font-medium text-slate-500">{requesterLookupMessage}</p>
+                                                        ) : null}
+                                                    </label>
+                                                </div>
+
+                                                <div className="grid gap-4 md:grid-cols-2">
+                                                    <label className="block">
+                                                        <span className="mb-2 block text-xs font-bold text-slate-500 uppercase">Correo Electrónico</span>
+                                                        <input
+                                                            type="email"
+                                                            value={email}
+                                                            onChange={(event) => setEmail(event.target.value)}
+                                                            placeholder="erik@unac.edu.co"
+                                                            className="w-full rounded-xl border border-slate-200 bg-[#f7f9fb] p-3 text-sm text-slate-700 shadow-sm outline-none transition focus:border-[#3a5f94]"
+                                                        />
+                                                    </label>
+                                                    <label className="block">
+                                                        <span className="mb-2 block text-xs font-bold text-slate-500 uppercase">Número de teléfono</span>
+                                                        <input
+                                                            type="tel"
+                                                            value={phone}
+                                                            onChange={(event) => setPhone(event.target.value)}
+                                                            placeholder="+57 300 000 0000"
+                                                            className="w-full rounded-xl border border-slate-200 bg-[#f7f9fb] p-3 text-sm text-slate-700 shadow-sm outline-none transition focus:border-[#3a5f94]"
+                                                        />
+                                                    </label>
+                                                </div>
+                                            </>
+                                        )}
+                                    </div>
+                                </section>
+                            ) : null}
 
                             <div className="flex flex-col gap-3 pt-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4">
                                 <button
@@ -1485,6 +1664,7 @@ export default function ReservasPage() {
                                 </div>
                             ) : activeReservations.length > 0 ? (
                                 activeReservations.map((reservation) => {
+                                    const isTelevisor = reservation.resourceType === "televisor";
                                     const statusLower = reservation.status.toLowerCase();
                                     const statusDisplay =
                                         statusLower === "no_aceptado"
@@ -1550,13 +1730,15 @@ export default function ReservasPage() {
                                                     <div className="flex items-start justify-between gap-3">
                                                         <div className="min-w-0">
                                                             <p className="text-[10px] font-bold uppercase text-slate-500">
-                                                                {reservation.resourceType === "rooms" ? "Salón" : "Equipo"}
+                                                                {reservation.resourceType === "rooms" ? "Salón" : reservation.resourceType === "televisor" ? "Televisor" : "Equipo"}
                                                             </p>
                                                             <p className="truncate text-sm font-black text-slate-900">{reservation.resourceLabel}</p>
                                                         </div>
-                                                        <span className={`shrink-0 rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase ${statusStyles}`}>
-                                                            {statusDisplay}
-                                                        </span>
+                                                        {!isTelevisor && (
+                                                            <span className={`shrink-0 rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase ${statusStyles}`}>
+                                                                {statusDisplay}
+                                                            </span>
+                                                        )}
                                                     </div>
 
                                                     <div className="mt-3 grid gap-2 text-xs text-slate-600">
@@ -1568,10 +1750,12 @@ export default function ReservasPage() {
                                                             <span className="material-symbols-outlined text-[16px] text-[#3a5f94]">schedule</span>
                                                             <span>{formatDuration(reservation.startTime, reservation.endTime)}</span>
                                                         </div>
-                                                        <div className="flex items-center gap-2">
-                                                            <span className="material-symbols-outlined text-[16px] text-[#3a5f94]">person</span>
-                                                            <span className="truncate">{reservation.requesterName}</span>
-                                                        </div>
+                                                        {!isTelevisor && (
+                                                            <div className="flex items-center gap-2">
+                                                                <span className="material-symbols-outlined text-[16px] text-[#3a5f94]">person</span>
+                                                                <span className="truncate">{reservation.requesterName}</span>
+                                                            </div>
+                                                        )}
                                                         {reservation.destinationRoomLabel ? (
                                                             <div className="flex items-center gap-2">
                                                                 <span className="material-symbols-outlined text-[16px] text-[#3a5f94]">place</span>
@@ -1587,36 +1771,90 @@ export default function ReservasPage() {
                                                     </div>
 
                                                     <div className="mt-3 space-y-2">
-                                                        {statusLower === 'no_aceptado' ? (
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => void handleCancelReservation(reservation.id)}
-                                                                disabled={actionReservationId === reservation.id}
-                                                                className="inline-flex w-full items-center justify-center rounded-xl bg-slate-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
-                                                            >
-                                                                {actionReservationId === reservation.id ? 'Cancelando...' : 'Cancelar reserva'}
-                                                            </button>
-                                                        ) : null}
-                                                        {reservation.resourceType === "equipment" && (statusLower === 'confirmada' || statusLower === 'aprobada') ? (
+                                                        {isTelevisor ? (
                                                             <>
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => void handleReturnReservation(reservation.id)}
-                                                                    disabled={returningReservationId === reservation.id}
-                                                                    className="inline-flex w-full items-center justify-center rounded-xl bg-[#3a5f94] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#2d5387] disabled:cursor-not-allowed disabled:opacity-60"
-                                                                >
-                                                                    {returningReservationId === reservation.id ? "Devolviendo..." : "Devolución exitosa"}
-                                                                </button>
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => void handleDefectiveReturn(reservation.id)}
-                                                                    disabled={actionReservationId === reservation.id}
-                                                                    className="inline-flex w-full items-center justify-center rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
-                                                                >
-                                                                    {actionReservationId === reservation.id ? 'Procesando...' : 'Devolución defectuosa'}
-                                                                </button>
+                                                                <p className="text-[11px] font-semibold text-slate-500">{
+                                                                    statusLower === "no_aceptado"
+                                                                        ? `Llevar antes de las ${reservation.startTime}`
+                                                                        : statusLower === "confirmada"
+                                                                            ? "Televisor ya desplazado"
+                                                                            : "Televisor devuelto"
+                                                                }</p>
+                                                                {statusLower === 'no_aceptado' ? (
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => void handleTelevisorDisplaced(reservation.id)}
+                                                                        disabled={actionReservationId === reservation.id}
+                                                                        className="inline-flex w-full items-center justify-center rounded-xl bg-[#3a5f94] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#2d5387] disabled:cursor-not-allowed disabled:opacity-60"
+                                                                    >
+                                                                        {actionReservationId === reservation.id ? 'Marcando...' : 'Televisor ya desplazado'}
+                                                                    </button>
+                                                                ) : statusLower === 'confirmada' ? (
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => void handleReturnReservation(reservation.id)}
+                                                                        disabled={returningReservationId === reservation.id}
+                                                                        className="inline-flex w-full items-center justify-center rounded-xl bg-[#3a5f94] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#2d5387] disabled:cursor-not-allowed disabled:opacity-60"
+                                                                    >
+                                                                        {returningReservationId === reservation.id ? 'Devolviendo...' : 'Televisor ya devuelto'}
+                                                                    </button>
+                                                                ) : null}
                                                             </>
-                                                        ) : null}
+                                                        ) : (
+                                                            <>
+                                                                {statusLower === 'no_aceptado' ? (
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => void handleCancelReservation(reservation.id)}
+                                                                        disabled={actionReservationId === reservation.id}
+                                                                        className="inline-flex w-full items-center justify-center rounded-xl bg-slate-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                                                    >
+                                                                        {actionReservationId === reservation.id ? 'Cancelando...' : 'Cancelar reserva'}
+                                                                    </button>
+                                                                ) : null}
+                                                                { (statusLower === 'confirmada' || statusLower === 'aprobada') ? (
+                                                                                        reservation.resourceType !== "rooms" ? (
+                                                                        <>
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => void handleReturnReservation(reservation.id)}
+                                                                                disabled={returningReservationId === reservation.id}
+                                                                                className="inline-flex w-full items-center justify-center rounded-xl bg-[#3a5f94] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#2d5387] disabled:cursor-not-allowed disabled:opacity-60"
+                                                                            >
+                                                                                {returningReservationId === reservation.id ? "Devolviendo..." : "Devolución exitosa"}
+                                                                            </button>
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => void handleDefectiveReturn(reservation.id)}
+                                                                                disabled={actionReservationId === reservation.id}
+                                                                                className="inline-flex w-full items-center justify-center rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                                                            >
+                                                                                {actionReservationId === reservation.id ? 'Procesando...' : 'Devolución defectuosa'}
+                                                                            </button>
+                                                                        </>
+                                                                    ) : (
+                                                                        <>
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => void handleCloseReservation(reservation.id)}
+                                                                                disabled={actionReservationId === reservation.id}
+                                                                                className="inline-flex w-full items-center justify-center rounded-xl bg-[#3a5f94] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#2d5387] disabled:cursor-not-allowed disabled:opacity-60"
+                                                                            >
+                                                                                {actionReservationId === reservation.id ? 'Procesando...' : 'Cerrar reserva'}
+                                                                            </button>
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => void handleReportReservation(reservation.id)}
+                                                                                disabled={actionReservationId === reservation.id}
+                                                                                className="inline-flex w-full items-center justify-center rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                                                            >
+                                                                                {actionReservationId === reservation.id ? 'Procesando...' : 'Reportar problema'}
+                                                                            </button>
+                                                                        </>
+                                                                    )
+                                                                ) : null}
+                                                            </>
+                                                        )}
                                                     </div>
                                                 </article>
                                             );
@@ -1661,16 +1899,29 @@ export default function ReservasPage() {
                                 </div>
                             </div>
 
-                            <div className="flex gap-4">
-                                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[#e8eff3]">
-                                    <span className="material-symbols-outlined text-[#3a5f94]">person</span>
+                            {resourceType !== "televisor" ? (
+                                <div className="flex gap-4">
+                                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[#e8eff3]">
+                                        <span className="material-symbols-outlined text-[#3a5f94]">person</span>
+                                    </div>
+                                    <div>
+                                        <p className="text-[10px] font-bold uppercase text-slate-500">Requester</p>
+                                        <p className="text-sm font-bold text-slate-900">{requestSummary.requester}</p>
+                                        <p className="text-xs text-slate-500">{requestSummary.document}</p>
+                                    </div>
                                 </div>
-                                <div>
-                                    <p className="text-[10px] font-bold uppercase text-slate-500">Requester</p>
-                                    <p className="text-sm font-bold text-slate-900">{requestSummary.requester}</p>
-                                    <p className="text-xs text-slate-500">{requestSummary.document}</p>
+                            ) : (
+                                <div className="flex gap-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4">
+                                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[#e8eff3]">
+                                        <span className="material-symbols-outlined text-[#3a5f94]">tv</span>
+                                    </div>
+                                    <div>
+                                        <p className="text-[10px] font-bold uppercase text-slate-500">Televisor</p>
+                                        <p className="text-sm font-bold text-slate-900">Asignación automática</p>
+                                        <p className="text-xs text-slate-500">El sistema elegirá el TV y te avisará si no requiere traslado.</p>
+                                    </div>
                                 </div>
-                            </div>
+                            )}
 
                             {requestSummary.destination ? (
                                 <div className="flex gap-4">
@@ -1678,7 +1929,7 @@ export default function ReservasPage() {
                                         <span className="material-symbols-outlined text-[#3a5f94]">place</span>
                                     </div>
                                     <div>
-                                        <p className="text-[10px] font-bold uppercase text-slate-500">Destino del equipo</p>
+                                        <p className="text-[10px] font-bold uppercase text-slate-500">Destino</p>
                                         <p className="text-sm font-bold text-slate-900">{requestSummary.destination}</p>
                                     </div>
                                 </div>
