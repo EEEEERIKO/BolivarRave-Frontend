@@ -59,12 +59,14 @@ type InventoryEquipmentItem = {
   name: string;
   code: string;
   room: string;
-  status: "Disponible" | "Fijo";
+  status: "Disponible" | "Fijo" | "Asignado";
   defective: boolean;
   motivo: string | null;
   order: number;
   createdAt: string;
   updatedAt: string;
+  hdmiAssigned?: boolean;
+  hdmiItemId?: string | null;
 };
 
 type RoomsCachePayload = {
@@ -548,9 +550,21 @@ export default function RoomsPage() {
   const selectedRoomEquipment = useMemo(() => {
     if (!selectedInfo) return [];
 
-    return roomEquipment
-      .filter((item) => roomMatches(selectedInfo.nombre, item.room))
-      .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
+    const selectedItems = roomEquipment.filter((item) => roomMatches(selectedInfo.nombre, item.room));
+    const selectedIds = new Set(selectedItems.map((item) => item.id));
+
+    selectedItems.forEach((item) => {
+      const isTelevisor = item.groupName.trim().toLowerCase().includes("televisor");
+      if (!isTelevisor || !item.hdmiItemId) return;
+
+      const linkedHdmi = roomEquipment.find((candidate) => candidate.id === item.hdmiItemId);
+      if (linkedHdmi && !selectedIds.has(linkedHdmi.id)) {
+        selectedIds.add(linkedHdmi.id);
+        selectedItems.push(linkedHdmi);
+      }
+    });
+
+    return selectedItems.sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
   }, [roomEquipment, selectedInfo]);
 
   const toggleItemDefective = async (item: InventoryEquipmentItem) => {
