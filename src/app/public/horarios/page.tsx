@@ -65,7 +65,7 @@ export default function PublicHorariosPage() {
 
   return (
     <div>
-      <h1 className="text-3xl font-extrabold mb-6">Horarios públicos - Auditorio</h1>
+      <h1 className="text-3xl font-extrabold mb-6">Edificio Académico Bolivar Rave</h1>
       {loading ? <p className="text-sm text-[#566166]">Cargando horarios...</p> : null}
       {error ? <p className="text-sm text-rose-600">{error}</p> : null}
 

@@ -257,7 +257,10 @@ export async function fetchApiJsonWithOptions<T>(path: string, init?: RequestIni
       if (!isLoginCall && isAuthHttpError && typeof window !== "undefined") {
         clearAuthSession();
 
-        if (!window.location.pathname.startsWith("/login")) {
+        const pathname = window.location.pathname;
+        const isPublicPath = pathname.startsWith("/login") || pathname.startsWith("/public");
+
+        if (!isPublicPath) {
           window.location.assign("/login");
         }
       }

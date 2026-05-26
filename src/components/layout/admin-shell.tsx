@@ -203,8 +203,9 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const isLoginRoute = pathname.startsWith("/login");
+  const isPublicContentRoute = pathname.startsWith("/public");
   const isPublicReservationConfirmRoute = pathname.startsWith("/reservas/confirm");
-  const isPublicRoute = isLoginRoute || isPublicReservationConfirmRoute;
+  const isPublicRoute = isLoginRoute || isPublicContentRoute || isPublicReservationConfirmRoute;
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [pendingRequests, setPendingRequests] = useState<PendingScheduleRequest[]>([]);

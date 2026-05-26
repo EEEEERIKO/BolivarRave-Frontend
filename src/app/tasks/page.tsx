@@ -3909,7 +3909,7 @@ export default function TasksPage() {
                               <label>
                                 <span className="text-xs font-bold text-slate-500">Hora programada</span>
                                 <select value={catalogForm.horaProgramada} onChange={(e) => setCatalogForm((c) => ({ ...c, horaProgramada: e.target.value }))} className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 text-sm">
-                                  {Array.from(new Set([minutesToHHMM(selectedScheduleCell.slotStart), catalogForm.horaProgramada, ...TASK_RECURRENT_TIME_OPTIONS])).map((time) => (
+                                  {Array.from(new Set([minutesToHHMM(slotStart), catalogForm.horaProgramada, ...TASK_RECURRENT_TIME_OPTIONS])).map((time) => (
                                     <option key={time} value={time}>{toAmPmLabel(time)}</option>
                                   ))}
                                 </select>
@@ -4163,6 +4163,8 @@ export default function TasksPage() {
             const task = tasksInSlot[0];
             const taskInstance = instances.find((item) => item.id === task.id);
             const taskCatalog = catalog.find((item) => item.id === (taskInstance?.tareaCatalogoId ?? task.id)) ?? null;
+            const taskStartMin = getTaskStartMinutes(taskCatalog ?? task);
+            const taskStartTime = taskStartMin !== null ? minutesToHHMM(taskStartMin) : minutesToHHMM(selectedScheduleCell.slotStart);
             const slotStart = selectedScheduleCell.slotStart;
             const slotEnd = slotStart + 30;
             const rowLabel = `${toAmPmLabel(minutesToHHMM(slotStart))} - ${toAmPmLabel(minutesToHHMM(slotEnd))}`;
@@ -4425,7 +4427,7 @@ export default function TasksPage() {
 
                           beginEditCatalog(taskCatalog, {
                             cantidadPersonal: "1",
-                            horaProgramada: minutesToHHMM(slotStart),
+                            horaProgramada: taskStartTime,
                             diasSemana: taskCatalog.diasSemana.length > 0 ? taskCatalog.diasSemana : [selectedScheduleCell.dayIndex],
                           });
                           setShowQuickCatalogEditor(true);
