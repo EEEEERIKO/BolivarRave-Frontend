@@ -66,6 +66,19 @@ type UpcomingAuditorioNotification = {
     estado: string;
   }>;
 };
+type PendingAuditorioNotification = {
+  id: string;
+  reservaId: string;
+  nombreEvento: string;
+  organizador: string;
+  fechaInicioPeriodo: string;
+  fechaFinPeriodo: string;
+  numeroAsistentes: number;
+  createdAt: string;
+  firstHorarioDate: string | null;
+  firstHorarioStart: string | null;
+  firstHorarioEnd: string | null;
+};
 
 type NavItem = {
   label: string;
@@ -210,6 +223,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [pendingRequests, setPendingRequests] = useState<PendingScheduleRequest[]>([]);
   const [upcomingAuditorioEvents, setUpcomingAuditorioEvents] = useState<UpcomingAuditorioNotification[]>([]);
+  const [pendingAuditorioRequests, setPendingAuditorioRequests] = useState<PendingAuditorioNotification[]>([]);
   const [expandedCollaboratorNotificationId, setExpandedCollaboratorNotificationId] = useState<string | null>(null);
   const [authSession, setAuthSession] = useState<AuthSession | null>(null);
   const [isSessionReady, setIsSessionReady] = useState(false);
@@ -274,6 +288,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
     if (!role) {
       setPendingRequests([]);
       setUpcomingAuditorioEvents([]);
+      setPendingAuditorioRequests([]);
       return;
     }
 
@@ -283,17 +298,22 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
           ? fetchApiJson<{ requests?: PendingScheduleRequest[] }>("/api/schedules/requests", { cache: "no-store" })
           : Promise.resolve({ requests: [] as PendingScheduleRequest[] }),
         canReadAuditorioNotifications
-          ? fetchApiJson<{ notifications?: UpcomingAuditorioNotification[] }>("/api/auditorio/notifications/upcoming", {
+          ? fetchApiJson<{ notifications?: UpcomingAuditorioNotification[]; pendingNotifications?: PendingAuditorioNotification[] }>("/api/auditorio/notifications/upcoming", {
               cache: "no-store",
             })
-          : Promise.resolve({ notifications: [] as UpcomingAuditorioNotification[] }),
+          : Promise.resolve({
+              notifications: [] as UpcomingAuditorioNotification[],
+              pendingNotifications: [] as PendingAuditorioNotification[],
+            }),
       ]);
 
       setPendingRequests(requestsResponse.requests ?? []);
       setUpcomingAuditorioEvents(upcomingResponse.notifications ?? []);
+      setPendingAuditorioRequests(upcomingResponse.pendingNotifications ?? []);
     } catch {
       setPendingRequests([]);
       setUpcomingAuditorioEvents([]);
+      setPendingAuditorioRequests([]);
     }
   };
 
@@ -314,7 +334,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
     }
 
     if (authSession.role === "admin") {
-      return pendingRequests.length + upcomingAuditorioEvents.length;
+      return pendingRequests.length + upcomingAuditorioEvents.length + pendingAuditorioRequests.length;
     }
 
     if (authSession.role === "monitor") {
@@ -326,7 +346,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
     }
 
     return 0;
-  }, [authSession, pendingRequests.length, upcomingAuditorioEvents.length]);
+  }, [authSession, pendingRequests.length, upcomingAuditorioEvents.length, pendingAuditorioRequests.length]);
 
   const visibleNavItems = useMemo(
     () => navItems.filter((item) => !item.allowedRoles || item.allowedRoles.includes(authSession?.role ?? "colaborador")),
@@ -675,7 +695,34 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
                       </div>
                     ) : null}
 
-                    {pendingRequests.length === 0 && upcomingAuditorioEvents.length === 0 ? (
+                    {pendingAuditorioRequests.length > 0 ? (
+                      <div className="space-y-2">
+                        <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Solicitudes de auditorio pendientes</p>
+                        {pendingAuditorioRequests.map((request) => (
+                          <button
+                            key={request.id}
+                            type="button"
+                            onClick={() => {
+                              setIsNotificationsOpen(false);
+                              router.push("/auditorio");
+                            }}
+                            className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-left text-sm text-slate-700 transition hover:border-[#295786]/30 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                          >
+                            <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">Solicitud de {request.organizador}</p>
+                            <p className="mt-1 font-semibold text-slate-900 dark:text-white">{request.nombreEvento}</p>
+                            <p className="text-xs text-slate-600 dark:text-slate-400">
+                              {request.firstHorarioDate ? formatDateLong(request.firstHorarioDate) : `Periodo ${formatDateShort(request.fechaInicioPeriodo)} a ${formatDateShort(request.fechaFinPeriodo)}`}
+                            </p>
+                            {request.firstHorarioStart && request.firstHorarioEnd ? (
+                              <p className="text-xs text-slate-600 dark:text-slate-400">{formatTimeAmPm(request.firstHorarioStart)} - {formatTimeAmPm(request.firstHorarioEnd)}</p>
+                            ) : null}
+                            <p className="mt-2 text-xs font-semibold text-[#295786]">Ir a auditorio</p>
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+
+                    {pendingRequests.length === 0 && upcomingAuditorioEvents.length === 0 && pendingAuditorioRequests.length === 0 ? (
                       <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-4 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
                         Sin notificaciones por ahora.
                       </div>

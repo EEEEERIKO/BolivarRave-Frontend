@@ -96,6 +96,8 @@ const normalizeStatus = (value: string | null | undefined): "Disponible" | "Fijo
   return "Disponible";
 };
 
+const MONITORIA_ROOM = "Monitoría";
+
 function formatCurrencyCOP(value?: number | null): string {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return "";
   try {
@@ -302,9 +304,9 @@ export default function InventoryPage() {
   }, [inventoryItems]);
 
   const roomOptions = useMemo(() => {
-    const options = [...roomCatalog];
+    const options = [MONITORIA_ROOM, ...roomCatalog.filter((room) => room !== MONITORIA_ROOM)];
     if (itemForm.room && !options.includes(itemForm.room)) {
-      options.unshift(itemForm.room);
+      options.push(itemForm.room);
     }
     return options;
   }, [itemForm.room, roomCatalog]);
