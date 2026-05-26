@@ -1053,6 +1053,7 @@ export default function AuditorioPage() {
     const duplicateOverlap = hasOverlapWithOtherEvents(validBlocks, editingEventId);
     if (duplicateOverlap) {
       toast.error(formatOverlapMessage(duplicateOverlap));
+      return;
     }
 
     if (Object.keys(errors).length > 0) {
