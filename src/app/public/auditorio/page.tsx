@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import toast from "react-hot-toast";
 
 type AuditorioReservaApi = {
   id: string;
@@ -338,7 +339,6 @@ export default function PublicAuditorioPage() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
   const [monthCursor, setMonthCursor] = useState(startOfMonth(getColombiaToday()));
   const [visibleMonthCount, setVisibleMonthCount] = useState(1);
   const [scheduleMode, setScheduleMode] = useState<PublicScheduleMode>("");
@@ -361,6 +361,24 @@ export default function PublicAuditorioPage() {
   const [notes, setNotes] = useState("");
 
   const formRef = useRef<HTMLDivElement>(null);
+  const startDateInputRef = useRef<HTMLInputElement>(null);
+  const endDateInputRef = useRef<HTMLInputElement>(null);
+
+  const openNativeDatePicker = (input: HTMLInputElement | null) => {
+    if (!input) return;
+    input.focus();
+    input.click();
+  };
+
+  const handleDateInputClick = (input: HTMLInputElement | null) => {
+    if (!input || typeof input.showPicker !== "function") return;
+
+    try {
+      input.showPicker();
+    } catch {
+      input.focus();
+    }
+  };
 
   useEffect(() => {
     let mounted = true;
@@ -463,6 +481,7 @@ export default function PublicAuditorioPage() {
     { label: "Proyector", checked: needsProjector, onChange: setNeedsProjector },
     { label: "Filtro de agua", checked: needsWaterFilter, onChange: setNeedsWaterFilter },
   ] as const;
+  const selectedEquipmentLabels = equipmentOptions.filter((option) => option.checked).map((option) => option.label);
 
   const resetPublicForm = () => {
     setScheduleMode("");
@@ -559,7 +578,6 @@ export default function PublicAuditorioPage() {
   const submitRequest = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setFormError(null);
-    setSuccess(null);
 
     if (!title.trim() || !email.trim() || !confirmEmail.trim()) {
       setFormError("Completa el nombre del evento y el correo.");
@@ -617,7 +635,7 @@ export default function PublicAuditorioPage() {
 
     const overlapWith = hasOverlapWithOtherEvents(validBlocks, events);
     if (overlapWith) {
-      setFormError(formatOverlapMessage(overlapWith));
+      toast.error(formatOverlapMessage(overlapWith));
       return;
     }
 
@@ -662,7 +680,7 @@ export default function PublicAuditorioPage() {
         throw new Error(body?.error ?? body?.message ?? "No se pudo enviar la solicitud.");
       }
 
-      setSuccess("Solicitud enviada. Quedó en estado Pendiente para revisión de los administradores.");
+      toast.success("Solicitud enviada. Quedó en estado Pendiente para revisión de los administradores.");
       resetPublicForm();
       setIsCreateOpen(false);
     } catch (error) {
@@ -694,7 +712,6 @@ export default function PublicAuditorioPage() {
               </div>
 
               {loadError ? <p className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{loadError}</p> : null}
-              {success ? <p className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700">{success}</p> : null}
               {isLoading && !selectedEvent ? <p className="text-sm text-[#566166]">Cargando reservas...</p> : null}
 
               <div className="space-y-8">
@@ -942,19 +959,39 @@ export default function PublicAuditorioPage() {
                       <div className="mt-4">
                         <label>
                           <span className="mb-2 block text-sm font-medium text-slate-700">Fecha</span>
-                          <input
-                            type="date"
-                            min={minimumReservationDateKey}
-                            value={startDate}
-                            onChange={(event) => {
-                              const value = event.target.value;
-                              setStartDate(value);
-                              setEndDate(value);
-                              setScheduleBlocks((current) => buildSingleScheduleBlock(value, current));
+                          <div
+                            role="button"
+                            tabIndex={0}
+                            onPointerDown={(event) => {
+                              if (event.target === event.currentTarget) {
+                                openNativeDatePicker(startDateInputRef.current);
+                              }
                             }}
-                            className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10"
-                            required
-                          />
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                openNativeDatePicker(startDateInputRef.current);
+                              }
+                            }}
+                            className="cursor-pointer rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm outline-none transition focus-within:border-[#295786] focus-within:ring-4 focus-within:ring-[#295786]/10"
+                          >
+                            <input
+                              ref={startDateInputRef}
+                              type="date"
+                              min={minimumReservationDateKey}
+                              value={startDate}
+                              onClick={() => handleDateInputClick(startDateInputRef.current)}
+                              onChange={(event) => {
+                                const value = event.target.value;
+                                setStartDate(value);
+                                setEndDate(value);
+                                setActivePublicScheduleDateKey(value);
+                                setScheduleBlocks((current) => buildSingleScheduleBlock(value, current));
+                              }}
+                              className="w-full bg-transparent text-sm text-slate-900 outline-none"
+                              required
+                            />
+                          </div>
                         </label>
                       </div>
                     ) : null}
@@ -963,26 +1000,64 @@ export default function PublicAuditorioPage() {
                       <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
                         <label>
                           <span className="mb-2 block text-sm font-medium text-slate-700">Fecha de inicio</span>
-                          <input
-                            type="date"
-                            min={minimumReservationDateKey}
-                            value={startDate}
-                            onChange={(event) => syncPublicRangeBlocks(event.target.value, endDate || event.target.value)}
-                            className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10"
-                            required
-                          />
+                          <div
+                            role="button"
+                            tabIndex={0}
+                            onPointerDown={(event) => {
+                              if (event.target === event.currentTarget) {
+                                openNativeDatePicker(startDateInputRef.current);
+                              }
+                            }}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                openNativeDatePicker(startDateInputRef.current);
+                              }
+                            }}
+                            className="cursor-pointer rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm outline-none transition focus-within:border-[#295786] focus-within:ring-4 focus-within:ring-[#295786]/10"
+                          >
+                            <input
+                              ref={startDateInputRef}
+                              type="date"
+                              min={minimumReservationDateKey}
+                              value={startDate}
+                              onClick={() => handleDateInputClick(startDateInputRef.current)}
+                              onChange={(event) => syncPublicRangeBlocks(event.target.value, endDate || event.target.value)}
+                              className="w-full bg-transparent text-sm text-slate-900 outline-none"
+                              required
+                            />
+                          </div>
                         </label>
 
                         <label>
                           <span className="mb-2 block text-sm font-medium text-slate-700">Fecha de fin</span>
-                          <input
-                            type="date"
-                            min={startDate || minimumReservationDateKey}
-                            value={endDate}
-                            onChange={(event) => syncPublicRangeBlocks(startDate || event.target.value, event.target.value)}
-                            className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10"
-                            required
-                          />
+                          <div
+                            role="button"
+                            tabIndex={0}
+                            onPointerDown={(event) => {
+                              if (event.target === event.currentTarget) {
+                                openNativeDatePicker(endDateInputRef.current);
+                              }
+                            }}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                openNativeDatePicker(endDateInputRef.current);
+                              }
+                            }}
+                            className="cursor-pointer rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm outline-none transition focus-within:border-[#295786] focus-within:ring-4 focus-within:ring-[#295786]/10"
+                          >
+                            <input
+                              ref={endDateInputRef}
+                              type="date"
+                              min={startDate || minimumReservationDateKey}
+                              value={endDate}
+                              onClick={() => handleDateInputClick(endDateInputRef.current)}
+                              onChange={(event) => syncPublicRangeBlocks(startDate || event.target.value, event.target.value)}
+                              className="w-full bg-transparent text-sm text-slate-900 outline-none"
+                              required
+                            />
+                          </div>
                         </label>
                       </div>
                     ) : null}
@@ -1182,7 +1257,41 @@ export default function PublicAuditorioPage() {
                     </h3>
 
                     <div className="space-y-3 rounded-2xl border border-slate-200 bg-[#f8fbfd] p-4 text-sm text-slate-700">
-                      <p><span className="font-semibold">Modo:</span> {scheduleMode === "single" ? "Un solo día" : scheduleMode === "multi" ? "Varios días" : "Sin seleccionar"}</p>
+                      <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm">
+                          <p className="text-s font-extrabold uppercase tracking-[0.12em] text-slate-600">Evento</p>
+                          <p className="mt-1 text-sm font-medium uppercase text-slate-700">{title || "Evento"}</p>
+                        </div>
+
+                      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                        <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm">
+                          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Correo</p>
+                          <p className="mt-1 break-all text-sm font-medium text-slate-700">{email || "Sin registrar"}</p>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm">
+                          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Asistentes</p>
+                          <p className="mt-1 text-sm font-medium text-slate-700">{attendees || 1}</p>
+                        </div>
+                      </div>
+                      <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                        Asegúrate de escribir bien el correo. Ahí te comunicaremos toda la información de tu solicitud.
+                      </div>
+
+                      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                        <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Equipamiento</p>
+                        {selectedEquipmentLabels.length > 0 ? (
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {selectedEquipmentLabels.map((item) => (
+                              <span key={item} className="rounded-full bg-[#d5e3ff] px-3 py-1 text-xs font-semibold text-[#2c5287]">
+                                {item}
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="mt-1 text-sm font-medium text-slate-500">Sin equipamiento seleccionado</p>
+                        )}
+                      </div>
+
+
                       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                         <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm">
                           <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Fecha inicio</p>
@@ -1194,52 +1303,73 @@ export default function PublicAuditorioPage() {
                         </div>
                       </div>
 
-                      <div className="space-y-2">
-                        <p className="font-semibold text-slate-700">Días del rango</p>
-                        {visibleScheduleDates.length > 0 ? (
-                          <div className="flex flex-wrap gap-2">
-                            {visibleScheduleDates.map((date) => {
-                              const dateKey = toDateKey(date);
-                              const isActive = activePublicScheduleDateKey === dateKey || (!activePublicScheduleDateKey && dateKey === toDateKey(visibleScheduleDates[0]));
-
-                              return (
-                                <button
-                                  key={dateKey}
-                                  type="button"
-                                  onClick={() => setActivePublicScheduleDateKey(dateKey)}
-                                  className={`rounded-full px-3 py-2 text-sm font-medium transition ${
-                                    isActive
-                                      ? "bg-[#295786] text-white"
-                                      : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                                  }`}
-                                >
-                                  {formatDateShort(dateKey)}
-                                </button>
-                              );
-                            })}
+                      {scheduleMode === "single" ? (
+                        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Horario</p>
+                          <div className="mt-2 rounded-xl border border-slate-200 bg-[#f8fbfd] px-3 py-2">
+                            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Día</p>
+                            <p className="mt-1 text-sm font-medium text-slate-700">{startDate ? formatDateShort(startDate) : "Sin seleccionar"}</p>
                           </div>
-                        ) : (
-                          <p className="text-slate-500">Sin días configurados.</p>
-                        )}
-                      </div>
-
-                      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                        <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Día activo</p>
-                        <p className="mt-1 text-sm font-medium text-slate-700">
-                          {activePublicScheduleDateKey ? formatDateShort(activePublicScheduleDateKey) : (visibleScheduleDates[0] ? formatDateShort(toDateKey(visibleScheduleDates[0])) : "Sin seleccionar")}
-                        </p>
-                        <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
-                          <div className="rounded-xl border border-slate-200 bg-[#f8fbfd] px-3 py-2">
-                            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Hora de inicio</p>
-                            <p className="mt-1 text-sm font-medium text-slate-700">{activePublicScheduleBlock?.startTime ? formatTimeAmPm(activePublicScheduleBlock.startTime) : "--"}</p>
-                          </div>
-                          <div className="rounded-xl border border-slate-200 bg-[#f8fbfd] px-3 py-2">
-                            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Hora de fin</p>
-                            <p className="mt-1 text-sm font-medium text-slate-700">{activePublicScheduleBlock?.endTime ? formatTimeAmPm(activePublicScheduleBlock.endTime) : "--"}</p>
+                          <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                            <div className="rounded-xl border border-slate-200 bg-[#f8fbfd] px-3 py-2">
+                              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Hora de inicio</p>
+                              <p className="mt-1 text-sm font-medium text-slate-700">{scheduleBlocks[0]?.startTime ? formatTimeAmPm(scheduleBlocks[0].startTime) : "--"}</p>
+                            </div>
+                            <div className="rounded-xl border border-slate-200 bg-[#f8fbfd] px-3 py-2">
+                              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Hora de fin</p>
+                              <p className="mt-1 text-sm font-medium text-slate-700">{scheduleBlocks[0]?.endTime ? formatTimeAmPm(scheduleBlocks[0].endTime) : "--"}</p>
+                            </div>
                           </div>
                         </div>
-                      </div>
-                      <p><span className="font-semibold">Evento:</span> {title || "Evento"}</p>
+                      ) : (
+                        <>
+                          <div className="space-y-2">
+                            <p className="font-semibold text-slate-700">Horario</p>
+                            {visibleScheduleDates.length > 0 ? (
+                              <div className="flex flex-wrap gap-2">
+                                {visibleScheduleDates.map((date) => {
+                                  const dateKey = toDateKey(date);
+                                  const isActive = activePublicScheduleDateKey === dateKey || (!activePublicScheduleDateKey && dateKey === toDateKey(visibleScheduleDates[0]));
+
+                                  return (
+                                    <button
+                                      key={dateKey}
+                                      type="button"
+                                      onClick={() => setActivePublicScheduleDateKey(dateKey)}
+                                      className={`rounded-full px-3 py-2 text-sm font-medium transition ${
+                                        isActive
+                                          ? "bg-[#295786] text-white"
+                                          : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                                      }`}
+                                    >
+                                      {formatDateShort(dateKey)}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            ) : (
+                              <p className="text-slate-500">Sin días configurados.</p>
+                            )}
+                          </div>
+
+                          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Día activo</p>
+                            <p className="mt-1 text-sm font-medium text-slate-700">
+                              {activePublicScheduleDateKey ? formatDateShort(activePublicScheduleDateKey) : (visibleScheduleDates[0] ? formatDateShort(toDateKey(visibleScheduleDates[0])) : "Sin seleccionar")}
+                            </p>
+                            <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                              <div className="rounded-xl border border-slate-200 bg-[#f8fbfd] px-3 py-2">
+                                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Hora de inicio</p>
+                                <p className="mt-1 text-sm font-medium text-slate-700">{activePublicScheduleBlock?.startTime ? formatTimeAmPm(activePublicScheduleBlock.startTime) : "--"}</p>
+                              </div>
+                              <div className="rounded-xl border border-slate-200 bg-[#f8fbfd] px-3 py-2">
+                                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Hora de fin</p>
+                                <p className="mt-1 text-sm font-medium text-slate-700">{activePublicScheduleBlock?.endTime ? formatTimeAmPm(activePublicScheduleBlock.endTime) : "--"}</p>
+                              </div>
+                            </div>
+                          </div>
+                        </>
+                      )}
                     </div>
                   </section>
 
@@ -1249,7 +1379,7 @@ export default function PublicAuditorioPage() {
                         Cancelar
                       </button>
                       <button type="submit" disabled={isSaving} className="flex-1 rounded-xl bg-[#295786] px-5 py-3 text-sm font-semibold text-white shadow-[0_12px_24px_rgba(41,87,134,0.24)] transition hover:bg-[#1f4a74] disabled:cursor-not-allowed disabled:opacity-70">
-                        {isSaving ? "Enviando..." : "Reservar evento"}
+                        {isSaving ? "Enviando..." : "Solicitar reserva"}
                       </button>
                     </div>
                   </section>

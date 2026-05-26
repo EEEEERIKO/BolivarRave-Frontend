@@ -2,10 +2,12 @@
 
 import Link from "next/link";
 import { ReactNode } from "react";
+import { Toaster } from "react-hot-toast";
 
 export default function PublicLayout({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-screen bg-[#f7f9fb] text-[#2a3439]">
+      <Toaster position="top-right" toastOptions={{ duration: 4000 }} />
       <header className="w-full bg-white border-b border-slate-100">
         <div className="mx-auto max-w-6xl px-6 py-4 flex items-center justify-between">
           <Link href="/" className="font-extrabold text-xl">Página de Reservas - UNAC</Link>
