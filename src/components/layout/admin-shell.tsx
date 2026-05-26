@@ -574,7 +574,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
                             type="button"
                             onClick={() => {
                               setIsNotificationsOpen(false);
-                              router.push("/auditorio");
+                              router.push(`/auditorio?reservaId=${encodeURIComponent(event.reservaId)}`);
                             }}
                             className={`w-full rounded-lg border bg-[#295786]/5 px-3 py-3 text-left text-sm text-slate-700 transition dark:text-slate-100 ${
                               notifStatus === "en_curso"
@@ -704,7 +704,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
                             type="button"
                             onClick={() => {
                               setIsNotificationsOpen(false);
-                              router.push("/auditorio");
+                              router.push(`/auditorio?reservaId=${encodeURIComponent(request.reservaId)}`);
                             }}
                             className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-left text-sm text-slate-700 transition hover:border-[#295786]/30 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
                           >
@@ -739,7 +739,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
                           type="button"
                           onClick={() => {
                             setIsNotificationsOpen(false);
-                            router.push("/auditorio");
+                            router.push(`/auditorio?reservaId=${encodeURIComponent(event.reservaId)}`);
                           }}
                           className={`w-full rounded-lg border bg-[#295786]/5 px-3 py-3 text-left text-sm text-slate-700 transition dark:text-slate-100 ${
                             notifStatus === "en_curso"
