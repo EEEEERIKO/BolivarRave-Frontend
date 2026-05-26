@@ -24,10 +24,13 @@ type InventoryItem = {
   name: string;
   code: string;
   room: string;
-  status: "Disponible" | "Fijo";
+  status: "Disponible" | "Fijo" | "Asignado";
   defective: boolean;
   motivo: string | null;
+  price?: number | null;
   order: number;
+  hdmiAssigned?: boolean;
+  hdmiItemId?: string | null;
 };
 
 type InventoryGroupFormState = {
@@ -40,9 +43,12 @@ type InventoryItemFormState = {
   name: string;
   code: string;
   room: string;
-  status: "Disponible" | "Fijo";
+  status: "Disponible" | "Fijo" | "Asignado";
   defective: boolean;
   motivo: string;
+  price?: number | null;
+  hdmiAssigned?: boolean;
+  hdmiItemId?: string | null;
 };
 
 type InventoryModalState =
@@ -82,13 +88,31 @@ const getGroupBadge = (group: InventoryGroup) => {
   };
 };
 
-const normalizeStatus = (value: string | null | undefined): "Disponible" | "Fijo" => {
-  if (value === "Fijo") {
-    return "Fijo";
+const normalizeStatus = (value: string | null | undefined): "Disponible" | "Fijo" | "Asignado" => {
+  if (value === "Fijo" || value === "Asignado") {
+    return value;
   }
 
   return "Disponible";
 };
+
+function formatCurrencyCOP(value?: number | null): string {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return "";
+  try {
+    return new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP" }).format(Number(value));
+  } catch {
+    return `COP ${Number(value).toFixed(2)}`;
+  }
+}
+
+function isHdmiGroupName(groupName: string): boolean {
+  return groupName.trim().toLowerCase().includes("hdmi");
+}
+
+function isTelevisionGroupName(groupName: string): boolean {
+  const normalized = groupName.trim().toLowerCase();
+  return normalized.includes("tv") || normalized.includes("televisor") || normalized.includes("television") || normalized.includes("tele");
+}
 
 function getLocationSortKey(room: string): { floor: number; label: string } {
   const normalized = room.trim().toLowerCase();
@@ -129,6 +153,11 @@ export default function InventoryPage() {
   const [defectiveReason, setDefectiveReason] = useState<string>("");
   const [modalError, setModalError] = useState<string | null>(null);
   const [isModalSubmitting, setIsModalSubmitting] = useState(false);
+  const [hdmiSearchQuery, setHdmiSearchQuery] = useState<string>("");
+  const [hdmiAssignedLabel, setHdmiAssignedLabel] = useState<string>("");
+  const [showHdmiSelector, setShowHdmiSelector] = useState(false);
+  const [showCreateHdmiModal, setShowCreateHdmiModal] = useState(false);
+  const [newHdmiForm, setNewHdmiForm] = useState({ name: "", price: "", code: "" });
   const groupsScrollRef = useRef<HTMLDivElement | null>(null);
 
   const authSession = useMemo(() => readAuthSession(), []);
@@ -255,6 +284,23 @@ export default function InventoryPage() {
     [selectedItems],
   );
 
+  const inventoryItemsById = useMemo(() => {
+    return new Map(inventoryItems.map((item) => [item.id, item] as const));
+  }, [inventoryItems]);
+
+  const hdmiItems = useMemo(() => inventoryItems.filter((item) => item.groupName === "Cables HDMI"), [inventoryItems]);
+
+  const televisionByHdmiId = useMemo(() => {
+    const map = new Map<string, InventoryItem>();
+    inventoryItems.forEach((item) => {
+      const groupName = item.groupName.trim().toLowerCase();
+      if (isTelevisionGroupName(groupName) && item.hdmiItemId) {
+        map.set(item.hdmiItemId, item);
+      }
+    });
+    return map;
+  }, [inventoryItems]);
+
   const roomOptions = useMemo(() => {
     const options = [...roomCatalog];
     if (itemForm.room && !options.includes(itemForm.room)) {
@@ -317,6 +363,11 @@ export default function InventoryPage() {
     setModalError(null);
     setIsModalSubmitting(false);
     setDefectiveReason("");
+    setHdmiSearchQuery("");
+    setHdmiAssignedLabel("");
+    setShowHdmiSelector(false);
+    setShowCreateHdmiModal(false);
+    setNewHdmiForm({ name: "", price: "", code: "" });
   };
 
   const openGroupModal = (mode: "create" | "edit") => {
@@ -343,10 +394,18 @@ export default function InventoryPage() {
       name: mode === "edit" && item ? item.name : "",
       code: mode === "edit" && item ? item.code : "",
       room: mode === "edit" && item ? item.room : "",
-      status: mode === "edit" && item ? item.status : "Disponible",
+      status: mode === "edit" && item ? normalizeStatus(item.status) : "Disponible",
       defective: false,
       motivo: "",
+      price: mode === "edit" && item ? item.price ?? null : null,
+      hdmiAssigned: mode === "edit" && item ? !!item.hdmiAssigned : false,
+      hdmiItemId: mode === "edit" && item ? item.hdmiItemId ?? null : null,
     });
+    if (mode === "edit" && item) {
+      setHdmiAssignedLabel(item.hdmiItemId ? "HDMI asignado" : "");
+    } else {
+      setHdmiAssignedLabel("");
+    }
     setActiveModal({ kind: "item", mode, itemId: item?.id });
   };
 
@@ -403,6 +462,9 @@ export default function InventoryPage() {
           status: item.status,
           defective: false,
           motivo: null,
+          price: item.price ?? null,
+          hdmiAssigned: item.hdmiAssigned ?? false,
+          hdmiItemId: item.hdmiItemId ?? null,
         }),
       });
 
@@ -482,6 +544,9 @@ export default function InventoryPage() {
           status: itemForm.status,
           defective: itemForm.defective,
           motivo: itemForm.defective ? itemForm.motivo.trim() || null : null,
+          price: typeof itemForm.price === "number" ? Number(itemForm.price) : null,
+          hdmiAssigned: !!itemForm.hdmiAssigned,
+          hdmiItemId: itemForm.hdmiItemId ?? null,
         };
 
         if (activeModal.mode === "create") {
@@ -547,6 +612,9 @@ export default function InventoryPage() {
           status: targetItem.status,
           defective: true,
           motivo: reason,
+          price: targetItem.price ?? null,
+          hdmiAssigned: targetItem.hdmiAssigned ?? false,
+          hdmiItemId: targetItem.hdmiItemId ?? null,
         };
 
         try {
@@ -875,28 +943,63 @@ export default function InventoryPage() {
                         {item.defective ? (
                           <div className="mt-1 flex items-center gap-1 text-[10px] font-bold text-rose-700">
                             <span className="material-symbols-outlined text-sm">error</span>
-                            { "Defectuoso"}
+                            Defectuoso
                           </div>
                         ) : null}
                       </div>
                     </div>
 
-                    <div className="mt-2 flex flex-wrap items-center justify-between gap-2 pr-8">
-                      <p className="text-xs font-semibold text-[#2a3439]">{item.room}</p>
-                      <div className="flex flex-wrap items-center gap-1">
-                        <span
-                          className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                            item.defective
-                              ? "bg-rose-100 text-rose-700"
-                              : item.status === "Fijo"
-                                ? "bg-[#d9d7f8]/40 text-[#5d5d78]"
-                                : "bg-[#d5e3ff] text-[#2c5287]"
-                          }`}
-                        >
-                          
-                        </span>
-                      </div>
-                    </div>
+                    {(() => {
+                      const isHdmiGroup = isHdmiGroupName(item.groupName);
+                      const isTelevisionGroup = isTelevisionGroupName(item.groupName);
+                      const linkedHdmi = isTelevisionGroup && item.hdmiItemId ? inventoryItemsById.get(item.hdmiItemId) ?? null : null;
+                      const linkedTelevision = isHdmiGroup ? televisionByHdmiId.get(item.id) ?? null : null;
+                      const effectiveStatus = item.defective
+                        ? "Defectuoso"
+                        : isHdmiGroup
+                          ? linkedTelevision
+                            ? "Asignado"
+                            : "Disponible"
+                          : item.status;
+
+                      return (
+                        <>
+                          <div className="mt-2 flex flex-wrap items-center justify-between gap-2 pr-8">
+                            <p className="text-xs font-semibold text-[#2a3439]">{item.room}</p>
+                            <div className="flex flex-wrap items-center gap-1">
+                              <span
+                                className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                                  item.defective
+                                    ? "bg-rose-100 text-rose-700"
+                                    : effectiveStatus === "Fijo"
+                                      ? "bg-[#d9d7f8]/40 text-[#5d5d78]"
+                                      : effectiveStatus === "Asignado"
+                                        ? "bg-emerald-100 text-emerald-700"
+                                        : "bg-[#d5e3ff] text-[#2c5287]"
+                                }`}
+                              >
+                                {effectiveStatus}
+                              </span>
+                            </div>
+                          </div>
+
+                          {typeof item.price === "number" ? (
+                            <p className="mt-2 text-xs font-semibold text-[#2a3439]">Precio: {formatCurrencyCOP(item.price)}</p>
+                          ) : null}
+
+                          {isTelevisionGroup && item.hdmiItemId ? (
+                            <p className="mt-2 rounded-lg bg-white/80 px-2 py-1 text-[10px] text-[#2c5287]">
+                              <span className="font-bold">HDMI enlazado:</span>{" "}
+                              {linkedHdmi ? `${linkedHdmi.name} — ${linkedHdmi.code} · ${linkedHdmi.room}` : "Asignado"}
+                            </p>
+                          ) : isHdmiGroup && linkedTelevision ? (
+                            <p className="mt-2 rounded-lg bg-white/80 px-2 py-1 text-[10px] text-emerald-700">
+                              <span className="font-bold">Televisor enlazado:</span> {linkedTelevision.name} · {linkedTelevision.room}
+                            </p>
+                          ) : null}
+                        </>
+                      );
+                    })()}
 
                     {item.defective && item.motivo ? (
                       <p className="mt-2 rounded-lg bg-white/80 px-2 py-1 text-[10px] text-rose-700">
@@ -1072,6 +1175,7 @@ export default function InventoryPage() {
                       >
                         <option value="Disponible">Disponible</option>
                         <option value="Fijo">Fijo</option>
+                        <option value="Asignado">Asignado</option>
                       </select>
                     </div>
                   </div>
@@ -1122,7 +1226,167 @@ export default function InventoryPage() {
                         ))}
                       </select>
                     </div>
+                    <div>
+                      <label className="mb-2 block text-xs font-bold tracking-widest text-[#566166] uppercase" htmlFor="inventory-item-price">
+                        Precio (COP)
+                      </label>
+                      <input
+                        id="inventory-item-price"
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm text-[#2a3439] outline-none transition focus:border-[#3a5f94]"
+                        onChange={(event) => setItemForm((current) => ({ ...current, price: event.target.value ? Number(event.target.value) : null }))}
+                        placeholder="Ej. 50000"
+                        value={itemForm.price ?? ""}
+                      />
+                    </div>
                   </div>
+
+                  {(() => {
+                    const groupName = inventoryGroups.find((group) => group.id === itemForm.groupId)?.name.trim().toLowerCase() ?? "";
+                    const isHdmiGroup = isHdmiGroupName(groupName);
+
+                    if (isHdmiGroup) {
+                      const linkedTelevision = modalItem?.id ? televisionByHdmiId.get(modalItem.id) ?? null : null;
+
+                      return (
+                        <div className="rounded-2xl border border-sky-100 bg-sky-50 p-4 text-sm text-sky-800">
+                          <p className="text-[10px] font-bold tracking-widest text-sky-600 uppercase">Relación lógica</p>
+                          <p className="mt-1 font-semibold">Televisor enlazado</p>
+                          <p className="mt-1 text-sm">
+                            {linkedTelevision ? `${linkedTelevision.name} · ${linkedTelevision.room}` : "Este HDMI no tiene un televisor enlazado."}
+                          </p>
+                        </div>
+                      );
+                    }
+
+                    const isTV = isTelevisionGroupName(groupName);
+
+                    if (!isTV) return null;
+
+                    const filteredHdmis = hdmiItems.filter((h) => {
+                      const query = hdmiSearchQuery.toLowerCase();
+                      return (
+                        h.name.toLowerCase().includes(query) ||
+                        h.code.toLowerCase().includes(query) ||
+                        h.room.toLowerCase().includes(query)
+                      );
+                    });
+                    const normalizedHdmiQuery = hdmiSearchQuery.trim().toLowerCase();
+                    const exactHdmiMatch = normalizedHdmiQuery.length > 0 && hdmiItems.some((h) => {
+                      const name = h.name.trim().toLowerCase();
+                      const code = h.code.trim().toLowerCase();
+                      const room = h.room.trim().toLowerCase();
+                      return name === normalizedHdmiQuery || code === normalizedHdmiQuery || room === normalizedHdmiQuery;
+                    });
+
+                    const selectedHdmi = itemForm.hdmiItemId ? inventoryItems.find((h) => h.id === itemForm.hdmiItemId) : null;
+                    const fallbackHdmiText = hdmiAssignedLabel || (itemForm.hdmiItemId ? "HDMI asignado" : "Sin HDMI asignado");
+                    const hasExistingHdmi = Boolean(selectedHdmi || fallbackHdmiText !== "Sin HDMI asignado");
+                    const canOfferCreateHdmi = !selectedHdmi && normalizedHdmiQuery.length > 0 && !exactHdmiMatch;
+                    const shouldShowHdmiSelector = showHdmiSelector || !hasExistingHdmi;
+
+                    return (
+                      <div>
+                        <label className="mb-2 block text-xs font-bold tracking-widest text-[#566166] uppercase">
+                          Cable HDMI asignado
+                        </label>
+                        <div className="mb-2 flex items-center justify-between gap-3 rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3">
+                          <p className="text-[11px] font-semibold text-emerald-700">
+                            Asignado: {selectedHdmi ? `${selectedHdmi.name} — ${selectedHdmi.code}` : fallbackHdmiText}
+                          </p>
+                        </div>
+
+                        {shouldShowHdmiSelector ? (
+                          <div className="relative">
+                            <input
+                              type="text"
+                              className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm text-[#2a3439] outline-none transition focus:border-[#3a5f94]"
+                              placeholder="Buscar HDMI por nombre, código o salón..."
+                              value={showHdmiSelector ? hdmiSearchQuery : (selectedHdmi ? `${selectedHdmi.name} — ${selectedHdmi.code}` : hdmiSearchQuery || hdmiAssignedLabel)}
+                              onChange={(e) => {
+                                if (selectedHdmi) {
+                                  setItemForm((current) => ({ ...current, hdmiItemId: null }));
+                                }
+                                setHdmiAssignedLabel("");
+                                setHdmiSearchQuery(e.target.value);
+                              }}
+                              onFocus={() => {
+                                if (!hasExistingHdmi) {
+                                  setHdmiSearchQuery("");
+                                }
+                              }}
+                            />
+
+                            {hdmiSearchQuery && (
+                              <div className="absolute top-full left-0 right-0 z-30 mt-1 max-h-48 overflow-y-auto rounded-2xl border border-slate-200 bg-white shadow-lg">
+                                {filteredHdmis.length > 0 ? (
+                                  <>
+                                    {filteredHdmis.map((h) => (
+                                      <button
+                                        key={h.id}
+                                        type="button"
+                                        className="w-full border-b border-slate-100 px-4 py-3 text-left hover:bg-slate-50 last:border-b-0"
+                                        onClick={() => {
+                                          setItemForm((current) => ({ ...current, hdmiItemId: h.id, hdmiAssigned: true }));
+                                          setHdmiAssignedLabel(`${h.name} — ${h.code}`);
+                                          setHdmiSearchQuery("");
+                                          setShowHdmiSelector(false);
+                                        }}
+                                      >
+                                        <p className="text-xs font-bold text-[#2a3439]">{h.name}</p>
+                                        <p className="text-[10px] text-[#566166]">{h.code} • {h.room}</p>
+                                      </button>
+                                    ))}
+                                    {canOfferCreateHdmi && (
+                                      <button
+                                        type="button"
+                                        className="w-full px-4 py-3 text-left text-xs font-semibold text-blue-600 hover:bg-blue-50"
+                                        onClick={() => {
+                                          setShowCreateHdmiModal(true);
+                                          setNewHdmiForm({ name: `HDMI de ${itemForm.name}`, price: "", code: "" });
+                                        }}
+                                      >
+                                        + Crear nuevo HDMI: "{hdmiSearchQuery}"
+                                      </button>
+                                    )}
+                                  </>
+                                ) : canOfferCreateHdmi ? (
+                                  <button
+                                    type="button"
+                                    className="w-full px-4 py-3 text-left text-xs font-semibold text-blue-600 hover:bg-blue-50"
+                                    onClick={() => {
+                                      setShowCreateHdmiModal(true);
+                                      setNewHdmiForm({ name: `HDMI de ${itemForm.name}`, price: "", code: "" });
+                                    }}
+                                  >
+                                    + Crear nuevo HDMI: "{hdmiSearchQuery}"
+                                  </button>
+                                ) : null}
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            className="mt-1 inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-[#3a5f94] transition hover:bg-slate-50"
+                            onClick={() => {
+                              setHdmiSearchQuery("");
+                              setHdmiAssignedLabel("");
+                              setShowHdmiSelector(true);
+                            }}
+                          >
+                            Cambiar HDMI asignado
+                          </button>
+                        )}
+
+                        {selectedHdmi && shouldShowHdmiSelector && (
+                          <p className="mt-1 text-xs font-semibold text-emerald-600">✓ {selectedHdmi.name} seleccionado</p>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   <div className="rounded-2xl bg-[#f0f4f7] p-4 text-sm text-[#566166]">
                     <p className="font-bold text-[#2a3439]">Resumen</p>
@@ -1180,6 +1444,149 @@ export default function InventoryPage() {
           </form>
         </div>
       ) : null}
+
+      {showCreateHdmiModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-[2px]">
+          <form
+            className="w-full max-w-md rounded-3xl border border-slate-200 bg-white shadow-[0_30px_80px_rgba(15,23,42,0.2)]"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              setIsModalSubmitting(true);
+              try {
+                const hdmiGroupId = inventoryGroups.find((group) => group.name.toLowerCase().includes("hdmi") || group.name.toLowerCase().includes("cable"))?.id;
+                if (!hdmiGroupId) {
+                  throw new Error("No se encontró grupo para HDMIs. Verifica que exista un grupo 'Cables HDMI'.");
+                }
+
+                const normalizedName = newHdmiForm.name.trim().toLowerCase();
+                const normalizedCode = newHdmiForm.code.trim().toLowerCase();
+                const duplicateHdmi = inventoryItems.find((item) => {
+                  if (item.groupName !== "Cables HDMI") return false;
+                  return item.name.trim().toLowerCase() === normalizedName || item.code.trim().toLowerCase() === normalizedCode;
+                });
+
+                if (duplicateHdmi) {
+                  throw new Error(`Ese HDMI ya existe: ${duplicateHdmi.name} (${duplicateHdmi.code}).`);
+                }
+
+                const response = await fetchApiJson<{ id: string }>("/api/inventory/items", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    groupId: hdmiGroupId,
+                    name: newHdmiForm.name,
+                    code: newHdmiForm.code,
+                    room: "Monitoría",
+                    status: "Disponible",
+                    defective: false,
+                    motivo: null,
+                    price: newHdmiForm.price ? Number(newHdmiForm.price) : null,
+                    hdmiAssigned: false,
+                    hdmiItemId: null,
+                  }),
+                });
+
+                await loadInventory();
+                setItemForm((current) => ({ ...current, hdmiItemId: response.id, hdmiAssigned: true }));
+                setShowCreateHdmiModal(false);
+                setNewHdmiForm({ name: "", price: "", code: "" });
+                setHdmiSearchQuery("");
+                setHdmiAssignedLabel(`HDMI de ${itemForm.name}`);
+              } catch (error) {
+                setModalError(error instanceof Error ? error.message : "Error al crear HDMI.");
+              } finally {
+                setIsModalSubmitting(false);
+              }
+            }}
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-6 py-5">
+              <div>
+                <p className="text-[10px] font-bold tracking-[0.3em] text-[#3a5f94] uppercase">Nuevo Cable HDMI</p>
+                <h3 className="mt-1 text-xl font-extrabold tracking-tight text-[#1A365D]">Registrar Cable HDMI</h3>
+              </div>
+              <button
+                className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-600 transition hover:bg-slate-200"
+                onClick={() => {
+                  setShowCreateHdmiModal(false);
+                  setNewHdmiForm({ name: "", price: "", code: "" });
+                }}
+                type="button"
+              >
+                <span className="material-symbols-outlined text-[20px]">close</span>
+              </button>
+            </div>
+
+            <div className="space-y-5 px-6 py-5">
+              <div>
+                <label className="mb-2 block text-xs font-bold tracking-widest text-[#566166] uppercase" htmlFor="new-hdmi-name">
+                  Nombre
+                </label>
+                <input
+                  id="new-hdmi-name"
+                  type="text"
+                  className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm text-[#2a3439] outline-none transition focus:border-[#3a5f94]"
+                  onChange={(e) => setNewHdmiForm((current) => ({ ...current, name: e.target.value }))}
+                  placeholder="Cable HDMI Estándar"
+                  value={newHdmiForm.name}
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-xs font-bold tracking-widest text-[#566166] uppercase" htmlFor="new-hdmi-code">
+                  Código
+                </label>
+                <input
+                  id="new-hdmi-code"
+                  type="text"
+                  className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm text-[#2a3439] outline-none transition focus:border-[#3a5f94]"
+                  onChange={(e) => setNewHdmiForm((current) => ({ ...current, code: e.target.value }))}
+                  placeholder="Ej. 0001"
+                  value={newHdmiForm.code}
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-xs font-bold tracking-widest text-[#566166] uppercase" htmlFor="new-hdmi-price">
+                  Precio (COP)
+                </label>
+                <input
+                  id="new-hdmi-price"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm text-[#2a3439] outline-none transition focus:border-[#3a5f94]"
+                  onChange={(e) => setNewHdmiForm((current) => ({ ...current, price: e.target.value }))}
+                  placeholder="Ej. 50000"
+                  value={newHdmiForm.price}
+                />
+              </div>
+            </div>
+
+            <div className="flex flex-col-reverse gap-3 border-t border-slate-100 px-6 py-5 sm:flex-row sm:justify-end">
+              <button
+                className="rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-bold text-[#566166] transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70"
+                onClick={() => {
+                  setShowCreateHdmiModal(false);
+                  setNewHdmiForm({ name: "", price: "", code: "" });
+                }}
+                type="button"
+                disabled={isModalSubmitting}
+              >
+                Cancelar
+              </button>
+              <button
+                className="rounded-2xl bg-[#3a5f94] px-5 py-3 text-sm font-bold text-white transition hover:bg-[#2f4f7a] disabled:cursor-not-allowed disabled:opacity-70"
+                disabled={isModalSubmitting}
+                type="submit"
+              >
+                {isModalSubmitting ? "Creando HDMI..." : "Crear HDMI"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 }
