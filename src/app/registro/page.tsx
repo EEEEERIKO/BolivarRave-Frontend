@@ -626,15 +626,7 @@ export default function RegistroPage() {
               </div>
 
               <div className="flex flex-col gap-5">
-                <div className="rounded-2xl bg-white/70 px-4 py-3">
-                  <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#566166]">Registrados</p>
-                  <p className="mt-1 text-lg font-extrabold text-[#2a3439]">{staffRegistradosAhora.length}</p>
-                </div>
-
-                <div className="rounded-2xl bg-white/70 px-4 py-3">
-                  <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#566166]">Pendientes</p>
-                  <p className="mt-1 text-lg font-extrabold text-[#2a3439]">{staffNoRegistradosAhora.length}</p>
-                </div>
+                
 
                 {isLoadingDashboard || isLoadingLiveSchedules ? (
                   <p className="text-sm text-[#566166]">Cargando trabajadores de la hora actual...</p>
