@@ -3435,8 +3435,8 @@ export default function SchedulesPage() {
               </div>
             )}
 
-            <div className="mt-4 flex-1 min-h-0 overflow-hidden">
-              <div className="grid h-full gap-3 sm:grid-cols-2">
+            <div className="mt-4 flex-1 min-h-0 overflow-y-auto">
+              <div className="grid gap-3 sm:grid-cols-2">
               {!isRequestMode ? (
                 <div className="sm:col-span-2">
                   <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Tipo de reserva</label>
@@ -3684,8 +3684,8 @@ export default function SchedulesPage() {
               </div>
             )}
 
-            <div className="mt-4 flex-1 min-h-0 overflow-hidden">
-              <div className="grid h-full gap-3 sm:grid-cols-2">
+            <div className="mt-4 flex-1 min-h-0 overflow-y-auto">
+              <div className="grid gap-3 sm:grid-cols-2">
                 <select
                   required
                   className="rounded-lg border border-slate-200 px-3 py-2 text-sm"

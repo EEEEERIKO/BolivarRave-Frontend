@@ -585,6 +585,19 @@ function findTasksInSlot(
   });
 }
 
+function pickEditableScheduleTask(tasks: ScheduleTaskItem[]): ScheduleTaskItem | null {
+  if (tasks.length === 0) {
+    return null;
+  }
+
+  return (
+    tasks.find((task) => task.tipo === "Recurrente" && (task.diasSemana?.length ?? 0) > 0) ??
+    tasks.find((task) => task.tipo === "Recurrente") ??
+    tasks[0] ??
+    null
+  );
+}
+
 function buildPreviewMatrix(
   tasks: ScheduleTaskItem[],
   jornadas: StaffJornadaItem[],
@@ -3470,6 +3483,7 @@ export default function TasksPage() {
                                                 const cell = worker.matrix[dayIndex]?.[slotStart] ?? { label: "FUERA DE TURNO", status: "off" as const };
                                                 const tasksInSlot = cell.status === "task" ? findTasksInSlot(worker.tasks, dayIndex, slotStart) : [];
                                                 const isClickable = (cell.status === "task" && tasksInSlot.length > 0) || cell.status === "available";
+                                                const selectedTask = pickEditableScheduleTask(tasksInSlot);
 
                                                 return (
                                                   <td
@@ -3480,7 +3494,7 @@ export default function TasksPage() {
                                                           staffId: worker.staff.id,
                                                           dayIndex,
                                                           slotStart,
-                                                          taskId: tasksInSlot[0]?.id,
+                                                          taskId: selectedTask?.id,
                                                         });
                                                       }
                                                     }}
@@ -3715,6 +3729,18 @@ export default function TasksPage() {
                         return;
                       }
 
+                      if (showQuickCatalogEditor && editingCatalogId) {
+                        void (async () => {
+                          const saved = await submitCatalog(e);
+                          if (saved) {
+                            setShowQuickCatalogEditor(false);
+                            setSelectedScheduleCell(null);
+                          }
+                        })();
+
+                        return;
+                      }
+
                       const catalogId = (document.getElementById("schedule-task-catalog") as HTMLSelectElement)?.value;
                       if (!catalogId) {
                         setNotice({ kind: "error", text: "Selecciona una tarea del catálogo." });
@@ -3883,7 +3909,7 @@ export default function TasksPage() {
                               <label>
                                 <span className="text-xs font-bold text-slate-500">Hora programada</span>
                                 <select value={catalogForm.horaProgramada} onChange={(e) => setCatalogForm((c) => ({ ...c, horaProgramada: e.target.value }))} className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 text-sm">
-                                  {Array.from(new Set([minutesToHHMM(selectedScheduleCell.slotStart), catalogForm.horaProgramada, ...TASK_RECURRENT_TIME_OPTIONS])).map((time) => (
+                                  {Array.from(new Set([minutesToHHMM(slotStart), catalogForm.horaProgramada, ...TASK_RECURRENT_TIME_OPTIONS])).map((time) => (
                                     <option key={time} value={time}>{toAmPmLabel(time)}</option>
                                   ))}
                                 </select>
@@ -4137,6 +4163,8 @@ export default function TasksPage() {
             const task = tasksInSlot[0];
             const taskInstance = instances.find((item) => item.id === task.id);
             const taskCatalog = catalog.find((item) => item.id === (taskInstance?.tareaCatalogoId ?? task.id)) ?? null;
+            const taskStartMin = getTaskStartMinutes(taskCatalog ?? task);
+            const taskStartTime = taskStartMin !== null ? minutesToHHMM(taskStartMin) : minutesToHHMM(selectedScheduleCell.slotStart);
             const slotStart = selectedScheduleCell.slotStart;
             const slotEnd = slotStart + 30;
             const rowLabel = `${toAmPmLabel(minutesToHHMM(slotStart))} - ${toAmPmLabel(minutesToHHMM(slotEnd))}`;
@@ -4399,7 +4427,7 @@ export default function TasksPage() {
 
                           beginEditCatalog(taskCatalog, {
                             cantidadPersonal: "1",
-                            horaProgramada: minutesToHHMM(slotStart),
+                            horaProgramada: taskStartTime,
                             diasSemana: taskCatalog.diasSemana.length > 0 ? taskCatalog.diasSemana : [selectedScheduleCell.dayIndex],
                           });
                           setShowQuickCatalogEditor(true);

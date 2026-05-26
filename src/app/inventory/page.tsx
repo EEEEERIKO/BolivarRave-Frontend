@@ -24,13 +24,10 @@ type InventoryItem = {
   name: string;
   code: string;
   room: string;
-  status: "Disponible" | "Fijo" | "Asignado";
+  status: "Disponible" | "Fijo";
   defective: boolean;
   motivo: string | null;
-  price?: number | null;
   order: number;
-  hdmiAssigned?: boolean;
-  hdmiItemId?: string | null;
 };
 
 type InventoryGroupFormState = {
@@ -43,12 +40,9 @@ type InventoryItemFormState = {
   name: string;
   code: string;
   room: string;
-  status: "Disponible" | "Fijo" | "Asignado";
+  status: "Disponible" | "Fijo";
   defective: boolean;
   motivo: string;
-  price?: number | null;
-  hdmiAssigned?: boolean;
-  hdmiItemId?: string | null;
 };
 
 type InventoryModalState =
@@ -96,15 +90,6 @@ const normalizeStatus = (value: string | null | undefined): "Disponible" | "Fijo
   return "Disponible";
 };
 
-function formatCurrencyCOP(value?: number | null): string {
-  if (value === null || value === undefined || Number.isNaN(Number(value))) return "";
-  try {
-    return new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP" }).format(Number(value));
-  } catch {
-    return `COP ${Number(value).toFixed(2)}`;
-  }
-}
-
 function getLocationSortKey(room: string): { floor: number; label: string } {
   const normalized = room.trim().toLowerCase();
   const floorMatch = normalized.match(/piso\s*(\d+)/i);
@@ -114,31 +99,6 @@ function getLocationSortKey(room: string): { floor: number; label: string } {
     label: normalized,
   };
 }
-
-const INVENTORY_GROUP_PRIORITY: Record<string, number> = {
-  televisores: 0,
-  equipos: 1,
-  "clases de sábado": 2,
-};
-
-const sortInventoryGroups = (groups: InventoryGroup[]) => {
-  return [...groups].sort((left, right) => {
-    const leftName = left.name.trim().toLowerCase();
-    const rightName = right.name.trim().toLowerCase();
-    const leftPriority = INVENTORY_GROUP_PRIORITY[leftName] ?? 99;
-    const rightPriority = INVENTORY_GROUP_PRIORITY[rightName] ?? 99;
-
-    if (leftPriority !== rightPriority) {
-      return leftPriority - rightPriority;
-    }
-
-    if (left.order !== right.order) {
-      return left.order - right.order;
-    }
-
-    return leftName.localeCompare(rightName);
-  });
-};
 
 export default function InventoryPage() {
   const LOCAL_DEFECTIVE_REASON_KEY = "inventory_defective_reason_overrides_v1";
@@ -169,12 +129,6 @@ export default function InventoryPage() {
   const [defectiveReason, setDefectiveReason] = useState<string>("");
   const [modalError, setModalError] = useState<string | null>(null);
   const [isModalSubmitting, setIsModalSubmitting] = useState(false);
-  const [groupItemSearch, setGroupItemSearch] = useState<string>("");
-  const [hdmiSearchQuery, setHdmiSearchQuery] = useState<string>("");
-  const [hdmiAssignedLabel, setHdmiAssignedLabel] = useState<string>("");
-  const [showHdmiSelector, setShowHdmiSelector] = useState(false);
-  const [showCreateHdmiModal, setShowCreateHdmiModal] = useState(false);
-  const [newHdmiForm, setNewHdmiForm] = useState({ name: "", price: "", code: "" });
   const groupsScrollRef = useRef<HTMLDivElement | null>(null);
 
   const authSession = useMemo(() => readAuthSession(), []);
@@ -247,7 +201,7 @@ export default function InventoryPage() {
           return current;
         }
 
-        return sortInventoryGroups(nextGroups)[0]?.id ?? "";
+        return nextGroups[0]?.id ?? "";
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "No se pudo cargar el inventario";
@@ -265,24 +219,16 @@ export default function InventoryPage() {
     void loadInventory();
   }, []);
 
-  const orderedInventoryGroups = useMemo(() => sortInventoryGroups(inventoryGroups), [inventoryGroups]);
-
   const selectedGroup = useMemo(
-    () => orderedInventoryGroups.find((group) => group.id === selectedGroupId) ?? orderedInventoryGroups[0] ?? null,
-    [orderedInventoryGroups, selectedGroupId],
+    () => inventoryGroups.find((group) => group.id === selectedGroupId) ?? inventoryGroups[0] ?? null,
+    [inventoryGroups, selectedGroupId],
   );
 
   const selectedItems = useMemo(
-    () => {
-      const filtered = inventoryItems.filter((item) => item.groupId === selectedGroup?.id);
-      
-      // Separar en dos grupos: monitoría y salones
-      const monitoria = filtered.filter((item) => item.room.toLowerCase().includes("monitoría") || item.room.toLowerCase().includes("monitorio"));
-      const salones = filtered.filter((item) => !item.room.toLowerCase().includes("monitoría") && !item.room.toLowerCase().includes("monitorio"));
-      
-      // Ordenar cada grupo
-      const sortByLocation = (items: typeof filtered) => {
-        return items.sort((a, b) => {
+    () =>
+      inventoryItems
+        .filter((item) => item.groupId === selectedGroup?.id)
+        .sort((a, b) => {
           const locationA = getLocationSortKey(a.room);
           const locationB = getLocationSortKey(b.room);
 
@@ -295,44 +241,9 @@ export default function InventoryPage() {
           }
 
           return a.name.localeCompare(b.name);
-        });
-      };
-      
-      // Monitoría primero, luego salones
-      return [...sortByLocation(monitoria), ...sortByLocation(salones)];
-    },
+        }),
     [inventoryItems, selectedGroup],
   );
-
-  const filteredSelectedItems = useMemo(() => {
-    const query = groupItemSearch.trim().toLowerCase();
-
-    if (!query) {
-      return selectedItems;
-    }
-
-    return selectedItems.filter((item) => {
-      const searchBlob = [item.name, item.code, item.room, item.groupName].join(" ").toLowerCase();
-      return searchBlob.includes(query);
-    });
-  }, [groupItemSearch, selectedItems]);
-
-  const inventoryItemsById = useMemo(() => {
-    return new Map(inventoryItems.map((item) => [item.id, item]));
-  }, [inventoryItems]);
-
-  const televisionByHdmiId = useMemo(() => {
-    const map = new Map<string, InventoryItem>();
-
-    inventoryItems.forEach((item) => {
-      const groupName = item.groupName.trim().toLowerCase();
-      if (groupName.includes("televisor") && item.hdmiItemId) {
-        map.set(item.hdmiItemId, item);
-      }
-    });
-
-    return map;
-  }, [inventoryItems]);
 
   const selectedGroupItemCount = useMemo(
     () => selectedGroup?.itemCount ?? selectedItems.length,
@@ -345,20 +256,12 @@ export default function InventoryPage() {
   );
 
   const roomOptions = useMemo(() => {
-    const options = Array.from(new Set(roomCatalog));
-    const monitoria = "Monitoría";
-    const filtered = options.filter((o) => o !== monitoria);
-    const result = [monitoria, ...filtered];
-
-    if (itemForm.room && !result.includes(itemForm.room)) {
-      // Insert the current typed/selected room right after Monitoría
-      result.splice(1, 0, itemForm.room);
+    const options = [...roomCatalog];
+    if (itemForm.room && !options.includes(itemForm.room)) {
+      options.unshift(itemForm.room);
     }
-
-    return result;
+    return options;
   }, [itemForm.room, roomCatalog]);
-
-  const hdmiItems = useMemo(() => inventoryItems.filter((it) => it.groupName === "Cables HDMI"), [inventoryItems]);
 
   const countByGroup = useMemo(() => {
     const map = new Map<string, number>();
@@ -414,11 +317,6 @@ export default function InventoryPage() {
     setModalError(null);
     setIsModalSubmitting(false);
     setDefectiveReason("");
-    setGroupItemSearch("");
-    setHdmiSearchQuery("");
-    setShowCreateHdmiModal(false);
-    setShowHdmiSelector(false);
-    setNewHdmiForm({ name: "", price: "", code: "" });
   };
 
   const openGroupModal = (mode: "create" | "edit") => {
@@ -438,34 +336,16 @@ export default function InventoryPage() {
     if (!canManageInventory) return;
 
     const defaultGroupId = selectedGroup?.id ?? inventoryGroups[0]?.id ?? "";
-    const linkedHdmi = item
-      ? inventoryItems.find((h) => h.id === item.hdmiItemId)
-        ?? inventoryItems.find((h) => {
-          const tvName = item.name.trim().toLowerCase();
-          const hdmiName = h.name.trim().toLowerCase();
-          return h.groupName === "Cables HDMI" && hdmiName === `hdmi de ${tvName}`;
-        })
-        ?? inventoryItems.find((h) => {
-          const tvName = item.name.trim().toLowerCase();
-          return h.groupName === "Cables HDMI" && h.name.trim().toLowerCase().includes(tvName);
-        })
-      : null;
     setModalError(null);
     setIsModalSubmitting(false);
-    setHdmiSearchQuery(linkedHdmi ? `${linkedHdmi.name} — ${linkedHdmi.code}` : "");
-    setHdmiAssignedLabel(linkedHdmi ? `${linkedHdmi.name} — ${linkedHdmi.code}` : item?.hdmiItemId ? "HDMI asignado" : "");
-    setShowHdmiSelector(mode === "create" || !linkedHdmi);
     setItemForm({
       groupId: mode === "edit" && item ? item.groupId : defaultGroupId,
       name: mode === "edit" && item ? item.name : "",
       code: mode === "edit" && item ? item.code : "",
       room: mode === "edit" && item ? item.room : "",
       status: mode === "edit" && item ? item.status : "Disponible",
-      price: mode === "edit" && item ? item.price ?? null : null,
       defective: false,
       motivo: "",
-      hdmiAssigned: mode === "edit" && item ? !!item.hdmiAssigned : false,
-      hdmiItemId: mode === "edit" && item ? item.hdmiItemId ?? null : null,
     });
     setActiveModal({ kind: "item", mode, itemId: item?.id });
   };
@@ -602,20 +482,13 @@ export default function InventoryPage() {
           status: itemForm.status,
           defective: itemForm.defective,
           motivo: itemForm.defective ? itemForm.motivo.trim() || null : null,
-          hdmiAssigned: !!itemForm.hdmiAssigned,
-          hdmiItemId: itemForm.hdmiItemId ?? null,
-          price: typeof itemForm.price === "number" ? Number(itemForm.price) : null,
         };
 
-        const selectedGroupName = inventoryGroups.find((group) => group.id === itemForm.groupId)?.name.trim().toLowerCase() ?? "";
-        const isTelevisorGroup = selectedGroupName.includes("televisor");
-
         if (activeModal.mode === "create") {
-          const alsoMoveHdmi = isTelevisorGroup && Boolean(payload.hdmiItemId);
           await fetchApiJson<{ id: string }>("/api/inventory/items", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ ...payload, alsoMoveHdmi }),
+            body: JSON.stringify(payload),
           });
         } else {
           const targetItemId = activeModal.itemId;
@@ -623,53 +496,11 @@ export default function InventoryPage() {
             throw new Error("No se encontró el elemento a editar.");
           }
 
-          const previousHdmiItemId = modalItem?.hdmiItemId ?? null;
-          const nextHdmiItemId = itemForm.hdmiItemId ?? null;
-          const alsoMoveHdmi = isTelevisorGroup && Boolean(nextHdmiItemId);
-          let detachedHdmi: InventoryItem | null = null;
-          let detachedHdmiDefective = false;
-          let detachedHdmiReason: string | null = null;
-
-          if (isTelevisorGroup && previousHdmiItemId && previousHdmiItemId !== nextHdmiItemId) {
-            detachedHdmi = inventoryItemsById.get(previousHdmiItemId) ?? null;
-            if (detachedHdmi) {
-              detachedHdmiDefective = window.confirm(`¿El ${detachedHdmi.name} - ${detachedHdmi.code} está defectuoso?`);
-              if (detachedHdmiDefective) {
-                const reason = window.prompt(`Escribe el motivo del daño para ${detachedHdmi.name}`)?.trim() ?? "";
-                if (!reason) {
-                  throw new Error("Debes ingresar el motivo del HDMI defectuoso.");
-                }
-
-                detachedHdmiReason = reason;
-              }
-            }
-          }
-
           await fetchApiJson<{ id: string }>(`/api/inventory/items/${targetItemId}`, {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ ...payload, alsoMoveHdmi }),
+            body: JSON.stringify(payload),
           });
-
-          if (detachedHdmi) {
-            await fetchApiJson<{ id: string }>(`/api/inventory/items/${detachedHdmi.id}`, {
-              method: "PUT",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                groupId: detachedHdmi.groupId,
-                name: detachedHdmi.name,
-                code: detachedHdmi.code,
-                room: "Monitoría",
-                status: detachedHdmi.status,
-                defective: detachedHdmiDefective,
-                motivo: detachedHdmiDefective ? detachedHdmiReason : null,
-                hdmiAssigned: false,
-                hdmiItemId: null,
-                price: typeof detachedHdmi.price === "number" ? detachedHdmi.price : null,
-                alsoMoveHdmi: false,
-              }),
-            });
-          }
         }
 
         await refreshInventory();
@@ -869,7 +700,7 @@ export default function InventoryPage() {
             ref={groupsScrollRef}
           >
             <div className="flex w-max flex-nowrap gap-4 pr-1">
-              {orderedInventoryGroups.map((group) => {
+              {inventoryGroups.map((group) => {
                 const groupCount = countByGroup.get(group.id) ?? 0;
                 const badge = getGroupBadge(group);
                 return (
@@ -909,6 +740,18 @@ export default function InventoryPage() {
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-[0_10px_40px_rgba(42,52,57,0.06)]">
         <div className="mb-6 flex items-center justify-between">
           <h3 className="text-xl font-extrabold tracking-tight text-[#1A365D]">Detalles del Grupo</h3>
+          {canManageInventory ? (
+            <button
+              className="material-symbols-outlined text-lg text-[#566166]"
+              onClick={createItem}
+              type="button"
+              title="Nuevo elemento"
+            >
+              add_circle
+            </button>
+          ) : (
+            <button className="material-symbols-outlined text-lg text-[#566166]">more_vert</button>
+          )}
         </div>
 
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
@@ -940,20 +783,6 @@ export default function InventoryPage() {
           <div className="xl:col-span-2">
             <div className="mb-3 flex items-center justify-between gap-2">
               <h4 className="text-sm font-bold text-[#2a3439]">Lista de Elementos</h4>
-              <div className="w-full max-w-xs">
-                <label className="sr-only" htmlFor="inventory-group-item-search">Buscar dentro del grupo</label>
-                <div className="relative">
-                  <input
-                    id="inventory-group-item-search"
-                    type="text"
-                    value={groupItemSearch}
-                    onChange={(event) => setGroupItemSearch(event.target.value)}
-                    placeholder="Buscar por nombre, código o salón"
-                    className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 pl-9 text-xs text-[#2a3439] outline-none transition focus:border-[#3a5f94]"
-                  />
-                  <span className="material-symbols-outlined pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[18px] text-slate-400">search</span>
-                </div>
-              </div>
               {canManageInventory && selectedGroup ? (
                 <button className="rounded-md border border-[#3a5f94] bg-[#3a5f94] px-3 py-1.5 text-xs font-bold text-white hover:bg-[#2f4f7a]" type="button" onClick={createItem}>
                   Nuevo elemento
@@ -962,312 +791,123 @@ export default function InventoryPage() {
             </div>
             {isLoadingInventory ? (
               <p className="text-xs text-[#566166]">Cargando inventario...</p>
-            ) : filteredSelectedItems.length > 0 ? (
-              (() => {
-                const monitoria = filteredSelectedItems.filter((item) => item.room.toLowerCase().includes("monitoría") || item.room.toLowerCase().includes("monitorio"));
-                const salones = filteredSelectedItems.filter((item) => !item.room.toLowerCase().includes("monitoría") && !item.room.toLowerCase().includes("monitorio"));
+            ) : selectedItems.length > 0 ? (
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                {selectedItems.map((item) => (
+                  <div
+                    className={`relative overflow-visible rounded-lg border p-3 ${
+                      item.defective ? "border-rose-200 bg-rose-50" : "border-transparent bg-[#f0f4f7]/60"
+                    }`}
+                    key={item.id}
+                  >
+                    {canManageInventory ? (
+                      <button
+                        className="absolute top-2 right-2 rounded-full p-1 text-[#566166] transition hover:bg-white hover:text-[#2a3439]"
+                        onClick={() => setActiveItemMenuId((current) => (current === item.id ? null : item.id))}
+                        type="button"
+                        aria-label="Abrir menú de acciones"
+                      >
+                        <span className="material-symbols-outlined text-lg">more_vert</span>
+                      </button>
+                    ) : null}
 
-                return (
-                  <div className="space-y-8">
-                    {monitoria.length > 0 && (
-                      <div>
-                        <h5 className="mb-4 text-sm font-bold text-[#2a3439]">Monitoría</h5>
-                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                          {monitoria.map((item) => (
-                            <div
-                              className={`relative overflow-visible rounded-lg border p-3 ${
-                                item.defective ? "border-rose-200 bg-rose-50" : "border-transparent bg-[#f0f4f7]/60"
-                              }`}
-                              key={item.id}
-                            >
-                              {canManageInventory ? (
-                                <button
-                                  className="absolute top-2 right-2 rounded-full p-1 text-[#566166] transition hover:bg-white hover:text-[#2a3439]"
-                                  onClick={() => setActiveItemMenuId((current) => (current === item.id ? null : item.id))}
-                                  type="button"
-                                  aria-label="Abrir menú de acciones"
-                                >
-                                  <span className="material-symbols-outlined text-lg">more_vert</span>
-                                </button>
-                              ) : null}
-
-                              {activeItemMenuId === item.id && canManageInventory ? (
-                                <div className="absolute top-9 right-2 z-20 w-48 rounded-xl border border-slate-200 bg-white shadow-xl">
-                                  <button
-                                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-semibold text-[#566166] hover:bg-slate-50"
-                                    onClick={() => {
-                                      setActiveItemMenuId(null);
-                                      editItem(item);
-                                    }}
-                                    type="button"
-                                  >
-                                    <span className="material-symbols-outlined text-base">edit</span>
-                                    Editar
-                                  </button>
-                                  <button
-                                    className="flex w-full items-center gap-2 border-t border-slate-100 px-3 py-2 text-left text-xs font-semibold text-[#566166] hover:bg-slate-50"
-                                    onClick={() => {
-                                      setActiveItemMenuId(null);
-                                      openDefectiveModal(item);
-                                    }}
-                                    type="button"
-                                  >
-                                    <span className="material-symbols-outlined text-base text-rose-600">{item.defective ? "edit" : "error"}</span>
-                                    {item.defective ? "Actualizar motivo" : "Marcar como defectuoso"}
-                                  </button>
-                                  {item.defective && (
-                                    <button
-                                      className="flex w-full items-center gap-2 border-t border-slate-100 px-3 py-2 text-left text-xs font-semibold text-green-600 hover:bg-green-50"
-                                      onClick={() => {
-                                        markAsFixed(item);
-                                      }}
-                                      type="button"
-                                    >
-                                      <span className="material-symbols-outlined text-base">check_circle</span>
-                                      Marcar como arreglado
-                                    </button>
-                                  )}
-                                  <button
-                                    className="flex w-full items-center gap-2 border-t border-slate-100 px-3 py-2 text-left text-xs font-semibold text-rose-600 hover:bg-rose-50"
-                                    onClick={() => {
-                                      setActiveItemMenuId(null);
-                                      deleteItem(item);
-                                    }}
-                                    type="button"
-                                  >
-                                    <span className="material-symbols-outlined text-base">delete</span>
-                                    Eliminar
-                                  </button>
-                                </div>
-                              ) : null}
-
-                              <div className="flex items-center gap-2 pr-8">
-                                <div className={`flex h-9 w-9 items-center justify-center rounded-md ${item.defective ? "bg-rose-100 text-rose-700" : "bg-[#e8eff3] text-[#3a5f94]"}`}>
-                                  <span className="material-symbols-outlined text-base">{item.defective ? "warning" : (selectedGroup?.icon ?? item.groupIcon)}</span>
-                                </div>
-                                <div className="min-w-0 flex-1">
-                                  <div className="flex min-w-0 items-center gap-2">
-                                    <p className="truncate text-xs font-bold text-[#2a3439]">{item.name}</p>
-                                    <p className="inline-flex shrink-0 rounded-full bg-white px-2 py-0.5 text-[10px] font-bold tracking-wide text-[#566166] shadow-sm">
-                                      {item.code}
-                                    </p>
-                                  </div>
-                                  {item.defective ? (
-                                    <div className="mt-1 flex items-center gap-1 text-[10px] font-bold text-rose-700">
-                                      <span className="material-symbols-outlined text-sm">error</span>
-                                      { "Defectuoso"}
-                                    </div>
-                                  ) : null}
-                                </div>
-                              </div>
-
-                              {(() => {
-                                const groupName = item.groupName?.trim().toLowerCase() ?? "";
-                                const isHdmi = groupName.includes("hdmi");
-                                const linkedToTv = isHdmi ? Boolean(televisionByHdmiId.get(item.id)) : false;
-                                const effectiveStatus = isHdmi ? (linkedToTv ? "Asignado" : "Disponible") : item.status;
-
-                                return (
-                                  <div className="mt-2 flex flex-wrap items-center justify-between gap-2 pr-8">
-                                    <p className="text-xs font-semibold text-[#2a3439]">{item.room}</p>
-                                    <div className="flex flex-wrap items-center gap-1">
-                                      <span
-                                        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                                          item.defective
-                                            ? "bg-rose-100 text-rose-700"
-                                            : effectiveStatus === "Fijo" || effectiveStatus === "Asignado"
-                                              ? "bg-[#d9d7f8]/40 text-[#5d5d78]"
-                                              : "bg-[#d5e3ff] text-[#2c5287]"
-                                        }`}
-                                      >
-                                        {effectiveStatus}
-                                      </span>
-                                      {typeof item.price === "number" ? (
-                                        <p className="ml-2 text-xs font-semibold text-[#2a3439]">{formatCurrencyCOP(item.price)}</p>
-                                      ) : null}
-                                    </div>
-                                  </div>
-                                );
-                              })()}
-
-                              {item.groupName.trim().toLowerCase().includes("televisor") && item.hdmiItemId ? (
-                                <div className="mt-2 rounded-lg border border-sky-100 bg-sky-50 px-2 py-1 text-[10px] text-sky-700">
-                                  <span className="font-bold">HDMI enlazado:</span>{" "}
-                                  {(() => {
-                                    const linkedHdmi = inventoryItemsById.get(item.hdmiItemId ?? "") ?? null;
-                                    return linkedHdmi ? `${linkedHdmi.name} — ${linkedHdmi.code} · ${item.room}` : "Asignado";
-                                  })()}
-                                </div>
-                              ) : item.groupName.trim().toLowerCase() === "cables hdmi" && televisionByHdmiId.get(item.id) ? (
-                                <div className="mt-2 rounded-lg border border-sky-100 bg-sky-50 px-2 py-1 text-[10px] text-sky-700">
-                                  <span className="font-bold">Televisor enlazado:</span>{" "}
-                                  {`${televisionByHdmiId.get(item.id)?.name ?? "Televisor"} · ${televisionByHdmiId.get(item.id)?.room ?? ""}`}
-                                </div>
-                              ) : null}
-
-                              {item.defective && item.motivo ? (
-                                <p className="mt-2 rounded-lg bg-white/80 px-2 py-1 text-[10px] text-rose-700">
-                                  <span className="font-bold">Motivo:</span> {item.motivo}
-                                </p>
-                              ) : null}
-                            </div>
-                          ))}
-                        </div>
+                    {activeItemMenuId === item.id && canManageInventory ? (
+                      <div className="absolute top-9 right-2 z-20 w-48 rounded-xl border border-slate-200 bg-white shadow-xl">
+                        <button
+                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-semibold text-[#566166] hover:bg-slate-50"
+                          onClick={() => {
+                            setActiveItemMenuId(null);
+                            editItem(item);
+                          }}
+                          type="button"
+                        >
+                          <span className="material-symbols-outlined text-base">edit</span>
+                          Editar
+                        </button>
+                        <button
+                          className="flex w-full items-center gap-2 border-t border-slate-100 px-3 py-2 text-left text-xs font-semibold text-[#566166] hover:bg-slate-50"
+                          onClick={() => {
+                            setActiveItemMenuId(null);
+                            openDefectiveModal(item);
+                          }}
+                          type="button"
+                        >
+                          <span className="material-symbols-outlined text-base text-rose-600">{item.defective ? "edit" : "error"}</span>
+                          {item.defective ? "Actualizar motivo" : "Marcar como defectuoso"}
+                        </button>
+                        {item.defective && (
+                          <button
+                            className="flex w-full items-center gap-2 border-t border-slate-100 px-3 py-2 text-left text-xs font-semibold text-green-600 hover:bg-green-50"
+                            onClick={() => {
+                              markAsFixed(item);
+                            }}
+                            type="button"
+                          >
+                            <span className="material-symbols-outlined text-base">check_circle</span>
+                            Marcar como arreglado
+                          </button>
+                        )}
+                        <button
+                          className="flex w-full items-center gap-2 border-t border-slate-100 px-3 py-2 text-left text-xs font-semibold text-rose-600 hover:bg-rose-50"
+                          onClick={() => {
+                            setActiveItemMenuId(null);
+                            deleteItem(item);
+                          }}
+                          type="button"
+                        >
+                          <span className="material-symbols-outlined text-base">delete</span>
+                          Eliminar
+                        </button>
                       </div>
-                    )}
+                    ) : null}
 
-                    {salones.length > 0 && (
-                      <div>
-                        {monitoria.length > 0 && <div className="border-t-2 border-slate-200 my-4"></div>}
-                        <h5 className="mb-4 text-sm font-bold text-[#2a3439]">Salones</h5>
-                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                          {salones.map((item) => (
-                            <div
-                              className={`relative overflow-visible rounded-lg border p-3 ${
-                                item.defective ? "border-rose-200 bg-rose-50" : "border-transparent bg-[#f0f4f7]/60"
-                              }`}
-                              key={item.id}
-                            >
-                              {canManageInventory ? (
-                                <button
-                                  className="absolute top-2 right-2 rounded-full p-1 text-[#566166] transition hover:bg-white hover:text-[#2a3439]"
-                                  onClick={() => setActiveItemMenuId((current) => (current === item.id ? null : item.id))}
-                                  type="button"
-                                  aria-label="Abrir menú de acciones"
-                                >
-                                  <span className="material-symbols-outlined text-lg">more_vert</span>
-                                </button>
-                              ) : null}
-
-                              {activeItemMenuId === item.id && canManageInventory ? (
-                                <div className="absolute top-9 right-2 z-20 w-48 rounded-xl border border-slate-200 bg-white shadow-xl">
-                                  <button
-                                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-semibold text-[#566166] hover:bg-slate-50"
-                                    onClick={() => {
-                                      setActiveItemMenuId(null);
-                                      editItem(item);
-                                    }}
-                                    type="button"
-                                  >
-                                    <span className="material-symbols-outlined text-base">edit</span>
-                                    Editar
-                                  </button>
-                                  <button
-                                    className="flex w-full items-center gap-2 border-t border-slate-100 px-3 py-2 text-left text-xs font-semibold text-[#566166] hover:bg-slate-50"
-                                    onClick={() => {
-                                      setActiveItemMenuId(null);
-                                      openDefectiveModal(item);
-                                    }}
-                                    type="button"
-                                  >
-                                    <span className="material-symbols-outlined text-base text-rose-600">{item.defective ? "edit" : "error"}</span>
-                                    {item.defective ? "Actualizar motivo" : "Marcar como defectuoso"}
-                                  </button>
-                                  {item.defective && (
-                                    <button
-                                      className="flex w-full items-center gap-2 border-t border-slate-100 px-3 py-2 text-left text-xs font-semibold text-green-600 hover:bg-green-50"
-                                      onClick={() => {
-                                        markAsFixed(item);
-                                      }}
-                                      type="button"
-                                    >
-                                      <span className="material-symbols-outlined text-base">check_circle</span>
-                                      Marcar como arreglado
-                                    </button>
-                                  )}
-                                  <button
-                                    className="flex w-full items-center gap-2 border-t border-slate-100 px-3 py-2 text-left text-xs font-semibold text-rose-600 hover:bg-rose-50"
-                                    onClick={() => {
-                                      setActiveItemMenuId(null);
-                                      deleteItem(item);
-                                    }}
-                                    type="button"
-                                  >
-                                    <span className="material-symbols-outlined text-base">delete</span>
-                                    Eliminar
-                                  </button>
-                                </div>
-                              ) : null}
-
-                              <div className="flex items-center gap-2 pr-8">
-                                <div className={`flex h-9 w-9 items-center justify-center rounded-md ${item.defective ? "bg-rose-100 text-rose-700" : "bg-[#e8eff3] text-[#3a5f94]"}`}>
-                                  <span className="material-symbols-outlined text-base">{item.defective ? "warning" : (selectedGroup?.icon ?? item.groupIcon)}</span>
-                                </div>
-                                <div className="min-w-0 flex-1">
-                                  <div className="flex min-w-0 items-center gap-2">
-                                    <p className="truncate text-xs font-bold text-[#2a3439]">{item.name}</p>
-                                    <p className="inline-flex shrink-0 rounded-full bg-white px-2 py-0.5 text-[10px] font-bold tracking-wide text-[#566166] shadow-sm">
-                                      {item.code}
-                                    </p>
-                                  </div>
-                                  {item.defective ? (
-                                    <div className="mt-1 flex items-center gap-1 text-[10px] font-bold text-rose-700">
-                                      <span className="material-symbols-outlined text-sm">error</span>
-                                      { "Defectuoso"}
-                                    </div>
-                                  ) : null}
-                                </div>
-                              </div>
-
-                              {(() => {
-                                const groupName = item.groupName?.trim().toLowerCase() ?? "";
-                                const isHdmi = groupName.includes("hdmi");
-                                const linkedToTv = isHdmi ? Boolean(televisionByHdmiId.get(item.id)) : false;
-                                const effectiveStatus = isHdmi ? (linkedToTv ? "Asignado" : "Disponible") : item.status;
-
-                                return (
-                                  <div className="mt-2 flex flex-wrap items-center justify-between gap-2 pr-8">
-                                    <p className="text-xs font-semibold text-[#2a3439]">{item.room}</p>
-                                    <div className="flex flex-wrap items-center gap-1">
-                                      <span
-                                        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                                          item.defective
-                                            ? "bg-rose-100 text-rose-700"
-                                            : effectiveStatus === "Fijo" || effectiveStatus === "Asignado"
-                                              ? "bg-[#d9d7f8]/40 text-[#5d5d78]"
-                                              : "bg-[#d5e3ff] text-[#2c5287]"
-                                        }`}
-                                      >
-                                        {effectiveStatus}
-                                      </span>
-                                      {typeof item.price === "number" ? (
-                                        <p className="ml-2 text-xs font-semibold text-[#2a3439]">{formatCurrencyCOP(item.price)}</p>
-                                      ) : null}
-                                    </div>
-                                  </div>
-                                );
-                              })()}
-
-                              {item.groupName.trim().toLowerCase().includes("televisor") && item.hdmiItemId ? (
-                                <div className="mt-2 rounded-lg border border-sky-100 bg-sky-50 px-2 py-1 text-[10px] text-sky-700">
-                                  <span className="font-bold">HDMI enlazado:</span>{" "}
-                                  {(() => {
-                                    const linkedHdmi = inventoryItemsById.get(item.hdmiItemId ?? "") ?? null;
-                                    return linkedHdmi ? `${linkedHdmi.name} — ${linkedHdmi.code} · ${item.room}` : "Asignado";
-                                  })()}
-                                </div>
-                              ) : item.groupName.trim().toLowerCase() === "cables hdmi" && televisionByHdmiId.get(item.id) ? (
-                                <div className="mt-2 rounded-lg border border-sky-100 bg-sky-50 px-2 py-1 text-[10px] text-sky-700">
-                                  <span className="font-bold">Televisor enlazado:</span>{" "}
-                                  {`${televisionByHdmiId.get(item.id)?.name ?? "Televisor"} · ${televisionByHdmiId.get(item.id)?.room ?? ""}`}
-                                </div>
-                              ) : null}
-
-                              {item.defective && item.motivo ? (
-                                <p className="mt-2 rounded-lg bg-white/80 px-2 py-1 text-[10px] text-rose-700">
-                                  <span className="font-bold">Motivo:</span> {item.motivo}
-                                </p>
-                              ) : null}
-                            </div>
-                          ))}
-                        </div>
+                    <div className="flex items-center gap-2 pr-8">
+                      <div className={`flex h-9 w-9 items-center justify-center rounded-md ${item.defective ? "bg-rose-100 text-rose-700" : "bg-[#e8eff3] text-[#3a5f94]"}`}>
+                        <span className="material-symbols-outlined text-base">{item.defective ? "warning" : (selectedGroup?.icon ?? item.groupIcon)}</span>
                       </div>
-                    )}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <p className="truncate text-xs font-bold text-[#2a3439]">{item.name}</p>
+                          <p className="inline-flex shrink-0 rounded-full bg-white px-2 py-0.5 text-[10px] font-bold tracking-wide text-[#566166] shadow-sm">
+                            {item.code}
+                          </p>
+                        </div>
+                        {item.defective ? (
+                          <div className="mt-1 flex items-center gap-1 text-[10px] font-bold text-rose-700">
+                            <span className="material-symbols-outlined text-sm">error</span>
+                            { "Defectuoso"}
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+
+                    <div className="mt-2 flex flex-wrap items-center justify-between gap-2 pr-8">
+                      <p className="text-xs font-semibold text-[#2a3439]">{item.room}</p>
+                      <div className="flex flex-wrap items-center gap-1">
+                        <span
+                          className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                            item.defective
+                              ? "bg-rose-100 text-rose-700"
+                              : item.status === "Fijo"
+                                ? "bg-[#d9d7f8]/40 text-[#5d5d78]"
+                                : "bg-[#d5e3ff] text-[#2c5287]"
+                          }`}
+                        >
+                          
+                        </span>
+                      </div>
+                    </div>
+
+                    {item.defective && item.motivo ? (
+                      <p className="mt-2 rounded-lg bg-white/80 px-2 py-1 text-[10px] text-rose-700">
+                        <span className="font-bold">Motivo:</span> {item.motivo}
+                      </p>
+                    ) : null}
                   </div>
-                );
-              })()
+                ))}
+              </div>
             ) : (
-              <p className="text-xs text-[#566166]">No hay elementos para este grupo con ese filtro.</p>
+              <p className="text-xs text-[#566166]">No hay elementos para este grupo.</p>
             )}
           </div>
         </div>
@@ -1275,8 +915,8 @@ export default function InventoryPage() {
 
       {activeModal ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-[2px]">
-          <form className="w-full max-w-2xl rounded-3xl border border-slate-200 bg-white shadow-[0_30px_80px_rgba(15,23,42,0.2)]" onSubmit={submitInventoryModal}>
-            <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-6 py-5">
+          <form className="w-full max-w-2xl rounded-3xl border border-slate-200 bg-white shadow-[0_30px_80px_rgba(15,23,42,0.2)] max-h-[90vh] overflow-hidden flex flex-col" onSubmit={submitInventoryModal}>
+            <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-6 py-5 shrink-0">
               <div>
                 <p className="text-[10px] font-bold tracking-[0.3em] text-[#3a5f94] uppercase">
                   {activeModal.kind === "group"
@@ -1319,10 +959,11 @@ export default function InventoryPage() {
               </button>
             </div>
 
-            <div className="space-y-5 px-6 py-5">
-              {modalError ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{modalError}</div> : null}
+            <div className="flex-1 min-h-0 overflow-y-auto">
+              <div className="space-y-5 px-6 py-5">
+                {modalError ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{modalError}</div> : null}
 
-              {activeModal.kind === "group" ? (
+                {activeModal.kind === "group" ? (
                 <>
                   <div>
                     <label className="mb-2 block text-xs font-bold tracking-widest text-[#566166] uppercase" htmlFor="inventory-group-name">
@@ -1396,7 +1037,7 @@ export default function InventoryPage() {
                 </>
               ) : activeModal.kind === "item" ? (
                 <>
-                        <div className="grid gap-4 md:grid-cols-2">
+                  <div className="grid gap-4 md:grid-cols-2">
                     <div>
                       <label className="mb-2 block text-xs font-bold tracking-widest text-[#566166] uppercase" htmlFor="inventory-item-group">
                         Grupo
@@ -1407,7 +1048,7 @@ export default function InventoryPage() {
                         onChange={(event) => setItemForm((current) => ({ ...current, groupId: event.target.value }))}
                         value={itemForm.groupId}
                       >
-                        {orderedInventoryGroups.map((group) => (
+                        {inventoryGroups.map((group) => (
                           <option key={group.id} value={group.id}>
                             {group.name}
                           </option>
@@ -1418,39 +1059,24 @@ export default function InventoryPage() {
                       <label className="mb-2 block text-xs font-bold tracking-widest text-[#566166] uppercase" htmlFor="inventory-item-status">
                         Estado
                       </label>
-                      {(() => {
-                        const groupName = inventoryGroups.find((g) => g.id === itemForm.groupId)?.name.trim().toLowerCase() ?? "";
-                        const isHdmiGroup = groupName.includes("hdmi");
-
-                        if (isHdmiGroup) {
-                          return (
-                            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-[#566166]">
-                              Estado automático: <span className="font-bold text-[#2a3439]">{itemForm.status}</span>
-                            </div>
-                          );
+                      <select
+                        id="inventory-item-status"
+                        className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm text-[#2a3439] outline-none transition focus:border-[#3a5f94]"
+                        onChange={(event) =>
+                          setItemForm((current) => ({
+                            ...current,
+                            status: normalizeStatus(event.target.value),
+                          }))
                         }
-
-                        return (
-                          <select
-                            id="inventory-item-status"
-                            className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm text-[#2a3439] outline-none transition focus:border-[#3a5f94]"
-                            onChange={(event) =>
-                              setItemForm((current) => ({
-                                ...current,
-                                status: normalizeStatus(event.target.value),
-                              }))
-                            }
-                            value={itemForm.status}
-                          >
-                            <option value="Disponible">Disponible</option>
-                            <option value="Fijo">Fijo</option>
-                          </select>
-                        );
-                      })()}
+                        value={itemForm.status}
+                      >
+                        <option value="Disponible">Disponible</option>
+                        <option value="Fijo">Fijo</option>
+                      </select>
                     </div>
                   </div>
 
-                  <div className="grid gap-4 md:grid-cols-3">
+                  <div className="grid gap-4 md:grid-cols-2">
                     <div>
                       <label className="mb-2 block text-xs font-bold tracking-widest text-[#566166] uppercase" htmlFor="inventory-item-name">
                         Nombre
@@ -1473,21 +1099,6 @@ export default function InventoryPage() {
                         onChange={(event) => setItemForm((current) => ({ ...current, code: event.target.value }))}
                         placeholder="Código de inventario"
                         value={itemForm.code}
-                      />
-                    </div>
-                    <div>
-                      <label className="mb-2 block text-xs font-bold tracking-widest text-[#566166] uppercase" htmlFor="inventory-item-price">
-                        Precio (COP)
-                      </label>
-                      <input
-                        id="inventory-item-price"
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm text-[#2a3439] outline-none transition focus:border-[#3a5f94]"
-                        onChange={(event) => setItemForm((current) => ({ ...current, price: event.target.value ? Number(event.target.value) : null }))}
-                        placeholder="Ej. 2000000"
-                        value={itemForm.price ?? ""}
                       />
                     </div>
                   </div>
@@ -1513,151 +1124,6 @@ export default function InventoryPage() {
                     </div>
                   </div>
 
-                  {(() => {
-                    const groupName = inventoryGroups.find((g) => g.id === itemForm.groupId)?.name.trim().toLowerCase() ?? "";
-                    const isHdmiGroup = groupName.includes("hdmi");
-
-                    if (isHdmiGroup) {
-                      const linkedTelevision = modalItem?.id ? televisionByHdmiId.get(modalItem.id) ?? null : null;
-
-                      return (
-                        <div className="rounded-2xl border border-sky-100 bg-sky-50 p-4 text-sm text-sky-800">
-                          <p className="text-[10px] font-bold tracking-widest text-sky-600 uppercase">Relación lógica</p>
-                          <p className="mt-1 font-semibold">Televisor enlazado</p>
-                          <p className="mt-1 text-sm">
-                            {linkedTelevision ? `${linkedTelevision.name} · ${linkedTelevision.room}` : "Este HDMI no tiene un televisor enlazado."}
-                          </p>
-                        </div>
-                      );
-                    }
-
-                    const isTV = groupName.includes("tv") || groupName.includes("televisor") || groupName.includes("television") || groupName.includes("tele");
-
-                    if (!isTV) return null;
-
-                    const filteredHdmis = hdmiItems.filter((h) => {
-                      const query = hdmiSearchQuery.toLowerCase();
-                      return (
-                        h.name.toLowerCase().includes(query) ||
-                        h.code.toLowerCase().includes(query) ||
-                        h.room.toLowerCase().includes(query)
-                      );
-                    });
-                    const normalizedHdmiQuery = hdmiSearchQuery.trim().toLowerCase();
-                    const exactHdmiMatch = normalizedHdmiQuery.length > 0 && hdmiItems.some((h) => {
-                      const name = h.name.trim().toLowerCase();
-                      const code = h.code.trim().toLowerCase();
-                      const room = h.room.trim().toLowerCase();
-                      return name === normalizedHdmiQuery || code === normalizedHdmiQuery || room === normalizedHdmiQuery;
-                    });
-
-                    const selectedHdmi = itemForm.hdmiItemId ? inventoryItems.find((h) => h.id === itemForm.hdmiItemId) : null;
-                    const fallbackHdmiText = hdmiAssignedLabel || (itemForm.hdmiItemId ? "HDMI asignado" : "Sin HDMI asignado");
-                    const hasExistingHdmi = Boolean(selectedHdmi || fallbackHdmiText !== "Sin HDMI asignado");
-                    const canOfferCreateHdmi = !selectedHdmi && normalizedHdmiQuery.length > 0 && !exactHdmiMatch;
-                    const shouldShowHdmiSelector = showHdmiSelector || !hasExistingHdmi;
-
-                    return (
-                      <div>
-                        <label className="mb-2 block text-xs font-bold tracking-widest text-[#566166] uppercase">
-                          Cable HDMI asignado
-                        </label>
-                        <div className="mb-2 flex items-center justify-between gap-3 rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3">
-                          <p className="text-[11px] font-semibold text-emerald-700">
-                            Asignado: {selectedHdmi ? `${selectedHdmi.name} — ${selectedHdmi.code}` : fallbackHdmiText}
-                          </p>
-                        </div>
-
-                        {shouldShowHdmiSelector ? (
-                          <div className="relative">
-                            <input
-                              type="text"
-                              className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm text-[#2a3439] outline-none transition focus:border-[#3a5f94]"
-                              placeholder="Buscar HDMI por nombre, código o salón..."
-                              value={showHdmiSelector ? hdmiSearchQuery : (selectedHdmi ? `${selectedHdmi.name} — ${selectedHdmi.code}` : hdmiSearchQuery || hdmiAssignedLabel)}
-                              onChange={(e) => {
-                                if (selectedHdmi) {
-                                  setItemForm((current) => ({ ...current, hdmiItemId: null }));
-                                }
-                                setHdmiAssignedLabel("");
-                                setHdmiSearchQuery(e.target.value);
-                              }}
-                              onFocus={() => {
-                                if (!hasExistingHdmi) {
-                                  setHdmiSearchQuery("");
-                                }
-                              }}
-                            />
-
-                            {hdmiSearchQuery && (
-                              <div className="absolute top-full left-0 right-0 z-30 mt-1 max-h-48 overflow-y-auto rounded-2xl border border-slate-200 bg-white shadow-lg">
-                                {filteredHdmis.length > 0 ? (
-                                  <>
-                                    {filteredHdmis.map((h) => (
-                                      <button
-                                        key={h.id}
-                                        type="button"
-                                        className="w-full border-b border-slate-100 px-4 py-3 text-left hover:bg-slate-50 last:border-b-0"
-                                        onClick={() => {
-                                          setItemForm((current) => ({ ...current, hdmiItemId: h.id, hdmiAssigned: true }));
-                                          setHdmiAssignedLabel(`${h.name} — ${h.code}`);
-                                          setHdmiSearchQuery("");
-                                          setShowHdmiSelector(false);
-                                        }}
-                                      >
-                                        <p className="text-xs font-bold text-[#2a3439]">{h.name}</p>
-                                        <p className="text-[10px] text-[#566166]">{h.code} • {h.room}</p>
-                                      </button>
-                                    ))}
-                                    {canOfferCreateHdmi && (
-                                      <button
-                                        type="button"
-                                        className="w-full px-4 py-3 text-left text-xs font-semibold text-blue-600 hover:bg-blue-50"
-                                        onClick={() => {
-                                          setShowCreateHdmiModal(true);
-                                          setNewHdmiForm({ name: `HDMI de ${itemForm.name}`, price: "", code: "" });
-                                        }}
-                                      >
-                                        + Crear nuevo HDMI: "{hdmiSearchQuery}"
-                                      </button>
-                                    )}
-                                  </>
-                                ) : canOfferCreateHdmi ? (
-                                  <button
-                                    type="button"
-                                    className="w-full px-4 py-3 text-left text-xs font-semibold text-blue-600 hover:bg-blue-50"
-                                    onClick={() => {
-                                      setShowCreateHdmiModal(true);
-                                      setNewHdmiForm({ name: `HDMI de ${itemForm.name}`, price: "", code: "" });
-                                    }}
-                                  >
-                                    + Crear nuevo HDMI: "{hdmiSearchQuery}"
-                                  </button>
-                                ) : null}
-                              </div>
-                            )}
-                          </div>
-                        ) : (
-                          <button
-                            type="button"
-                            className="mt-1 inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-[#3a5f94] transition hover:bg-slate-50"
-                            onClick={() => {
-                              setHdmiSearchQuery("");
-                              setHdmiAssignedLabel("");
-                              setShowHdmiSelector(true);
-                            }}
-                          >
-                            Cambiar HDMI asignado
-                          </button>
-                        )}
-
-                        {selectedHdmi && shouldShowHdmiSelector && (
-                          <p className="mt-1 text-xs font-semibold text-emerald-600">✓ {selectedHdmi.name} seleccionado</p>
-                        )}
-                      </div>
-                    );
-                  })()}
-
                   <div className="rounded-2xl bg-[#f0f4f7] p-4 text-sm text-[#566166]">
                     <p className="font-bold text-[#2a3439]">Resumen</p>
                     <p className="mt-1">El elemento quedará vinculado al grupo seleccionado y reflejará su estado en la lista principal.</p>
@@ -1674,9 +1140,10 @@ export default function InventoryPage() {
                   <p className="mt-1">Esta acción elimina el elemento del inventario de forma permanente.</p>
                 </div>
               )}
+              </div>
             </div>
 
-            <div className="flex flex-col-reverse gap-3 border-t border-slate-100 px-6 py-5 sm:flex-row sm:justify-end">
+            <div className="flex flex-col-reverse gap-3 border-t border-slate-100 px-6 py-5 sm:flex-row sm:justify-end shrink-0">
               <button
                 className="rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-bold text-[#566166] transition hover:bg-slate-50"
                 onClick={closeModal}
@@ -1713,152 +1180,6 @@ export default function InventoryPage() {
           </form>
         </div>
       ) : null}
-
-      {showCreateHdmiModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-[2px]">
-          <form 
-            className="w-full max-w-md rounded-3xl border border-slate-200 bg-white shadow-[0_30px_80px_rgba(15,23,42,0.2)]"
-            onSubmit={async (e) => {
-              e.preventDefault();
-              setIsModalSubmitting(true);
-              try {
-                const hdmiGroupId = inventoryGroups.find((g) => g.name.toLowerCase().includes("hdmi") || g.name.toLowerCase().includes("cable"))?.id;
-                if (!hdmiGroupId) {
-                  alert("No se encontró grupo para HDMIs. Verifica que exista un grupo 'Cables HDMI'.");
-                  return;
-                }
-
-                const normalizedName = newHdmiForm.name.trim().toLowerCase();
-                const normalizedCode = newHdmiForm.code.trim().toLowerCase();
-                const duplicateHdmi = inventoryItems.find((item) => {
-                  if (item.groupName !== "Cables HDMI") return false;
-                  return (
-                    item.name.trim().toLowerCase() === normalizedName ||
-                    item.code.trim().toLowerCase() === normalizedCode
-                  );
-                });
-
-                if (duplicateHdmi) {
-                  alert(`Ese HDMI ya existe: ${duplicateHdmi.name} (${duplicateHdmi.code}).`);
-                  return;
-                }
-
-                const response = await fetchApiJson<{ id: string }>("/api/inventory/items", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    groupId: hdmiGroupId,
-                    name: newHdmiForm.name,
-                    code: newHdmiForm.code,
-                    room: "Monitoría",
-                    status: "Disponible",
-                    defective: false,
-                    motivo: null,
-                    price: newHdmiForm.price ? Number(newHdmiForm.price) : null,
-                  }),
-                });
-
-                await loadInventory();
-                setItemForm((current) => ({ ...current, hdmiItemId: response.id, hdmiAssigned: true }));
-                setShowCreateHdmiModal(false);
-                setNewHdmiForm({ name: "", price: "", code: "" });
-                setHdmiSearchQuery("");
-                setHdmiAssignedLabel(`HDMI de ${itemForm.name}`);
-              } catch (error) {
-                alert(`Error al crear HDMI: ${error instanceof Error ? error.message : "Unknown error"}`);
-              } finally {
-                setIsModalSubmitting(false);
-              }
-            }}
-          >
-            <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-6 py-5">
-              <div>
-                <p className="text-[10px] font-bold tracking-[0.3em] text-[#3a5f94] uppercase">Nuevo Cable HDMI</p>
-                <h3 className="mt-1 text-xl font-extrabold tracking-tight text-[#1A365D]">Registrar Cable HDMI</h3>
-              </div>
-              <button
-                className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-600 transition hover:bg-slate-200"
-                onClick={() => {
-                  setShowCreateHdmiModal(false);
-                  setNewHdmiForm({ name: "", price: "", code: "" });
-                }}
-                type="button"
-              >
-                <span className="material-symbols-outlined text-[20px]">close</span>
-              </button>
-            </div>
-
-            <div className="space-y-5 px-6 py-5">
-              <div>
-                <label className="mb-2 block text-xs font-bold tracking-widest text-[#566166] uppercase" htmlFor="new-hdmi-name">
-                  Nombre
-                </label>
-                <input
-                  id="new-hdmi-name"
-                  type="text"
-                  className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm text-[#2a3439] outline-none transition focus:border-[#3a5f94]"
-                  onChange={(e) => setNewHdmiForm((current) => ({ ...current, name: e.target.value }))}
-                  placeholder="Cable HDMI Estándar"
-                  value={newHdmiForm.name}
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="mb-2 block text-xs font-bold tracking-widest text-[#566166] uppercase" htmlFor="new-hdmi-code">
-                  Código
-                </label>
-                <input
-                  id="new-hdmi-code"
-                  type="text"
-                  className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm text-[#2a3439] outline-none transition focus:border-[#3a5f94]"
-                  onChange={(e) => setNewHdmiForm((current) => ({ ...current, code: e.target.value }))}
-                  placeholder="Ej. 0001"
-                  value={newHdmiForm.code}
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="mb-2 block text-xs font-bold tracking-widest text-[#566166] uppercase" htmlFor="new-hdmi-price">
-                  Precio (COP)
-                </label>
-                <input
-                  id="new-hdmi-price"
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm text-[#2a3439] outline-none transition focus:border-[#3a5f94]"
-                  onChange={(e) => setNewHdmiForm((current) => ({ ...current, price: e.target.value }))}
-                  placeholder="Ej. 50000"
-                  value={newHdmiForm.price}
-                />
-              </div>
-            </div>
-
-            <div className="flex flex-col-reverse gap-3 border-t border-slate-100 px-6 py-5 sm:flex-row sm:justify-end">
-              <button
-                className="rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-bold text-[#566166] transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70"
-                onClick={() => {
-                  setShowCreateHdmiModal(false);
-                  setNewHdmiForm({ name: "", price: "", code: "" });
-                }}
-                type="button"
-                disabled={isModalSubmitting}
-              >
-                Cancelar
-              </button>
-              <button
-                className="rounded-2xl bg-[#3a5f94] px-5 py-3 text-sm font-bold text-white transition hover:bg-[#2f4f7a] disabled:cursor-not-allowed disabled:opacity-70"
-                disabled={isModalSubmitting}
-                type="submit"
-              >
-                {isModalSubmitting ? "Creando HDMI..." : "Crear HDMI"}
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
     </div>
   );
 }
