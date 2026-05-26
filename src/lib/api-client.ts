@@ -55,7 +55,18 @@ const toFriendlyApiError = (path: string, message: string, status?: number) => {
   }
 
   if (status === 401 || normalizedMessage.includes("no autorizado")) {
-    return "No tienes permisos para realizar esta acción. Verifica tu sesión o credenciales.";
+    if (
+      normalizedMessage.includes("sesion invalida") ||
+      normalizedMessage.includes("sesión invalida") ||
+      normalizedMessage.includes("sesion expirada") ||
+      normalizedMessage.includes("sesión expirada") ||
+      normalizedMessage.includes("token invalido") ||
+      normalizedMessage.includes("token inválido")
+    ) {
+      return "Tu sesión expiró o es inválida. Vuelve a iniciar sesión.";
+    }
+
+    return "No se pudo validar tu sesión. Vuelve a iniciar sesión.";
   }
 
   if (status === 403 && path.includes("/api/staff/login")) {

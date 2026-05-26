@@ -439,6 +439,7 @@ export default function AuditorioPage() {
   const [isDownloadingExcel, setIsDownloadingExcel] = useState(false);
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
   const [formState, setFormState] = useState<NewEventFormState>(createEmptyFormState(defaultDateKey));
+  const [scheduleMode, setScheduleMode] = useState<"" | "single" | "multi">("");
   const [isMonthPickerOpen, setIsMonthPickerOpen] = useState(false);
   const [pickerYear, setPickerYear] = useState(colombiaToday.getFullYear());
   const [visibleMonthCount, setVisibleMonthCount] = useState(2);
@@ -580,6 +581,11 @@ export default function AuditorioPage() {
       ? `${monthNames[monthsToShow[0].getMonth()]} ${monthsToShow[0].getFullYear()}`
       : `${monthNames[monthsToShow[0].getMonth()]} ${monthsToShow[0].getFullYear()} - ${monthNames[monthsToShow[1].getMonth()]} ${monthsToShow[1].getFullYear()}`;
   const selectedEvent = events.find((event) => event.id === selectedEventId) ?? null;
+  const visibleMultiDates = scheduleMode === "multi" ? getDatesBetweenKeys(formState.startDate, formState.endDate) : [];
+  const selectedScheduleDateKeys = new Set(formState.scheduleBlocks.map((block) => block.date));
+  const orderedScheduleBlocks = [...formState.scheduleBlocks].sort(
+    (a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime)
+  );
 
   const formatOverlapMessage = (detail: {
     title: string;
@@ -675,6 +681,8 @@ export default function AuditorioPage() {
         id: `edit-b${index + 1}-${Date.now()}`,
       })),
     });
+    const isSingle = selectedEvent.periodStartDate === selectedEvent.periodEndDate && selectedEvent.scheduleBlocks.length <= 1;
+    setScheduleMode(isSingle ? "single" : "multi");
     setIsCreateOpen(true);
   };
 
@@ -683,6 +691,7 @@ export default function AuditorioPage() {
     setEditingEventId(null);
     setFormError(null);
     setFieldErrors({});
+    setScheduleMode("");
     setFormState(createEmptyFormState(defaultDateKey));
     setIsCreateOpen(true);
   }
@@ -698,6 +707,7 @@ export default function AuditorioPage() {
     setEditingEventId(null);
     setFormError(null);
     setFieldErrors({});
+    setScheduleMode("");
   }
 
   function moveEventToDate(eventId: string, newStartDate: Date) {
@@ -798,20 +808,72 @@ export default function AuditorioPage() {
     }));
   }
 
-  function addScheduleBlock() {
-    clearFieldError("scheduleBlocks");
-    setFormState((current) => ({
-      ...current,
-      scheduleBlocks: [
-        ...current.scheduleBlocks,
-        {
-          id: `new-b${current.scheduleBlocks.length + 1}-${Date.now()}`,
-          date: current.startDate || defaultDateKey,
-          startTime: "08:00",
-          endTime: "10:00",
-        },
-      ],
-    }));
+  function setScheduleModeAndAdjust(mode: "single" | "multi") {
+    setScheduleMode(mode);
+    setFormState((current) => {
+      if (mode === "single") {
+        const singleDate = current.startDate || defaultDateKey;
+        const orderedBlocks = [...current.scheduleBlocks].sort(
+          (a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime)
+        );
+        const first = orderedBlocks[0] ?? { id: `new-b1-${Date.now()}`, date: singleDate, startTime: "08:00", endTime: "10:00" };
+        return {
+          ...current,
+          startDate: singleDate,
+          endDate: singleDate,
+          scheduleBlocks: [
+            {
+              ...first,
+              date: singleDate,
+            },
+          ],
+        };
+      }
+
+      const start = current.startDate || defaultDateKey;
+      const end = current.endDate || start;
+      return {
+        ...current,
+        startDate: start,
+        endDate: end,
+      };
+    });
+  }
+
+  function getDatesBetweenKeys(startKey: string, endKey: string) {
+    const start = parseISODate(startKey);
+    const end = parseISODate(endKey);
+    const days: Date[] = [];
+    for (let d = new Date(start); d <= end; d = addDays(d, 1)) {
+      days.push(new Date(d));
+    }
+    return days;
+  }
+
+  function toggleDateSelection(dateKey: string) {
+    setFormState((current) => {
+      const exists = current.scheduleBlocks.some((b) => b.date === dateKey);
+      if (exists) {
+        return {
+          ...current,
+          scheduleBlocks: current.scheduleBlocks.filter((b) => b.date !== dateKey),
+        };
+      }
+
+      const newBlock: ScheduleBlock = {
+        id: `new-b${current.scheduleBlocks.length + 1}-${Date.now()}`,
+        date: dateKey,
+        startTime: current.scheduleBlocks[0]?.startTime ?? "08:00",
+        endTime: current.scheduleBlocks[0]?.endTime ?? "10:00",
+      };
+
+      return {
+        ...current,
+        scheduleBlocks: [...current.scheduleBlocks, newBlock].sort(
+          (a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime)
+        ),
+      };
+    });
   }
 
   function removeScheduleBlock(blockId: string) {
@@ -863,6 +925,10 @@ export default function AuditorioPage() {
 
     if (!formState.status) {
       errors.status = "Selecciona el estado de la reserva.";
+    }
+
+    if (!scheduleMode) {
+      errors.scheduleBlocks = "Selecciona si el evento es de un solo día o varios días.";
     }
 
     const attendees = Number(formState.attendees);
@@ -956,6 +1022,7 @@ export default function AuditorioPage() {
       setIsCreateOpen(false);
       setEditingEventId(null);
       setFormError(null);
+      setScheduleMode("");
     } catch (error) {
       const message = error instanceof Error ? error.message : "No se pudo guardar la reserva";
       setFormError(message);
@@ -1513,33 +1580,7 @@ export default function AuditorioPage() {
                         {fieldErrors.status ? <p className="mt-2 text-xs font-medium text-red-600">{fieldErrors.status}</p> : null}
                       </label>
 
-                      <label>
-                        <span className="mb-2 block text-sm font-medium text-slate-700">Fecha inicio</span>
-                        <input
-                          type="date"
-                          value={formState.startDate}
-                          onChange={(event) => {
-                            clearFieldError("startDate");
-                            setFormState((current) => ({ ...current, startDate: event.target.value }));
-                          }}
-                          className={`w-full rounded-xl border bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10 ${fieldErrors.startDate ? "border-red-400 bg-red-50" : "border-slate-200"}`}
-                        />
-                        {fieldErrors.startDate ? <p className="mt-2 text-xs font-medium text-red-600">{fieldErrors.startDate}</p> : null}
-                      </label>
-
-                      <label>
-                        <span className="mb-2 block text-sm font-medium text-slate-700">Fecha fin</span>
-                        <input
-                          type="date"
-                          value={formState.endDate}
-                          onChange={(event) => {
-                            clearFieldError("endDate");
-                            setFormState((current) => ({ ...current, endDate: event.target.value }));
-                          }}
-                          className={`w-full rounded-xl border bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10 ${fieldErrors.endDate ? "border-red-400 bg-red-50" : "border-slate-200"}`}
-                        />
-                        {fieldErrors.endDate ? <p className="mt-2 text-xs font-medium text-red-600">{fieldErrors.endDate}</p> : null}
-                      </label>
+                      
 
                       <label>
                         <span className="mb-2 block text-sm font-medium text-slate-700">Número de asistentes</span>
@@ -1557,6 +1598,32 @@ export default function AuditorioPage() {
                         {fieldErrors.attendees ? <p className="mt-2 text-xs font-medium text-red-600">{fieldErrors.attendees}</p> : null}
                       </label>
                     </div>
+
+                    <div className="md:col-span-2">
+                        <span className="mb-2 mt-5 block text-sm font-medium text-slate-700">¿Evento de un solo día o varios días?</span>
+                        <div className="mt-2 flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setScheduleModeAndAdjust("single")}
+                            className={`px-3 py-2 rounded-xl text-sm font-medium transition ${
+                              scheduleMode === "single" ? "bg-[#295786] text-white" : "bg-white border border-slate-200 text-slate-700 hover:bg-slate-50"
+                            }`}
+                          >
+                            Un solo día
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setScheduleModeAndAdjust("multi")}
+                            className={`px-3 py-2 rounded-xl text-sm font-medium transition ${
+                              scheduleMode === "multi" ? "bg-[#295786] text-white" : "bg-white border border-slate-200 text-slate-700 hover:bg-slate-50"
+                            }`}
+                          >
+                            Varios días
+                          </button>
+                        </div>
+                      </div>
+
                   </section>
 
                   <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-[0_4px_20px_rgba(15,23,42,0.05)]">
@@ -1565,93 +1632,257 @@ export default function AuditorioPage() {
                       Días y Horarios Intercalados
                     </h3>
 
-                    <div className="space-y-3">
-                      <div className="flex justify-end">
-                        <button
-                          type="button"
-                          onClick={addScheduleBlock}
-                          className="inline-flex items-center gap-1 rounded-xl px-3 py-2 text-sm font-medium text-[#295786] transition hover:bg-[#d5e3ff]"
-                        >
-                          <span className="material-symbols-outlined text-[18px]">add</span>
-                          Agregar bloque horario
-                        </button>
-                      </div>
+                    <div className="space-y-4">
+                      {scheduleMode === "" ? (
+                        <div className="py-6 text-center">
+                          <p className="text-sm text-slate-500">Selecciona "Un solo día" o "Varios días" arriba para configurar los días y horarios.</p>
+                        </div>
+                      ) : scheduleMode === "single" ? (
+                        <div className="space-y-4">
+                          <label>
+                            <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Fecha del evento</span>
+                            <input
+                              type="date"
+                              value={formState.startDate}
+                              onChange={(event) => {
+                                const nextDate = event.target.value;
+                                clearFieldError("startDate");
+                                clearFieldError("endDate");
+                                clearFieldError("scheduleBlocks");
+                                setFormState((current) => {
+                                  const firstBlock = current.scheduleBlocks[0] ?? {
+                                    id: `new-b1-${Date.now()}`,
+                                    date: nextDate,
+                                    startTime: "08:00",
+                                    endTime: "10:00",
+                                  };
 
-                      {formState.scheduleBlocks.map((block, index) => {
-                        const blockDateError = fieldErrors[`block-${block.id}-date`];
-                        const blockStartError = fieldErrors[`block-${block.id}-startTime`];
-                        const blockEndError = fieldErrors[`block-${block.id}-endTime`];
-                        const blockRangeError = fieldErrors[`block-${block.id}-range`];
+                                  return {
+                                    ...current,
+                                    startDate: nextDate,
+                                    endDate: nextDate,
+                                    scheduleBlocks: [
+                                      {
+                                        ...firstBlock,
+                                        date: nextDate,
+                                      },
+                                    ],
+                                  };
+                                });
+                              }}
+                              className={`w-full rounded-xl border bg-white px-3 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10 ${fieldErrors.startDate ? "border-red-400 bg-red-50" : "border-slate-200"}`}
+                            />
+                            {fieldErrors.startDate ? <p className="mt-2 text-xs font-medium text-red-600">{fieldErrors.startDate}</p> : null}
+                          </label>
 
-                        return (
-                          <div key={block.id} className="rounded-2xl border border-dashed border-[#c7d4ea] bg-[#f7f9ff] p-4">
-                            <div className="grid gap-3 md:grid-cols-[1fr_1fr_1fr_auto] md:items-end">
-                              <label>
-                                <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Hora de inicio</span>
-                                <select
-                                  value={block.startTime}
-                                  onChange={(event) => updateScheduleBlock(block.id, "startTime", event.target.value)}
-                                  className={`w-full rounded-xl border bg-white px-3 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10 ${blockStartError || blockRangeError ? "border-red-400 bg-red-50" : "border-slate-200"}`}
-                                >
-                                  <option value="">Selecciona hora</option>
-                                  {TIME_SLOT_OPTIONS.map((option) => (
-                                    <option key={`start-${block.id}-${option.value}`} value={option.value}>
-                                      {option.label}
-                                    </option>
-                                  ))}
-                                </select>
-                              </label>
-
-                              <label>
-                                <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Hora de fin</span>
-                                <select
-                                  value={block.endTime}
-                                  onChange={(event) => updateScheduleBlock(block.id, "endTime", event.target.value)}
-                                  className={`w-full rounded-xl border bg-white px-3 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10 ${blockEndError || blockRangeError ? "border-red-400 bg-red-50" : "border-slate-200"}`}
-                                >
-                                  <option value="">Selecciona hora</option>
-                                  {TIME_SLOT_OPTIONS.map((option) => (
-                                    <option key={`end-${block.id}-${option.value}`} value={option.value}>
-                                      {option.label}
-                                    </option>
-                                  ))}
-                                </select>
-                              </label>
-
-                              <label>
-                                <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Fecha</span>
-                                <input
-                                  type="date"
-                                  value={block.date}
-                                  onChange={(event) => updateScheduleBlock(block.id, "date", event.target.value)}
-                                  className={`w-full rounded-xl border bg-white px-3 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10 ${blockDateError ? "border-red-400 bg-red-50" : "border-slate-200"}`}
-                                />
-                              </label>
-
-                              <button
-                                type="button"
-                                onClick={() => removeScheduleBlock(block.id)}
-                                className="inline-flex h-11 items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-slate-500 transition hover:bg-slate-50 hover:text-red-600"
-                                title="Quitar"
-                              >
-                                <span className="material-symbols-outlined text-[20px]">delete</span>
-                              </button>
+                          <div className="rounded-2xl border border-dashed border-[#c7d4ea] bg-[#f7f9ff] p-4">
+                            <div className="mb-3 flex items-center justify-between gap-2">
+                              <p className="text-sm font-semibold text-slate-700">Horario del día</p>
+                              <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-[#295786] shadow-sm">Un solo bloque</span>
                             </div>
 
-                            {blockDateError || blockStartError || blockEndError || blockRangeError ? (
-                              <p className="mt-3 text-xs font-medium text-red-600">
-                                {blockDateError ?? blockStartError ?? blockEndError ?? blockRangeError}
-                              </p>
-                            ) : null}
+                            {formState.scheduleBlocks.slice(0, 1).map((block) => {
+                              const blockStartError = fieldErrors[`block-${block.id}-startTime`];
+                              const blockEndError = fieldErrors[`block-${block.id}-endTime`];
+                              const blockRangeError = fieldErrors[`block-${block.id}-range`];
 
-                            {index < formState.scheduleBlocks.length - 1 ? <div className="mt-3 border-t border-slate-100" /> : null}
+                              return (
+                                <div key={block.id} className="grid gap-3 md:grid-cols-2 md:items-end">
+                                  <label>
+                                    <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Hora de inicio</span>
+                                    <select
+                                      value={block.startTime}
+                                      onChange={(event) => updateScheduleBlock(block.id, "startTime", event.target.value)}
+                                      className={`w-full rounded-xl border bg-white px-3 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10 ${blockStartError || blockRangeError ? "border-red-400 bg-red-50" : "border-slate-200"}`}
+                                    >
+                                      <option value="">Selecciona hora</option>
+                                      {TIME_SLOT_OPTIONS.map((option) => (
+                                        <option key={`single-start-${block.id}-${option.value}`} value={option.value}>
+                                          {option.label}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </label>
+
+                                  <label>
+                                    <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Hora de fin</span>
+                                    <select
+                                      value={block.endTime}
+                                      onChange={(event) => updateScheduleBlock(block.id, "endTime", event.target.value)}
+                                      className={`w-full rounded-xl border bg-white px-3 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10 ${blockEndError || blockRangeError ? "border-red-400 bg-red-50" : "border-slate-200"}`}
+                                    >
+                                      <option value="">Selecciona hora</option>
+                                      {TIME_SLOT_OPTIONS.map((option) => (
+                                        <option key={`single-end-${block.id}-${option.value}`} value={option.value}>
+                                          {option.label}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                </div>
+                              );
+                            })}
+
+                            <p className="mt-3 text-xs text-slate-500">La fecha seleccionada se aplicará a un único bloque horario.</p>
                           </div>
-                        );
-                      })}
 
-                      {fieldErrors.scheduleBlocks ? (
-                        <p className="text-xs font-medium text-red-600 whitespace-pre-line">{fieldErrors.scheduleBlocks}</p>
-                      ) : null}
+                          {fieldErrors.scheduleBlocks ? (
+                            <p className="text-xs font-medium text-red-600 whitespace-pre-line">{fieldErrors.scheduleBlocks}</p>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <div className="space-y-4">
+                          <div className="grid gap-3 md:grid-cols-2">
+                            <label>
+                              <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Fecha inicio</span>
+                              <input
+                                type="date"
+                                value={formState.startDate}
+                                onChange={(event) => {
+                                  clearFieldError("startDate");
+                                  clearFieldError("scheduleBlocks");
+                                  setFormState((current) => ({
+                                    ...current,
+                                    startDate: event.target.value,
+                                  }));
+                                }}
+                                className={`w-full rounded-xl border bg-white px-3 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10 ${fieldErrors.startDate ? "border-red-400 bg-red-50" : "border-slate-200"}`}
+                              />
+                              {fieldErrors.startDate ? <p className="mt-2 text-xs font-medium text-red-600">{fieldErrors.startDate}</p> : null}
+                            </label>
+
+                            <label>
+                              <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Fecha fin</span>
+                              <input
+                                type="date"
+                                value={formState.endDate}
+                                onChange={(event) => {
+                                  clearFieldError("endDate");
+                                  clearFieldError("scheduleBlocks");
+                                  setFormState((current) => ({
+                                    ...current,
+                                    endDate: event.target.value,
+                                  }));
+                                }}
+                                className={`w-full rounded-xl border bg-white px-3 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10 ${fieldErrors.endDate ? "border-red-400 bg-red-50" : "border-slate-200"}`}
+                              />
+                              {fieldErrors.endDate ? <p className="mt-2 text-xs font-medium text-red-600">{fieldErrors.endDate}</p> : null}
+                            </label>
+                          </div>
+
+                          <div className="rounded-2xl border border-dashed border-[#c7d4ea] bg-[#f7f9ff] p-4">
+                            <div className="mb-3 flex items-center justify-between gap-2">
+                              <p className="text-sm font-semibold text-slate-700">Días del rango</p>
+                              <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-[#295786] shadow-sm">{selectedScheduleDateKeys.size} seleccionados</span>
+                            </div>
+
+                            {visibleMultiDates.length > 0 ? (
+                              <div className="flex flex-wrap gap-2">
+                                {visibleMultiDates.map((date) => {
+                                  const dateKey = toDateKey(date);
+                                  const isActive = selectedScheduleDateKeys.has(dateKey);
+
+                                  return (
+                                    <button
+                                      key={dateKey}
+                                      type="button"
+                                      onClick={() => toggleDateSelection(dateKey)}
+                                      aria-pressed={isActive}
+                                      className={`rounded-full px-3 py-2 text-sm font-medium transition ${
+                                        isActive
+                                          ? "bg-[#295786] text-white shadow-sm"
+                                          : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                                      }`}
+                                    >
+                                      {formatDateLabel(date)}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            ) : (
+                              <p className="text-sm text-slate-500">Selecciona un rango válido para ver los días disponibles.</p>
+                            )}
+                          </div>
+
+                          {orderedScheduleBlocks.length > 0 ? (
+                            <div className="space-y-3">
+                              {orderedScheduleBlocks.map((block, index) => {
+                                const blockStartError = fieldErrors[`block-${block.id}-startTime`];
+                                const blockEndError = fieldErrors[`block-${block.id}-endTime`];
+                                const blockRangeError = fieldErrors[`block-${block.id}-range`];
+
+                                return (
+                                  <div key={block.id} className="rounded-2xl border border-dashed border-[#c7d4ea] bg-[#f7f9ff] p-4">
+                                    <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                                      <div className="inline-flex items-center rounded-full bg-white px-3 py-1 text-sm font-semibold text-[#295786] shadow-sm">
+                                        {formatDateLabel(parseISODate(block.date))}
+                                      </div>
+                                      <span className="text-xs font-medium text-slate-500">Bloque {index + 1}</span>
+                                    </div>
+
+                                    <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto] md:items-end">
+                                      <label>
+                                        <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Hora de inicio</span>
+                                        <select
+                                          value={block.startTime}
+                                          onChange={(event) => updateScheduleBlock(block.id, "startTime", event.target.value)}
+                                          className={`w-full rounded-xl border bg-white px-3 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10 ${blockStartError || blockRangeError ? "border-red-400 bg-red-50" : "border-slate-200"}`}
+                                        >
+                                          <option value="">Selecciona hora</option>
+                                          {TIME_SLOT_OPTIONS.map((option) => (
+                                            <option key={`multi-start-${block.id}-${option.value}`} value={option.value}>
+                                              {option.label}
+                                            </option>
+                                          ))}
+                                        </select>
+                                      </label>
+
+                                      <label>
+                                        <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Hora de fin</span>
+                                        <select
+                                          value={block.endTime}
+                                          onChange={(event) => updateScheduleBlock(block.id, "endTime", event.target.value)}
+                                          className={`w-full rounded-xl border bg-white px-3 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10 ${blockEndError || blockRangeError ? "border-red-400 bg-red-50" : "border-slate-200"}`}
+                                        >
+                                          <option value="">Selecciona hora</option>
+                                          {TIME_SLOT_OPTIONS.map((option) => (
+                                            <option key={`multi-end-${block.id}-${option.value}`} value={option.value}>
+                                              {option.label}
+                                            </option>
+                                          ))}
+                                        </select>
+                                      </label>
+
+                                      <button
+                                        type="button"
+                                        onClick={() => removeScheduleBlock(block.id)}
+                                        className="inline-flex h-11 items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-slate-500 transition hover:bg-slate-50 hover:text-red-600"
+                                        title="Quitar"
+                                      >
+                                        <span className="material-symbols-outlined text-[20px]">delete</span>
+                                      </button>
+                                    </div>
+
+                                    {blockStartError || blockEndError || blockRangeError ? (
+                                      <p className="mt-3 text-xs font-medium text-red-600">
+                                        {blockStartError ?? blockEndError ?? blockRangeError}
+                                      </p>
+                                    ) : null}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-4 text-sm text-slate-500">
+                              Selecciona uno o más días arriba para crear sus horarios.
+                            </div>
+                          )}
+
+                          {fieldErrors.scheduleBlocks ? (
+                            <p className="text-xs font-medium text-red-600 whitespace-pre-line">{fieldErrors.scheduleBlocks}</p>
+                          ) : null}
+                        </div>
+                      )}
                     </div>
                   </section>
 
