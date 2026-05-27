@@ -323,7 +323,7 @@ export default function RegistroPage() {
   };
 
   useEffect(() => {
-    if (!sessionReady || session?.role !== "admin") {
+    if (!sessionReady || (session?.role !== "admin" && session?.role !== "registro")) {
       return;
     }
 
@@ -347,7 +347,7 @@ export default function RegistroPage() {
       return;
     }
 
-    if (session.role !== "admin") {
+    if (session.role !== "admin" && session.role !== "registro") {
       router.replace("/");
     }
   }, [router, session, sessionReady]);
@@ -455,7 +455,7 @@ export default function RegistroPage() {
     await handleAction(autoAction);
   };
 
-  const canRender = sessionReady && session?.role === "admin";
+  const canRender = sessionReady && (session?.role === "admin" || session?.role === "registro");
   const currentAutoAction = preview ? getAutoActionFromPreview(preview) : null;
   const currentLiveStatusByStaffId = staffList.reduce<Record<string, StaffLiveStatus>>((accumulator, staff) => {
     if (staff.estado !== "Active") {

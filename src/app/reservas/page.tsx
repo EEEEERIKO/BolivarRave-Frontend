@@ -28,9 +28,12 @@ type InventoryGroup = { id: string; name: string; icon?: string; order?: number;
 type InventoryItem = { id: string; groupId: string; groupName: string; groupIcon?: string; name: string; code: string; room: string; status: string; defective: boolean; motivo?: string | null };
 type TelevisorReservationCandidate = {
     id: string;
-    name: string;
-    code: string;
-    room: string;
+    name?: string;
+    nombre?: string;
+    code?: string;
+    codigo?: string;
+    room?: string;
+    salon?: string;
     roomTvCount: number;
     priority: number;
     note: string | null;
@@ -139,6 +142,29 @@ function formatTime(value: string) {
     const suffix = hours >= 12 ? "PM" : "AM";
     const normalizedHour = hours % 12 === 0 ? 12 : hours % 12;
     return `${normalizedHour}:${String(minutes).padStart(2, "0")} ${suffix}`;
+}
+
+function normalizeTelevisorText(...values: Array<string | null | undefined>) {
+    for (const value of values) {
+        const trimmed = value?.trim();
+        if (trimmed && trimmed !== "-") {
+            return trimmed;
+        }
+    }
+
+    return "";
+}
+
+function getTelevisorCandidateName(candidate: TelevisorReservationCandidate) {
+    return normalizeTelevisorText(candidate.name, candidate.nombre, candidate.code, candidate.codigo, candidate.room, candidate.salon) || "Televisor";
+}
+
+function getTelevisorCandidateCode(candidate: TelevisorReservationCandidate) {
+    return normalizeTelevisorText(candidate.code, candidate.codigo) || "-";
+}
+
+function getTelevisorCandidateRoom(candidate: TelevisorReservationCandidate) {
+    return normalizeTelevisorText(candidate.room, candidate.salon) || "Sin salón";
 }
 
 function formatDuration(start: string, end: string) {
@@ -478,7 +504,12 @@ export default function ReservasPage() {
 
                 if (cancelled) return;
 
-                const nextCandidates = response.candidates ?? [];
+                const nextCandidates = (response.candidates ?? []).map((candidate) => ({
+                    ...candidate,
+                    name: getTelevisorCandidateName(candidate),
+                    code: getTelevisorCandidateCode(candidate),
+                    room: getTelevisorCandidateRoom(candidate),
+                }));
                 setTelevisorCandidates(nextCandidates);
                 setTelevisorCandidatesMessage(response.message ?? null);
 
@@ -522,6 +553,16 @@ export default function ReservasPage() {
         () => televisorCandidates.find((candidate) => candidate.id === selectedResourceId) ?? null,
         [selectedResourceId, televisorCandidates],
     );
+
+    const selectedTelevisorLabel = useMemo(() => {
+        if (!selectedTelevisorResource) {
+            return "";
+        }
+
+        const name = getTelevisorCandidateName(selectedTelevisorResource);
+        const code = getTelevisorCandidateCode(selectedTelevisorResource);
+        return code ? `${name} — ${code}` : name;
+    }, [selectedTelevisorResource]);
 
     const selectedDestinationRoom = useMemo(
         () => roomsCatalog.find((room) => room.id === selectedDestinationRoomId) ?? null,
@@ -1422,7 +1463,7 @@ export default function ReservasPage() {
                                                     >
                                                         {tvReservationItems.map((candidate) => (
                                                             <option key={candidate.id} value={candidate.id}>
-                                                                {candidate.name} — {candidate.code} · {candidate.room}{candidate.roomTvCount >= 2 ? " · Preferido" : ""}
+                                                                {getTelevisorCandidateName(candidate)} — {getTelevisorCandidateCode(candidate)} · {getTelevisorCandidateRoom(candidate)}{candidate.roomTvCount >= 2 ? " · Preferido" : ""}
                                                             </option>
                                                         ))}
                                                     </select>
@@ -1434,8 +1475,8 @@ export default function ReservasPage() {
                                                 {selectedTelevisorResource ? (
                                                     <div className="rounded-xl border border-sky-100 bg-sky-50 p-4 text-sm text-sky-800">
                                                         <p className="text-[10px] font-bold uppercase tracking-widest text-sky-600">Televisor seleccionado</p>
-                                                        <p className="mt-1 font-bold text-sky-900">{selectedTelevisorResource.name} — {selectedTelevisorResource.code}</p>
-                                                        <p className="mt-1">{selectedTelevisorResource.room}</p>
+                                                        <p className="mt-1 font-bold text-sky-900">{selectedTelevisorLabel}</p>
+                                                        <p className="mt-1">{getTelevisorCandidateRoom(selectedTelevisorResource)}</p>
                                                         {selectedTelevisorResource.note ? (
                                                             <p className="mt-2 text-sm">{selectedTelevisorResource.note}</p>
                                                         ) : null}
