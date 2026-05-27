@@ -160,7 +160,6 @@ export default function InventoryPage() {
   const [showHdmiSelector, setShowHdmiSelector] = useState(false);
   const [showCreateHdmiModal, setShowCreateHdmiModal] = useState(false);
   const [newHdmiForm, setNewHdmiForm] = useState({ name: "", price: "", code: "" });
-  const [inventorySearchQuery, setInventorySearchQuery] = useState<string>("");
   const groupsScrollRef = useRef<HTMLDivElement | null>(null);
 
   const authSession = useMemo(() => readAuthSession(), []);
@@ -277,33 +276,6 @@ export default function InventoryPage() {
     [inventoryItems, selectedGroup],
   );
 
-  const filteredSelectedItems = useMemo(() => {
-    const query = inventorySearchQuery.trim().toLowerCase();
-
-    if (!query) {
-      return selectedItems;
-    }
-
-    return selectedItems.filter((item) => {
-      const searchBlob = [item.name, item.id, item.code, item.room, item.groupName]
-        .join(" ")
-        .trim()
-        .toLowerCase();
-
-      return searchBlob.includes(query);
-    });
-  }, [inventorySearchQuery, selectedItems]);
-
-  const monitoriaItems = useMemo(
-    () => filteredSelectedItems.filter((item) => item.room.trim().toLowerCase() === MONITORIA_ROOM.toLowerCase()),
-    [filteredSelectedItems],
-  );
-
-  const salonItems = useMemo(
-    () => filteredSelectedItems.filter((item) => item.room.trim().toLowerCase() !== MONITORIA_ROOM.toLowerCase()),
-    [filteredSelectedItems],
-  );
-
   const selectedGroupItemCount = useMemo(
     () => selectedGroup?.itemCount ?? selectedItems.length,
     [selectedGroup, selectedItems.length],
@@ -369,153 +341,6 @@ export default function InventoryPage() {
 
   const refreshInventory = async () => {
     await loadInventory();
-  };
-
-  const renderInventoryItemCard = (item: InventoryItem) => {
-    return (
-      <div
-        className={`relative overflow-visible rounded-lg border p-3 ${
-          item.defective ? "border-rose-200 bg-rose-50" : "border-transparent bg-[#f0f4f7]/60"
-        }`}
-        key={item.id}
-      >
-        {canManageInventory ? (
-          <button
-            className="absolute top-2 right-2 rounded-full p-1 text-[#566166] transition hover:bg-white hover:text-[#2a3439]"
-            onClick={() => setActiveItemMenuId((current) => (current === item.id ? null : item.id))}
-            type="button"
-            aria-label="Abrir menú de acciones"
-          >
-            <span className="material-symbols-outlined text-lg">more_vert</span>
-          </button>
-        ) : null}
-
-        {activeItemMenuId === item.id && canManageInventory ? (
-          <div className="absolute top-9 right-2 z-20 w-48 rounded-xl border border-slate-200 bg-white shadow-xl">
-            <button
-              className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-semibold text-[#566166] hover:bg-slate-50"
-              onClick={() => {
-                setActiveItemMenuId(null);
-                editItem(item);
-              }}
-              type="button"
-            >
-              <span className="material-symbols-outlined text-base">edit</span>
-              Editar
-            </button>
-            <button
-              className="flex w-full items-center gap-2 border-t border-slate-100 px-3 py-2 text-left text-xs font-semibold text-[#566166] hover:bg-slate-50"
-              onClick={() => {
-                setActiveItemMenuId(null);
-                openDefectiveModal(item);
-              }}
-              type="button"
-            >
-              <span className="material-symbols-outlined text-base text-rose-600">{item.defective ? "edit" : "error"}</span>
-              {item.defective ? "Actualizar motivo" : "Marcar como defectuoso"}
-            </button>
-            {item.defective && (
-              <button
-                className="flex w-full items-center gap-2 border-t border-slate-100 px-3 py-2 text-left text-xs font-semibold text-green-600 hover:bg-green-50"
-                onClick={() => {
-                  markAsFixed(item);
-                }}
-                type="button"
-              >
-                <span className="material-symbols-outlined text-base">check_circle</span>
-                Marcar como arreglado
-              </button>
-            )}
-            <button
-              className="flex w-full items-center gap-2 border-t border-slate-100 px-3 py-2 text-left text-xs font-semibold text-rose-600 hover:bg-rose-50"
-              onClick={() => {
-                setActiveItemMenuId(null);
-                deleteItem(item);
-              }}
-              type="button"
-            >
-              <span className="material-symbols-outlined text-base">delete</span>
-              Eliminar
-            </button>
-          </div>
-        ) : null}
-
-        <div className="flex items-center gap-2 pr-8">
-          <div className={`flex h-9 w-9 items-center justify-center rounded-md ${item.defective ? "bg-rose-100 text-rose-700" : "bg-[#e8eff3] text-[#3a5f94]"}`}>
-            <span className="material-symbols-outlined text-base">{item.defective ? "warning" : (selectedGroup?.icon ?? item.groupIcon)}</span>
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="flex min-w-0 items-center gap-2">
-              <p className="truncate text-xs font-bold text-[#2a3439]">{item.name}</p>
-              <p className="inline-flex shrink-0 rounded-full bg-white px-2 py-0.5 text-[10px] font-bold tracking-wide text-[#566166] shadow-sm">
-                {item.code}
-              </p>
-            </div>
-            {item.defective ? (
-              <div className="mt-1 flex items-center gap-1 text-[10px] font-bold text-rose-700">
-                <span className="material-symbols-outlined text-sm">error</span>
-                Defectuoso
-              </div>
-            ) : null}
-          </div>
-        </div>
-
-        {(() => {
-          const isHdmiGroup = isHdmiGroupName(item.groupName);
-          const isTelevisionGroup = isTelevisionGroupName(item.groupName);
-          const linkedHdmi = isTelevisionGroup && item.hdmiItemId ? inventoryItemsById.get(item.hdmiItemId) ?? null : null;
-          const linkedTelevision = isHdmiGroup ? televisionByHdmiId.get(item.id) ?? null : null;
-          const effectiveStatus = item.defective
-            ? "Defectuoso"
-            : isHdmiGroup
-              ? linkedTelevision
-                ? "Asignado"
-                : "Disponible"
-              : item.status;
-
-          return (
-            <>
-              <div className="mt-2 flex flex-wrap items-center justify-between gap-2 pr-8">
-                <p className="text-xs font-semibold text-[#2a3439]">{item.room}</p>
-                <div className="flex flex-wrap items-center gap-1">
-                  <span
-                    className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                      item.defective
-                        ? "bg-rose-100 text-rose-700"
-                        : effectiveStatus === "Fijo"
-                          ? "bg-[#d9d7f8]/40 text-[#5d5d78]"
-                          : effectiveStatus === "Asignado"
-                            ? "bg-emerald-100 text-emerald-700"
-                            : "bg-[#d5e3ff] text-[#2c5287]"
-                    }`}
-                  >
-                    {effectiveStatus}
-                  </span>
-                </div>
-              </div>
-
-              {typeof item.price === "number" ? <p className="mt-2 text-xs font-semibold text-[#2a3439]">Precio: {formatCurrencyCOP(item.price)}</p> : null}
-
-              {isTelevisionGroup && item.hdmiItemId ? (
-                <p className="mt-2 rounded-lg bg-white/80 px-2 py-1 text-[10px] text-[#2c5287]">
-                  <span className="font-bold">HDMI enlazado:</span> {linkedHdmi ? `${linkedHdmi.name} — ${linkedHdmi.code} · ${linkedHdmi.room}` : "Asignado"}
-                </p>
-              ) : isHdmiGroup && linkedTelevision ? (
-                <p className="mt-2 rounded-lg bg-white/80 px-2 py-1 text-[10px] text-emerald-700">
-                  <span className="font-bold">Televisor enlazado:</span> {linkedTelevision.name} · {linkedTelevision.room}
-                </p>
-              ) : null}
-            </>
-          );
-        })()}
-
-        {item.defective && item.motivo ? (
-          <p className="mt-2 rounded-lg bg-white/80 px-2 py-1 text-[10px] text-rose-700">
-            <span className="font-bold">Motivo:</span> {item.motivo}
-          </p>
-        ) : null}
-      </div>
-    );
   };
 
   const upsertDefectiveReasonOverride = (itemId: string, reason: string) => {
@@ -795,11 +620,23 @@ export default function InventoryPage() {
         };
 
         try {
-          await fetchApiJson<{ id: string }>(`/api/inventory/items/${targetItem.id}`, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(defectivePayload),
-          });
+          const response = await fetchApiJsonWithOptions<{ item?: InventoryItem }>(
+            `/api/inventory/items/${targetItem.id}/defective`,
+            {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ motivo: reason }),
+            },
+            { suppressExpectedStatuses: [404] },
+          );
+
+          if (response.item) {
+            setInventoryItems((current) => current.map((item) => (item.id === response.item?.id ? (response.item as InventoryItem) : item)));
+
+            if (response.item.motivo && response.item.motivo.trim().length > 0) {
+              upsertDefectiveReasonOverride(targetItem.id, response.item.motivo);
+            }
+          }
         } catch (error) {
           const message = error instanceof Error ? error.message : "";
           const shouldFallbackToLegacyUpdate =
@@ -853,7 +690,6 @@ export default function InventoryPage() {
   };
 
   return (
-
     <div className="w-full max-w-full min-w-0 flex-1 space-y-8 overflow-x-hidden p-4 md:p-8">
       {inventoryError ? (
         <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{inventoryError}</div>
@@ -1025,60 +861,158 @@ export default function InventoryPage() {
             </div>
             {isLoadingInventory ? (
               <p className="text-xs text-[#566166]">Cargando inventario...</p>
-            ) : (
-              <>
-                <div className="mb-4 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
-                  <label className="block">
-                    <span className="mb-2 block text-[10px] font-bold tracking-widest text-[#566166] uppercase">Buscar elemento</span>
-                    <input
-                      value={inventorySearchQuery}
-                      onChange={(event) => setInventorySearchQuery(event.target.value)}
-                      placeholder="Nombre, ID o salón"
-                      className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-[#2a3439] outline-none transition focus:border-[#3a5f94]"
-                    />
-                  </label>
-                </div>
+            ) : selectedItems.length > 0 ? (
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                {selectedItems.map((item) => (
+                  <div
+                    className={`relative overflow-visible rounded-lg border p-3 ${
+                      item.defective ? "border-rose-200 bg-rose-50" : "border-transparent bg-[#f0f4f7]/60"
+                    }`}
+                    key={item.id}
+                  >
+                    {canManageInventory ? (
+                      <button
+                        className="absolute top-2 right-2 rounded-full p-1 text-[#566166] transition hover:bg-white hover:text-[#2a3439]"
+                        onClick={() => setActiveItemMenuId((current) => (current === item.id ? null : item.id))}
+                        type="button"
+                        aria-label="Abrir menú de acciones"
+                      >
+                        <span className="material-symbols-outlined text-lg">more_vert</span>
+                      </button>
+                    ) : null}
 
-                {filteredSelectedItems.length > 0 ? (
-                  <div className="space-y-6">
-                    <section className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                      <div className="mb-3 flex items-center justify-between gap-2">
-                        <div>
-                          <h5 className="text-sm font-black text-[#2a3439]">Monitoría</h5>
-                          <p className="text-[11px] text-[#566166]">Elementos ubicados en Monitoría</p>
-                        </div>
-                        <span className="rounded-full bg-white px-2 py-1 text-[10px] font-bold text-[#3a5f94] shadow-sm">{monitoriaItems.length}</span>
+                    {activeItemMenuId === item.id && canManageInventory ? (
+                      <div className="absolute top-9 right-2 z-20 w-48 rounded-xl border border-slate-200 bg-white shadow-xl">
+                        <button
+                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-semibold text-[#566166] hover:bg-slate-50"
+                          onClick={() => {
+                            setActiveItemMenuId(null);
+                            editItem(item);
+                          }}
+                          type="button"
+                        >
+                          <span className="material-symbols-outlined text-base">edit</span>
+                          Editar
+                        </button>
+                        <button
+                          className="flex w-full items-center gap-2 border-t border-slate-100 px-3 py-2 text-left text-xs font-semibold text-[#566166] hover:bg-slate-50"
+                          onClick={() => {
+                            setActiveItemMenuId(null);
+                            openDefectiveModal(item);
+                          }}
+                          type="button"
+                        >
+                          <span className="material-symbols-outlined text-base text-rose-600">{item.defective ? "edit" : "error"}</span>
+                          {item.defective ? "Actualizar motivo" : "Marcar como defectuoso"}
+                        </button>
+                        {item.defective && (
+                          <button
+                            className="flex w-full items-center gap-2 border-t border-slate-100 px-3 py-2 text-left text-xs font-semibold text-green-600 hover:bg-green-50"
+                            onClick={() => {
+                              markAsFixed(item);
+                            }}
+                            type="button"
+                          >
+                            <span className="material-symbols-outlined text-base">check_circle</span>
+                            Marcar como arreglado
+                          </button>
+                        )}
+                        <button
+                          className="flex w-full items-center gap-2 border-t border-slate-100 px-3 py-2 text-left text-xs font-semibold text-rose-600 hover:bg-rose-50"
+                          onClick={() => {
+                            setActiveItemMenuId(null);
+                            deleteItem(item);
+                          }}
+                          type="button"
+                        >
+                          <span className="material-symbols-outlined text-base">delete</span>
+                          Eliminar
+                        </button>
                       </div>
-                      {monitoriaItems.length > 0 ? (
-                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                          {monitoriaItems.map((item) => renderInventoryItemCard(item))}
-                        </div>
-                      ) : (
-                        <p className="text-xs text-[#566166]">No hay elementos en Monitoría para este filtro.</p>
-                      )}
-                    </section>
+                    ) : null}
 
-                    <section className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                      <div className="mb-3 flex items-center justify-between gap-2">
-                        <div>
-                          <h5 className="text-sm font-black text-[#2a3439]">Salones</h5>
-                          <p className="text-[11px] text-[#566166]">Elementos ubicados en salones</p>
-                        </div>
-                        <span className="rounded-full bg-white px-2 py-1 text-[10px] font-bold text-[#3a5f94] shadow-sm">{salonItems.length}</span>
+                    <div className="flex items-center gap-2 pr-8">
+                      <div className={`flex h-9 w-9 items-center justify-center rounded-md ${item.defective ? "bg-rose-100 text-rose-700" : "bg-[#e8eff3] text-[#3a5f94]"}`}>
+                        <span className="material-symbols-outlined text-base">{item.defective ? "warning" : (selectedGroup?.icon ?? item.groupIcon)}</span>
                       </div>
-                      {salonItems.length > 0 ? (
-                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                          {salonItems.map((item) => renderInventoryItemCard(item))}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <p className="truncate text-xs font-bold text-[#2a3439]">{item.name}</p>
+                          <p className="inline-flex shrink-0 rounded-full bg-white px-2 py-0.5 text-[10px] font-bold tracking-wide text-[#566166] shadow-sm">
+                            {item.code}
+                          </p>
                         </div>
-                      ) : (
-                        <p className="text-xs text-[#566166]">No hay elementos en salones para este filtro.</p>
-                      )}
-                    </section>
+                        {item.defective ? (
+                          <div className="mt-1 flex items-center gap-1 text-[10px] font-bold text-rose-700">
+                            <span className="material-symbols-outlined text-sm">error</span>
+                            Defectuoso
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+
+                    {(() => {
+                      const isHdmiGroup = isHdmiGroupName(item.groupName);
+                      const isTelevisionGroup = isTelevisionGroupName(item.groupName);
+                      const linkedHdmi = isTelevisionGroup && item.hdmiItemId ? inventoryItemsById.get(item.hdmiItemId) ?? null : null;
+                      const linkedTelevision = isHdmiGroup ? televisionByHdmiId.get(item.id) ?? null : null;
+                      const effectiveStatus = item.defective
+                        ? "Defectuoso"
+                        : isHdmiGroup
+                          ? linkedTelevision
+                            ? "Asignado"
+                            : "Disponible"
+                          : item.status;
+
+                      return (
+                        <>
+                          <div className="mt-2 flex flex-wrap items-center justify-between gap-2 pr-8">
+                            <p className="text-xs font-semibold text-[#2a3439]">{item.room}</p>
+                            <div className="flex flex-wrap items-center gap-1">
+                              <span
+                                className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                                  item.defective
+                                    ? "bg-rose-100 text-rose-700"
+                                    : effectiveStatus === "Fijo"
+                                      ? "bg-[#d9d7f8]/40 text-[#5d5d78]"
+                                      : effectiveStatus === "Asignado"
+                                        ? "bg-emerald-100 text-emerald-700"
+                                        : "bg-[#d5e3ff] text-[#2c5287]"
+                                }`}
+                              >
+                                {effectiveStatus}
+                              </span>
+                            </div>
+                          </div>
+
+                          {typeof item.price === "number" ? (
+                            <p className="mt-2 text-xs font-semibold text-[#2a3439]">Precio: {formatCurrencyCOP(item.price)}</p>
+                          ) : null}
+
+                          {isTelevisionGroup && item.hdmiItemId ? (
+                            <p className="mt-2 rounded-lg bg-white/80 px-2 py-1 text-[10px] text-[#2c5287]">
+                              <span className="font-bold">HDMI enlazado:</span>{" "}
+                              {linkedHdmi ? `${linkedHdmi.name} — ${linkedHdmi.code} · ${linkedHdmi.room}` : "Asignado"}
+                            </p>
+                          ) : isHdmiGroup && linkedTelevision ? (
+                            <p className="mt-2 rounded-lg bg-white/80 px-2 py-1 text-[10px] text-emerald-700">
+                              <span className="font-bold">Televisor enlazado:</span> {linkedTelevision.name} · {linkedTelevision.room}
+                            </p>
+                          ) : null}
+                        </>
+                      );
+                    })()}
+
+                    {item.defective && item.motivo ? (
+                      <p className="mt-2 rounded-lg bg-white/80 px-2 py-1 text-[10px] text-rose-700">
+                        <span className="font-bold">Motivo:</span> {item.motivo}
+                      </p>
+                    ) : null}
                   </div>
-                ) : (
-                  <p className="text-xs text-[#566166]">No hay elementos para este grupo.</p>
-                )}
-              </>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-[#566166]">No hay elementos para este grupo.</p>
             )}
           </div>
         </div>
