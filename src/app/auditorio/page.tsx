@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { fetchApiJson } from "@/lib/api-client";
 import { readAuthSession } from "@/lib/auth-session";
 import { useWebSocketSchedules } from "@/lib/use-websocket-schedules";
@@ -40,6 +41,8 @@ type AuditoriumEvent = {
   observations: string;
   color: "blue" | "emerald" | "amber";
   scheduleBlocks: ScheduleBlock[];
+  requesterName?: string | null;
+  requesterPhone?: string | null;
 };
 
 type AuditorioReservaApi = {
@@ -71,6 +74,8 @@ type AuditorioReservaApi = {
     horaInicio: string;
     horaFin: string;
   }>;
+  solicitanteNombre?: string | null;
+  solicitanteTelefono?: string | null;
 };
 
 type StaffApi = {
@@ -86,6 +91,8 @@ type StaffApi = {
 type NewEventFormState = {
   title: string;
   organizer: string;
+  requesterName: string;
+  requesterPhone: string;
   startDate: string;
   endDate: string;
   status: AuditorioEstado | "";
@@ -321,6 +328,8 @@ function mapReservaToEvent(reserva: AuditorioReservaApi): AuditoriumEvent {
     assignedWorkers: reserva.encargados ?? [],
     observations: reserva.observaciones ?? "",
     color: colorFromEstado(reserva.estado),
+    requesterName: reserva.solicitanteNombre ?? null,
+    requesterPhone: reserva.solicitanteTelefono ?? null,
     scheduleBlocks: reserva.horarios
       .slice()
       .sort((a, b) => a.fechaEspecifica.localeCompare(b.fechaEspecifica) || a.horaInicio.localeCompare(b.horaInicio))
@@ -399,6 +408,8 @@ function createEmptyFormState(defaultDate: string): NewEventFormState {
   return {
     title: "",
     organizer: "",
+    requesterName: "",
+    requesterPhone: "",
     startDate: defaultDate,
     endDate: defaultDate,
     status: "",
@@ -423,6 +434,7 @@ function createEmptyFormState(defaultDate: string): NewEventFormState {
 
 export default function AuditorioPage() {
   const monthPickerRef = useRef<HTMLDivElement>(null);
+  const searchParams = useSearchParams();
   const session = readAuthSession();
   const canManageAuditorio = session?.role === "admin";
 
@@ -435,9 +447,12 @@ export default function AuditorioPage() {
   const [monthCursor, setMonthCursor] = useState(startOfMonth(colombiaToday));
   const [dragOverDateKey, setDragOverDateKey] = useState<string | null>(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [isApprovalModalOpen, setIsApprovalModalOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isChangingRequestState, setIsChangingRequestState] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [approvalError, setApprovalError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<FormFieldErrors>({});
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -452,6 +467,9 @@ export default function AuditorioPage() {
   const [pickerYear, setPickerYear] = useState(colombiaToday.getFullYear());
   const [visibleMonthCount, setVisibleMonthCount] = useState(2);
   const [staffSearchQuery, setStaffSearchQuery] = useState<string>("");
+  const [approvalStaffSearchQuery, setApprovalStaffSearchQuery] = useState<string>("");
+  const [approvalStaffIds, setApprovalStaffIds] = useState<string[]>([]);
+  const appliedDeepLinkReservaIdRef = useRef<string | null>(null);
 
   const syncReservas = useCallback(async () => {
     const response = await fetchApiJson<{ reservas?: AuditorioReservaApi[] }>("/api/auditorio/reservas", {
@@ -589,6 +607,8 @@ export default function AuditorioPage() {
       ? `${monthNames[monthsToShow[0].getMonth()]} ${monthsToShow[0].getFullYear()}`
       : `${monthNames[monthsToShow[0].getMonth()]} ${monthsToShow[0].getFullYear()} - ${monthNames[monthsToShow[1].getMonth()]} ${monthsToShow[1].getFullYear()}`;
   const selectedEvent = events.find((event) => event.id === selectedEventId) ?? null;
+  const isSelectedEventPending = selectedEvent?.status === "Pendiente";
+  const preselectedReservaId = searchParams.get("reservaId");
   const visibleMultiDates = scheduleMode === "multi" ? getDatesBetweenKeys(formState.startDate, formState.endDate) : [];
   const selectedScheduleDateKeys = new Set(formState.scheduleBlocks.map((block) => block.date));
   const orderedScheduleBlocks = [...formState.scheduleBlocks].sort(
@@ -618,6 +638,32 @@ export default function AuditorioPage() {
     input.focus();
     input.click();
   };
+
+  useEffect(() => {
+    if (!preselectedReservaId) {
+      appliedDeepLinkReservaIdRef.current = null;
+      return;
+    }
+
+    if (appliedDeepLinkReservaIdRef.current === preselectedReservaId) {
+      return;
+    }
+
+    const targetEvent = events.find((event) => event.id === preselectedReservaId);
+    if (!targetEvent) {
+      return;
+    }
+
+    setSelectedEventId(targetEvent.id);
+
+    const anchorDate = targetEvent.scheduleBlocks[0]?.date ?? targetEvent.periodStartDate;
+    if (anchorDate) {
+      const anchor = parseISODate(anchorDate);
+      setMonthCursor(startOfMonth(anchor));
+    }
+
+    appliedDeepLinkReservaIdRef.current = preselectedReservaId;
+  }, [events, preselectedReservaId]);
 
   useEffect(() => {
     if (scheduleMode !== "multi") return;
@@ -689,6 +735,8 @@ export default function AuditorioPage() {
   const mapFormToPayload = (state: NewEventFormState) => ({
     nombreEvento: state.title.trim(),
     organizador: state.organizer.trim(),
+    solicitanteNombre: state.requesterName.trim() || null,
+    solicitanteTelefono: state.requesterPhone.trim() || null,
     fechaInicioPeriodo: state.startDate,
     fechaFinPeriodo: state.endDate,
     numeroAsistentes: Number(state.attendees) || 1,
@@ -729,6 +777,8 @@ export default function AuditorioPage() {
     setFormState({
       title: selectedEvent.title,
       organizer: selectedEvent.organizer,
+      requesterName: selectedEvent.requesterName ?? "",
+      requesterPhone: selectedEvent.requesterPhone ?? "",
       startDate: selectedEvent.periodStartDate,
       endDate: selectedEvent.periodEndDate,
       status: selectedEvent.status,
@@ -775,6 +825,24 @@ export default function AuditorioPage() {
     setFieldErrors({});
     setScheduleMode("");
     setActiveScheduleDateKey(null);
+  }
+
+  function openApproveModal() {
+    if (!canManageAuditorio) return;
+    if (!selectedEvent || selectedEvent.status !== "Pendiente") return;
+
+    setApprovalError(null);
+    setApprovalStaffSearchQuery("");
+    setApprovalStaffIds(selectedEvent.assignedWorkers.map((worker) => worker.staffId));
+    setIsApprovalModalOpen(true);
+  }
+
+  function closeApproveModal() {
+    if (isChangingRequestState) return;
+    setIsApprovalModalOpen(false);
+    setApprovalError(null);
+    setApprovalStaffSearchQuery("");
+    setApprovalStaffIds([]);
   }
 
   function moveEventToDate(eventId: string, newStartDate: Date) {
@@ -1174,6 +1242,83 @@ export default function AuditorioPage() {
     }
   };
 
+  const rejectSelectedRequest = async () => {
+    if (!canManageAuditorio) return;
+    if (!selectedEvent || selectedEvent.status !== "Pendiente" || isChangingRequestState) return;
+
+    const accepted = await confirmToast(`Eliminar la solicitud \"${selectedEvent.title}\"?`, {
+      title: "Eliminar solicitud rechazada",
+      confirmLabel: "Eliminar",
+    });
+    if (!accepted) return;
+
+    setIsChangingRequestState(true);
+    try {
+      await fetchApiJson<{ message: string }>(`/api/auditorio/reservas/${selectedEvent.id}`, {
+        method: "DELETE",
+      });
+
+      await syncReservas();
+      toast.success("Solicitud eliminada correctamente.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "No se pudo eliminar la solicitud";
+      toast.error(message);
+    } finally {
+      setIsChangingRequestState(false);
+    }
+  };
+
+  const approveSelectedRequest = async () => {
+    if (!canManageAuditorio) return;
+    if (!selectedEvent || selectedEvent.status !== "Pendiente" || isChangingRequestState) return;
+
+    const uniqueStaffIds = Array.from(new Set(approvalStaffIds));
+    if (uniqueStaffIds.length === 0) {
+      setApprovalError("Debes asignar al menos un integrante del personal para confirmar la solicitud.");
+      return;
+    }
+
+    setApprovalError(null);
+    setIsChangingRequestState(true);
+    try {
+      await fetchApiJson<{ message: string }>(`/api/auditorio/reservas/${selectedEvent.id}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          nombreEvento: selectedEvent.title,
+          organizador: selectedEvent.organizer,
+          fechaInicioPeriodo: selectedEvent.periodStartDate,
+          fechaFinPeriodo: selectedEvent.periodEndDate,
+          numeroAsistentes: selectedEvent.attendees,
+          requierePantalla: selectedEvent.needsScreen,
+          requiereSonido: selectedEvent.needsSound,
+          requiereMonitor: selectedEvent.needsMonitor,
+          requiereProyector: selectedEvent.needsProjector,
+          requiereFiltroAgua: selectedEvent.needsWaterFilter,
+          encargadoStaffIds: uniqueStaffIds,
+          observaciones: selectedEvent.observations || null,
+          estado: "Aprobada" as AuditorioEstado,
+          horarios: selectedEvent.scheduleBlocks.map((block) => ({
+            fechaEspecifica: block.date,
+            horaInicio: block.startTime,
+            horaFin: block.endTime,
+          })),
+        }),
+      });
+
+      await syncReservas();
+      closeApproveModal();
+      toast.success("Solicitud confirmada y personal asignado correctamente.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "No se pudo confirmar la solicitud";
+      setApprovalError(message);
+    } finally {
+      setIsChangingRequestState(false);
+    }
+  };
+
   return (
     <div className="p-6">
       <div className="mb-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -1453,6 +1598,12 @@ export default function AuditorioPage() {
                   <span className="font-semibold">Organiza:</span> {selectedEvent.organizer}
                 </p>
                 <p>
+                  <span className="font-semibold">Solicitante:</span> {selectedEvent.requesterName ?? "No registrado"}
+                </p>
+                <p>
+                  <span className="font-semibold">Teléfono solicitante:</span> {selectedEvent.requesterPhone ?? "No registrado"}
+                </p>
+                <p>
                   <span className="font-semibold">Duracion:</span> {diffDays(getEventBounds(selectedEvent).end, getEventBounds(selectedEvent).start) + 1} dia(s)
                 </p>
                 <p>
@@ -1533,7 +1684,26 @@ export default function AuditorioPage() {
                   <p className="text-xs text-slate-500">Tip: arrastra la barra del evento y sueltala en otro dia para moverla.</p>
                 ) : null}
 
-                {canManageAuditorio ? (
+                {canManageAuditorio && isSelectedEventPending ? (
+                  <div className="grid grid-cols-2 gap-2 pt-1">
+                    <button
+                      type="button"
+                      disabled={isChangingRequestState}
+                      onClick={openApproveModal}
+                      className="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70"
+                    >
+                      {isChangingRequestState ? "Procesando..." : "Confirmar"}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isChangingRequestState}
+                      onClick={() => void rejectSelectedRequest()}
+                      className="rounded-lg bg-red-600 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70"
+                    >
+                      {isChangingRequestState ? "Procesando..." : "Rechazar"}
+                    </button>
+                  </div>
+                ) : canManageAuditorio ? (
                   <div className="grid grid-cols-2 gap-2 pt-1">
                     <button
                       type="button"
@@ -1675,6 +1845,32 @@ export default function AuditorioPage() {
                           className={`w-full rounded-xl border bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10 ${fieldErrors.attendees ? "border-red-400 bg-red-50" : "border-slate-200"}`}
                         />
                         {fieldErrors.attendees ? <p className="mt-2 text-xs font-medium text-red-600">{fieldErrors.attendees}</p> : null}
+                      </label>
+
+                      <label className="md:col-span-1">
+                        <span className="mb-2 block text-sm font-medium text-slate-700">Nombre del solicitante</span>
+                        <input
+                          type="text"
+                          value={formState.requesterName}
+                          onChange={(event) => {
+                            setFormState((current) => ({ ...current, requesterName: event.target.value }));
+                          }}
+                          placeholder="Nombre de quien solicita la reserva"
+                          className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10"
+                        />
+                      </label>
+
+                      <label className="md:col-span-1">
+                        <span className="mb-2 block text-sm font-medium text-slate-700">Teléfono del solicitante</span>
+                        <input
+                          type="text"
+                          value={formState.requesterPhone}
+                          onChange={(event) => {
+                            setFormState((current) => ({ ...current, requesterPhone: event.target.value }));
+                          }}
+                          placeholder="Número de contacto"
+                          className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10"
+                        />
                       </label>
                     </div>
 
@@ -2191,6 +2387,135 @@ export default function AuditorioPage() {
                   </div>
                 </div>
               </form>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {isApprovalModalOpen && canManageAuditorio ? (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-[2px]">
+          <div className="w-full max-w-2xl rounded-2xl border border-slate-200 bg-white p-6 shadow-[0_24px_70px_rgba(15,23,42,0.18)]">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-bold text-[#295786]">Confirmar solicitud de auditorio</h3>
+                <p className="text-sm text-slate-600">Selecciona el personal que deseas asignar antes de confirmar.</p>
+              </div>
+              <button
+                type="button"
+                onClick={closeApproveModal}
+                disabled={isChangingRequestState}
+                className="inline-flex items-center gap-1 rounded-lg px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <span className="material-symbols-outlined text-[18px]">close</span>
+                Cerrar
+              </button>
+            </div>
+
+            {selectedEvent ? (
+              <div className="mb-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                <p><span className="font-semibold">Evento:</span> {selectedEvent.title}</p>
+                <p><span className="font-semibold">Organizador:</span> {selectedEvent.organizer}</p>
+              </div>
+            ) : null}
+
+            <div className="relative mb-4">
+              <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">search</span>
+              <input
+                type="text"
+                placeholder="Buscar personal..."
+                value={approvalStaffSearchQuery}
+                onChange={(e) => setApprovalStaffSearchQuery(e.target.value)}
+                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 pl-10 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10"
+              />
+            </div>
+
+            <div className="max-h-[340px] space-y-3 overflow-auto pr-1">
+              {staffCatalog
+                .filter((staffMember) => {
+                  const fullName = `${staffMember.nombres} ${staffMember.apellidos}`.toLowerCase();
+                  return fullName.includes(approvalStaffSearchQuery.toLowerCase());
+                })
+                .map((staffMember) => {
+                  const checked = approvalStaffIds.includes(staffMember.id);
+                  const label = `${staffMember.nombres} ${staffMember.apellidos}`.trim();
+
+                  return (
+                    <label
+                      key={`approval-staff-${staffMember.id}`}
+                      className={`flex items-center justify-between gap-3 rounded-2xl border p-3 transition ${
+                        checked ? "border-[#295786] bg-[#d5e3ff]" : "border-slate-200 bg-[#fafcff] hover:bg-[#f4f7ff]"
+                      }`}
+                    >
+                      <div className="flex min-w-0 items-center gap-3">
+                        <div className="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[#295786] text-[10px] font-bold text-white">
+                          <img
+                            src={getStaffPhotoUrl(staffMember.cedula)}
+                            alt={`Foto de ${label}`}
+                            className="h-full w-full object-cover"
+                            onError={(event) => {
+                              const image = event.currentTarget;
+                              image.style.display = "none";
+                              const fallback = image.parentElement?.querySelector<HTMLElement>("[data-approval-staff-fallback='true']");
+                              fallback?.classList.remove("hidden");
+                            }}
+                            onLoad={(event) => {
+                              const image = event.currentTarget;
+                              const fallback = image.parentElement?.querySelector<HTMLElement>("[data-approval-staff-fallback='true']");
+                              fallback?.classList.add("hidden");
+                              image.style.display = "block";
+                            }}
+                          />
+                          <div data-approval-staff-fallback="true" className="hidden items-center justify-center">
+                            {getStaffInitials(label)}
+                          </div>
+                        </div>
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-slate-900">{label}</p>
+                          <p className="text-xs text-slate-500">{staffMember.rol}</p>
+                        </div>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(event) => {
+                          const isChecked = event.target.checked;
+                          setApprovalStaffIds((current) =>
+                            isChecked
+                              ? Array.from(new Set([...current, staffMember.id]))
+                              : current.filter((id) => id !== staffMember.id)
+                          );
+                          setApprovalError(null);
+                        }}
+                        className="h-5 w-5 rounded-full border-slate-300 text-[#295786] focus:ring-[#295786]"
+                      />
+                    </label>
+                  );
+                })}
+            </div>
+
+            {approvalError ? (
+              <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
+                {approvalError}
+              </div>
+            ) : null}
+
+            <div className="mt-5 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={closeApproveModal}
+                disabled={isChangingRequestState}
+                className="rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => void approveSelectedRequest()}
+                disabled={isChangingRequestState}
+                className="rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isChangingRequestState ? "Confirmando..." : "Confirmar solicitud"}
+              </button>
             </div>
           </div>
         </div>

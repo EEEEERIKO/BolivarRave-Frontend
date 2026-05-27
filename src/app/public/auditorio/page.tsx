@@ -359,6 +359,8 @@ export default function PublicAuditorioPage() {
   const [needsProjector, setNeedsProjector] = useState(false);
   const [needsWaterFilter, setNeedsWaterFilter] = useState(false);
   const [notes, setNotes] = useState("");
+  const [requesterName, setRequesterName] = useState("");
+  const [requesterPhone, setRequesterPhone] = useState("");
 
   const formRef = useRef<HTMLDivElement>(null);
   const startDateInputRef = useRef<HTMLInputElement>(null);
@@ -412,7 +414,6 @@ export default function PublicAuditorioPage() {
         }));
 
         setEvents(loaded);
-        setSelectedEventId((current) => current ?? loaded[0]?.id ?? null);
       } catch (error) {
         if (!mounted) return;
         setLoadError(error instanceof Error ? error.message : "No se pudieron cargar las reservas públicas.");
@@ -501,6 +502,8 @@ export default function PublicAuditorioPage() {
     setNeedsProjector(false);
     setNeedsWaterFilter(false);
     setNotes("");
+    setRequesterName("");
+    setRequesterPhone("");
   };
 
   const setScheduleModeAndAdjust = (mode: PublicScheduleMode) => {
@@ -599,6 +602,16 @@ export default function PublicAuditorioPage() {
       return;
     }
 
+    if (!requesterName.trim()) {
+      setFormError("Escribe el nombre del solicitante.");
+      return;
+    }
+
+    if (!requesterPhone.trim()) {
+      setFormError("Escribe el número de teléfono del solicitante.");
+      return;
+    }
+
     if (scheduleMode === "multi" && !endDate) {
       setFormError("Selecciona la fecha de fin.");
       return;
@@ -658,6 +671,8 @@ export default function PublicAuditorioPage() {
           nombreEvento: title.trim(),
           correo: email.trim(),
           confirmarCorreo: confirmEmail.trim(),
+          solicitanteNombre: requesterName.trim(),
+          solicitanteTelefono: requesterPhone.trim(),
             fechaInicioPeriodo: scheduleMode === "single" ? startDate : startDate,
             fechaFinPeriodo: scheduleMode === "single" ? startDate : endDate || startDate,
           numeroAsistentes: Number(attendees) || 1,
@@ -918,6 +933,16 @@ export default function PublicAuditorioPage() {
                       <label>
                         <span className="mb-2 block text-sm font-medium text-slate-700">Confirmar correo</span>
                         <input type="email" value={confirmEmail} onChange={(event) => setConfirmEmail(event.target.value)} placeholder="repite el correo" className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10" required />
+                      </label>
+
+                      <label className="md:col-span-2">
+                        <span className="mb-2 block text-sm font-medium text-slate-700">Nombre del solicitante</span>
+                        <input type="text" value={requesterName} onChange={(event) => setRequesterName(event.target.value)} placeholder="Nombre completo" className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10" required />
+                      </label>
+
+                      <label>
+                        <span className="mb-2 block text-sm font-medium text-slate-700">Teléfono del solicitante</span>
+                        <input type="tel" value={requesterPhone} onChange={(event) => setRequesterPhone(event.target.value)} placeholder="(317) 555-0123" className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10" required />
                       </label>
 
                       <label>

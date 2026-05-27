@@ -28,9 +28,12 @@ type InventoryGroup = { id: string; name: string; icon?: string; order?: number;
 type InventoryItem = { id: string; groupId: string; groupName: string; groupIcon?: string; name: string; code: string; room: string; status: string; defective: boolean; motivo?: string | null };
 type TelevisorReservationCandidate = {
     id: string;
-    name: string;
-    code: string;
-    room: string;
+    name?: string;
+    nombre?: string;
+    code?: string;
+    codigo?: string;
+    room?: string;
+    salon?: string;
     roomTvCount: number;
     priority: number;
     note: string | null;
@@ -223,6 +226,17 @@ function hasFreshPendingReservation(reservations: ReservationFeedItem[], maxAgeS
 
 function normalizeSearchText(value: string) {
     return value.trim().toLowerCase();
+}
+
+function normalizeTelevisorText(...values: Array<string | null | undefined>) {
+    for (const value of values) {
+        const trimmed = value?.trim();
+        if (trimmed && trimmed !== "-") {
+            return trimmed;
+        }
+    }
+
+    return "";
 }
 
 export default function ReservasPage() {
@@ -478,7 +492,12 @@ export default function ReservasPage() {
 
                 if (cancelled) return;
 
-                const nextCandidates = response.candidates ?? [];
+                const nextCandidates = (response.candidates ?? []).map((candidate) => ({
+                    ...candidate,
+                    name: normalizeTelevisorText(candidate.name, candidate.nombre, candidate.code, candidate.codigo, candidate.room, candidate.salon) || "Televisor",
+                    code: normalizeTelevisorText(candidate.code, candidate.codigo) || "-",
+                    room: normalizeTelevisorText(candidate.room, candidate.salon) || "Sin salón",
+                }));
                 setTelevisorCandidates(nextCandidates);
                 setTelevisorCandidatesMessage(response.message ?? null);
 
@@ -522,6 +541,24 @@ export default function ReservasPage() {
         () => televisorCandidates.find((candidate) => candidate.id === selectedResourceId) ?? null,
         [selectedResourceId, televisorCandidates],
     );
+
+    const selectedTelevisorLabel = useMemo(() => {
+        if (!selectedTelevisorResource) {
+            return "";
+        }
+
+        const name = normalizeTelevisorText(
+            selectedTelevisorResource.name,
+            selectedTelevisorResource.nombre,
+            selectedTelevisorResource.code,
+            selectedTelevisorResource.codigo,
+            selectedTelevisorResource.room,
+            selectedTelevisorResource.salon,
+        ) || "Televisor";
+        const code = normalizeTelevisorText(selectedTelevisorResource.code, selectedTelevisorResource.codigo);
+
+        return code ? `${name} — ${code}` : name;
+    }, [selectedTelevisorResource]);
 
     const selectedDestinationRoom = useMemo(
         () => roomsCatalog.find((room) => room.id === selectedDestinationRoomId) ?? null,
@@ -1422,7 +1459,7 @@ export default function ReservasPage() {
                                                     >
                                                         {tvReservationItems.map((candidate) => (
                                                             <option key={candidate.id} value={candidate.id}>
-                                                                {candidate.name} — {candidate.code} · {candidate.room}{candidate.roomTvCount >= 2 ? " · Preferido" : ""}
+                                                                {normalizeTelevisorText(candidate.name, candidate.nombre, candidate.code, candidate.codigo) || "Televisor"} — {normalizeTelevisorText(candidate.code, candidate.codigo) || "-"} · {normalizeTelevisorText(candidate.room, candidate.salon) || "Sin salón"}{candidate.roomTvCount >= 2 ? " · Preferido" : ""}
                                                             </option>
                                                         ))}
                                                     </select>
@@ -1434,8 +1471,8 @@ export default function ReservasPage() {
                                                 {selectedTelevisorResource ? (
                                                     <div className="rounded-xl border border-sky-100 bg-sky-50 p-4 text-sm text-sky-800">
                                                         <p className="text-[10px] font-bold uppercase tracking-widest text-sky-600">Televisor seleccionado</p>
-                                                        <p className="mt-1 font-bold text-sky-900">{selectedTelevisorResource.name} — {selectedTelevisorResource.code}</p>
-                                                        <p className="mt-1">{selectedTelevisorResource.room}</p>
+                                                        <p className="mt-1 font-bold text-sky-900">{selectedTelevisorLabel}</p>
+                                                        <p className="mt-1">{normalizeTelevisorText(selectedTelevisorResource.room, selectedTelevisorResource.salon) || "Sin salón"}</p>
                                                         {selectedTelevisorResource.note ? (
                                                             <p className="mt-2 text-sm">{selectedTelevisorResource.note}</p>
                                                         ) : null}
