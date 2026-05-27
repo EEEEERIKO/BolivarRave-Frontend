@@ -1,4 +1,4 @@
-export type UserRole = "admin" | "monitor" | "colaborador";
+export type UserRole = "admin" | "monitor" | "colaborador" | "registro";
 
 export type AuthSession = {
   role: UserRole;
