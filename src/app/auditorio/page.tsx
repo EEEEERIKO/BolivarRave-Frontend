@@ -41,6 +41,8 @@ type AuditoriumEvent = {
   observations: string;
   color: "blue" | "emerald" | "amber";
   scheduleBlocks: ScheduleBlock[];
+  requesterName?: string | null;
+  requesterPhone?: string | null;
 };
 
 type AuditorioReservaApi = {
@@ -72,6 +74,8 @@ type AuditorioReservaApi = {
     horaInicio: string;
     horaFin: string;
   }>;
+  solicitanteNombre?: string | null;
+  solicitanteTelefono?: string | null;
 };
 
 type StaffApi = {
@@ -87,6 +91,8 @@ type StaffApi = {
 type NewEventFormState = {
   title: string;
   organizer: string;
+  requesterName: string;
+  requesterPhone: string;
   startDate: string;
   endDate: string;
   status: AuditorioEstado | "";
@@ -322,6 +328,8 @@ function mapReservaToEvent(reserva: AuditorioReservaApi): AuditoriumEvent {
     assignedWorkers: reserva.encargados ?? [],
     observations: reserva.observaciones ?? "",
     color: colorFromEstado(reserva.estado),
+    requesterName: reserva.solicitanteNombre ?? null,
+    requesterPhone: reserva.solicitanteTelefono ?? null,
     scheduleBlocks: reserva.horarios
       .slice()
       .sort((a, b) => a.fechaEspecifica.localeCompare(b.fechaEspecifica) || a.horaInicio.localeCompare(b.horaInicio))
@@ -400,6 +408,8 @@ function createEmptyFormState(defaultDate: string): NewEventFormState {
   return {
     title: "",
     organizer: "",
+    requesterName: "",
+    requesterPhone: "",
     startDate: defaultDate,
     endDate: defaultDate,
     status: "",
@@ -725,6 +735,8 @@ export default function AuditorioPage() {
   const mapFormToPayload = (state: NewEventFormState) => ({
     nombreEvento: state.title.trim(),
     organizador: state.organizer.trim(),
+    solicitanteNombre: state.requesterName.trim() || null,
+    solicitanteTelefono: state.requesterPhone.trim() || null,
     fechaInicioPeriodo: state.startDate,
     fechaFinPeriodo: state.endDate,
     numeroAsistentes: Number(state.attendees) || 1,
@@ -765,6 +777,8 @@ export default function AuditorioPage() {
     setFormState({
       title: selectedEvent.title,
       organizer: selectedEvent.organizer,
+      requesterName: selectedEvent.requesterName ?? "",
+      requesterPhone: selectedEvent.requesterPhone ?? "",
       startDate: selectedEvent.periodStartDate,
       endDate: selectedEvent.periodEndDate,
       status: selectedEvent.status,
@@ -1232,26 +1246,22 @@ export default function AuditorioPage() {
     if (!canManageAuditorio) return;
     if (!selectedEvent || selectedEvent.status !== "Pendiente" || isChangingRequestState) return;
 
-    const accepted = await confirmToast(`Rechazar la solicitud \"${selectedEvent.title}\"?`, {
-      title: "Rechazar solicitud",
-      confirmLabel: "Rechazar",
+    const accepted = await confirmToast(`Eliminar la solicitud \"${selectedEvent.title}\"?`, {
+      title: "Eliminar solicitud rechazada",
+      confirmLabel: "Eliminar",
     });
     if (!accepted) return;
 
     setIsChangingRequestState(true);
     try {
-      await fetchApiJson<{ message: string }>(`/api/auditorio/reservas/${selectedEvent.id}/estado`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ estado: "Cancelada" as AuditorioEstado }),
+      await fetchApiJson<{ message: string }>(`/api/auditorio/reservas/${selectedEvent.id}`, {
+        method: "DELETE",
       });
 
       await syncReservas();
-      toast.success("Solicitud rechazada correctamente.");
+      toast.success("Solicitud eliminada correctamente.");
     } catch (error) {
-      const message = error instanceof Error ? error.message : "No se pudo rechazar la solicitud";
+      const message = error instanceof Error ? error.message : "No se pudo eliminar la solicitud";
       toast.error(message);
     } finally {
       setIsChangingRequestState(false);
@@ -1588,6 +1598,12 @@ export default function AuditorioPage() {
                   <span className="font-semibold">Organiza:</span> {selectedEvent.organizer}
                 </p>
                 <p>
+                  <span className="font-semibold">Solicitante:</span> {selectedEvent.requesterName ?? "No registrado"}
+                </p>
+                <p>
+                  <span className="font-semibold">Teléfono solicitante:</span> {selectedEvent.requesterPhone ?? "No registrado"}
+                </p>
+                <p>
                   <span className="font-semibold">Duracion:</span> {diffDays(getEventBounds(selectedEvent).end, getEventBounds(selectedEvent).start) + 1} dia(s)
                 </p>
                 <p>
@@ -1829,6 +1845,32 @@ export default function AuditorioPage() {
                           className={`w-full rounded-xl border bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10 ${fieldErrors.attendees ? "border-red-400 bg-red-50" : "border-slate-200"}`}
                         />
                         {fieldErrors.attendees ? <p className="mt-2 text-xs font-medium text-red-600">{fieldErrors.attendees}</p> : null}
+                      </label>
+
+                      <label className="md:col-span-1">
+                        <span className="mb-2 block text-sm font-medium text-slate-700">Nombre del solicitante</span>
+                        <input
+                          type="text"
+                          value={formState.requesterName}
+                          onChange={(event) => {
+                            setFormState((current) => ({ ...current, requesterName: event.target.value }));
+                          }}
+                          placeholder="Nombre de quien solicita la reserva"
+                          className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10"
+                        />
+                      </label>
+
+                      <label className="md:col-span-1">
+                        <span className="mb-2 block text-sm font-medium text-slate-700">Teléfono del solicitante</span>
+                        <input
+                          type="text"
+                          value={formState.requesterPhone}
+                          onChange={(event) => {
+                            setFormState((current) => ({ ...current, requesterPhone: event.target.value }));
+                          }}
+                          placeholder="Número de contacto"
+                          className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#295786] focus:ring-4 focus:ring-[#295786]/10"
+                        />
                       </label>
                     </div>
 
