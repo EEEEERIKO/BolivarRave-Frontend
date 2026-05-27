@@ -101,17 +101,46 @@ function getDefaultBookingTimeRange() {
     const [hoursText = "00", minutesText = "00"] = startTime.split(":");
     const hours = Number(hoursText);
     const minutes = Number(minutesText);
-    const safeHours = Number.isFinite(hours) ? hours : 0;
+    const safeHours = Number.isFinite(hours) ? hours : 6;
     const safeMinutes = Number.isFinite(minutes) ? minutes : 0;
-    const endTotalMinutes = safeHours * 60 + safeMinutes + 120;
-    const endHours = Math.floor((endTotalMinutes / 60) % 24);
+    const roundedMinutes = safeMinutes < 30 ? 0 : 30;
+    const currentTotalMinutes = safeHours * 60 + roundedMinutes;
+    const minStartMinutes = 6 * 60;
+    const maxStartMinutes = 20 * 60;
+    const clampedStartMinutes = Math.max(minStartMinutes, Math.min(maxStartMinutes, currentTotalMinutes));
+    const endTotalMinutes = clampedStartMinutes + 120;
+    const endHours = Math.floor(endTotalMinutes / 60);
     const endMinutes = endTotalMinutes % 60;
 
     return {
-        startTime,
+        startTime: `${String(Math.floor(clampedStartMinutes / 60)).padStart(2, "0")}:${String(clampedStartMinutes % 60).padStart(2, "0")}`,
         endTime: `${String(endHours).padStart(2, "0")}:${String(endMinutes).padStart(2, "0")}`,
     };
 }
+
+const TIME_SLOT_START_MINUTES = 6 * 60;
+const TIME_SLOT_END_MINUTES = 22 * 60;
+const TIME_SLOT_STEP_MINUTES = 30;
+
+function minutesToTimeValue(totalMinutes: number) {
+    const normalizedMinutes = Math.max(TIME_SLOT_START_MINUTES, Math.min(TIME_SLOT_END_MINUTES, totalMinutes));
+    const hours = Math.floor(normalizedMinutes / 60);
+    const minutes = normalizedMinutes % 60;
+    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+function getTimeSlotOptions() {
+    const options: Array<{ value: string; label: string }> = [];
+
+    for (let minutes = TIME_SLOT_START_MINUTES; minutes <= TIME_SLOT_END_MINUTES; minutes += TIME_SLOT_STEP_MINUTES) {
+        const value = minutesToTimeValue(minutes);
+        options.push({ value, label: formatTime(value) });
+    }
+
+    return options;
+}
+
+const TIME_SLOT_OPTIONS = getTimeSlotOptions();
 
 function timeToMinutes(timeStr: string): number {
     const [hours = "0", minutes = "0"] = timeStr.split(":");
@@ -540,6 +569,13 @@ export default function ReservasPage() {
     const selectedTelevisorResource = useMemo(
         () => televisorCandidates.find((candidate) => candidate.id === selectedResourceId) ?? null,
         [selectedResourceId, televisorCandidates],
+    );
+
+    const startTimeOptions = TIME_SLOT_OPTIONS;
+
+    const endTimeOptions = useMemo(
+        () => TIME_SLOT_OPTIONS.filter((option) => timeToMinutes(option.value) > timeToMinutes(startTime)),
+        [startTime],
     );
 
     const selectedTelevisorLabel = useMemo(() => {
@@ -1513,88 +1549,49 @@ export default function ReservasPage() {
                                     </label>
 
                                     <div className="space-y-4">
-                                        {/* Time Range Picker */}
-                                        <div className="rounded-xl border border-slate-200 bg-white p-2 shadow-sm">
-                                            <div className="grid gap-2 sm:grid-cols-2">
-                                                {/* Start Time */}
-                                                <div className="space-y-1">
-                                                    <label className="text-xs font-bold text-slate-500 uppercase">Inicio</label>
-                                                    <div className="flex items-center gap-1.5">
-                                                        <div className="rounded-lg border border-slate-200 bg-slate-50 px-1 py-1 flex-1 min-w-0">
-                                                            <div className="flex items-center gap-0.5 justify-center">
-                                                                <input
-                                                                    type="number"
-                                                                    min="6"
-                                                                    max="22"
-                                                                    value={startTime.split(":")[0]}
-                                                                    onChange={(e) => {
-                                                                        const h = Math.max(6, Math.min(22, parseInt(e.target.value) || 6));
-                                                                        const m = startTime.split(":")[1] || "00";
-                                                                        setStartTime(`${String(h).padStart(2, "0")}:${m}`);
-                                                                    }}
-                                                                    className="w-12 bg-transparent text-center text-xs font-bold text-slate-900 outline-none"
-                                                                />
-                                                                <span className="text-xs font-bold text-slate-400">:</span>
-                                                                <input
-                                                                    type="number"
-                                                                    min="0"
-                                                                    max="59"
-                                                                    value={startTime.split(":")[1] || "00"}
-                                                                    onChange={(e) => {
-                                                                        const h = startTime.split(":")[0] || "06";
-                                                                        const m = Math.max(0, Math.min(59, parseInt(e.target.value) || 0));
-                                                                        setStartTime(`${h}:${String(m).padStart(2, "0")}`);
-                                                                    }}
-                                                                    className="w-12 bg-transparent text-center text-xs font-bold text-slate-900 outline-none"
-                                                                />
-                                                            </div>
-                                                        </div>
-                                                        
-                                                        
-                                                    </div>
-                                                </div>
+                                        <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+                                            <div className="grid gap-3 sm:grid-cols-2">
+                                                <label className="block">
+                                                    <span className="mb-2 block text-xs font-bold text-slate-500 uppercase">Inicio</span>
+                                                    <select
+                                                        value={startTime}
+                                                        onChange={(event) => {
+                                                            const nextStartTime = event.target.value;
+                                                            setStartTime(nextStartTime);
 
-                                                {/* End Time */}
-                                                <div className="space-y-1">
-                                                    <label className="text-xs font-bold text-slate-500 uppercase">Fin</label>
-                                                    <div className="flex items-center gap-1.5">
-                                                        <div className="rounded-lg border border-slate-200 bg-slate-50 px-1 py-1 flex-1 min-w-0">
-                                                            <div className="flex items-center gap-0.5 justify-center">
-                                                                <input
-                                                                    type="number"
-                                                                    min="6"
-                                                                    max="22"
-                                                                    value={endTime.split(":")[0]}
-                                                                    onChange={(e) => {
-                                                                        const h = Math.max(6, Math.min(22, parseInt(e.target.value) || 6));
-                                                                        const m = endTime.split(":")[1] || "00";
-                                                                        setEndTime(`${String(h).padStart(2, "0")}:${m}`);
-                                                                    }}
-                                                                    className="w-12 bg-transparent text-center text-xs font-bold text-slate-900 outline-none"
-                                                                />
-                                                                <span className="text-xs font-bold text-slate-400">:</span>
-                                                                <input
-                                                                    type="number"
-                                                                    min="0"
-                                                                    max="59"
-                                                                    value={endTime.split(":")[1] || "00"}
-                                                                    onChange={(e) => {
-                                                                        const h = endTime.split(":")[0] || "06";
-                                                                        const m = Math.max(0, Math.min(59, parseInt(e.target.value) || 0));
-                                                                        setEndTime(`${h}:${String(m).padStart(2, "0")}`);
-                                                                    }}
-                                                                    className="w-12 bg-transparent text-center text-xs font-bold text-slate-900 outline-none"
-                                                                />
-                                                            </div>
-                                                        </div>
-                                                        
-                                                        
-                                                    </div>
-                                                    
-                                                </div>
+                                                            if (timeToMinutes(endTime) <= timeToMinutes(nextStartTime)) {
+                                                                const nextEnd = TIME_SLOT_OPTIONS.find((option) => timeToMinutes(option.value) > timeToMinutes(nextStartTime));
+                                                                setEndTime(nextEnd?.value ?? nextStartTime);
+                                                            }
+                                                        }}
+                                                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm font-semibold text-slate-900 outline-none transition focus:border-[#3a5f94]"
+                                                    >
+                                                        {startTimeOptions.map((option) => (
+                                                            <option key={option.value} value={option.value}>
+                                                                {option.label}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                </label>
+
+                                                <label className="block">
+                                                    <span className="mb-2 block text-xs font-bold text-slate-500 uppercase">Fin</span>
+                                                    <select
+                                                        value={endTime}
+                                                        onChange={(event) => setEndTime(event.target.value)}
+                                                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm font-semibold text-slate-900 outline-none transition focus:border-[#3a5f94]"
+                                                    >
+                                                        {endTimeOptions.map((option) => (
+                                                            <option key={option.value} value={option.value}>
+                                                                {option.label}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                </label>
                                             </div>
-
-                                            
+                                            <p className="mt-2 text-[11px] text-slate-500">
+                                                Horario disponible de 6:00 AM a 10:00 PM en intervalos de 30 minutos.
+                                            </p>
                                         </div>
                                     </div>
                                 </div>
@@ -1864,36 +1861,41 @@ export default function ReservasPage() {
                                                                 ? "bg-cyan-50 text-cyan-700 border-cyan-100"
                                                                 : "bg-amber-50 text-amber-700 border-amber-100";
 
+                                                    const moveDateTime = new Date(`${reservation.bookingDate}T${reservation.startTime}:00`);
+                                                    const returnDateTime = new Date(`${reservation.bookingDate}T${reservation.endTime}:00`);
+                                                    const now = new Date();
+                                                    const moveWarningWindowStart = new Date(moveDateTime.getTime() - 10 * 60 * 1000);
+                                                    const needsMoveWarning = isTelevisor && statusLower === "no_aceptado" && now >= moveWarningWindowStart && now < moveDateTime;
+                                                    const needsMoveUrgent = isTelevisor && statusLower === "no_aceptado" && now >= moveDateTime;
+                                                    const needsReturnWarning = isTelevisor && statusLower === "confirmada" && now >= returnDateTime;
+
                                     return (
-                                        (() => {
-                                            const now = new Date();
-                                            const endDateTime = (() => {
-                                                try {
-                                                    return new Date(`${reservation.bookingDate}T${reservation.endTime}:00`);
-                                                } catch (e) {
-                                                    return null;
-                                                }
-                                            })();
+                                                        (() => {
+                                                            const isLate = needsReturnWarning;
+                                                            const overdueDateLabel = new Intl.DateTimeFormat('es-CO', {
+                                                                weekday: 'long',
+                                                                day: 'numeric',
+                                                                month: 'long',
+                                                            }).format(returnDateTime);
+                                                            const overdueDateLabelFormatted = overdueDateLabel.charAt(0).toUpperCase() + overdueDateLabel.slice(1);
 
-                                            const isLate = endDateTime
-                                                ? endDateTime.getTime() < now.getTime() && (statusLower === 'confirmada' || statusLower === 'aprobada')
-                                                : false;
-                                            const overdueDateLabel = endDateTime
-                                                ? new Intl.DateTimeFormat('es-CO', {
-                                                    weekday: 'long',
-                                                    day: 'numeric',
-                                                    month: 'long',
-                                                }).format(endDateTime)
-                                                : reservation.bookingDate;
-                                            const overdueDateLabelFormatted = overdueDateLabel.charAt(0).toUpperCase() + overdueDateLabel.slice(1);
+                                                            return (
+                                                                <article key={reservation.id} className={`rounded-xl border ${isLate ? 'border-rose-300 bg-[#fff6f6]' : 'border-slate-200 bg-[#f7f9fb]'} p-4`}>
+                                                                    {needsMoveUrgent ? (
+                                                                        <div className="mb-3 rounded-md border border-rose-200 bg-rose-100 px-3 py-2 text-sm font-semibold text-rose-800">
+                                                                            El televisor ya debía moverse. Marca el desplazamiento ahora.
+                                                                        </div>
+                                                                    ) : needsMoveWarning ? (
+                                                                        <div className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">
+                                                                            Faltan menos de 10 minutos para mover este televisor.
+                                                                        </div>
+                                                                    ) : null}
 
-                                            return (
-                                                <article key={reservation.id} className={`rounded-xl border ${isLate ? 'border-rose-300 bg-[#fff6f6]' : 'border-slate-200 bg-[#f7f9fb]'} p-4`}>
-                                                    {isLate ? (
-                                                        <div className="mb-3 rounded-md border border-rose-100 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700">
-                                                            RESERVA TARDÍA - esta reserva debería haberse cerrado a las {reservation.endTime} del {overdueDateLabelFormatted}
-                                                        </div>
-                                                    ) : null}
+                                                                    {needsReturnWarning ? (
+                                                                        <div className="mb-3 rounded-md border border-rose-100 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700">
+                                                                            RESERVA TARDÍA - esta reserva debería haberse devuelto a las {reservation.endTime} del {overdueDateLabelFormatted}
+                                                                        </div>
+                                                                    ) : null}
 
                                                     <div className="flex items-start justify-between gap-3">
                                                         <div className="min-w-0">
