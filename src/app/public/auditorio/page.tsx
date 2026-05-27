@@ -414,6 +414,7 @@ export default function PublicAuditorioPage() {
         }));
 
         setEvents(loaded);
+        setSelectedEventId((current) => current ?? loaded[0]?.id ?? null);
       } catch (error) {
         if (!mounted) return;
         setLoadError(error instanceof Error ? error.message : "No se pudieron cargar las reservas públicas.");
