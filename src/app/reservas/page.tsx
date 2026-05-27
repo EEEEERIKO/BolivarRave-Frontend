@@ -26,6 +26,12 @@ const ROOM_RESOURCES: BookingResource[] = [];
 // Inventory integration: load groups and items from backend and map to BookingResource
 type InventoryGroup = { id: string; name: string; icon?: string; order?: number; itemCount?: number };
 type InventoryItem = { id: string; groupId: string; groupName: string; groupIcon?: string; name: string; code: string; room: string; status: string; defective: boolean; motivo?: string | null };
+type RequesterProfile = {
+    requesterDocument: string;
+    requesterName: string;
+    requesterEmail: string | null;
+    requesterPhone: string | null;
+};
 type TelevisorReservationCandidate = {
     id: string;
     name?: string;
@@ -39,6 +45,7 @@ type TelevisorReservationCandidate = {
     note: string | null;
     needsReturnReminder: boolean;
 };
+
 type ReservationFeedItem = {
     id: string;
     resourceType: ResourceType;
@@ -59,72 +66,6 @@ type ReservationFeedItem = {
     reportReason?: string | null;
     createdAt: string;
 };
-
-type RequesterProfile = {
-    requesterDocument: string;
-    requesterName: string;
-    requesterEmail: string | null;
-    requesterPhone: string | null;
-};
-
-// We'll populate items dynamically when user selects a group.
-
-function getBogotaTodayKey() {
-    const formatter = new Intl.DateTimeFormat("en-CA", {
-        timeZone: "America/Bogota",
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-    });
-
-    const parts = formatter.formatToParts(new Date());
-    const year = parts.find((part) => part.type === "year")?.value ?? "0000";
-    const month = parts.find((part) => part.type === "month")?.value ?? "01";
-    const day = parts.find((part) => part.type === "day")?.value ?? "01";
-
-    return `${year}-${month}-${day}`;
-}
-
-function getBogotaCurrentTimeKey() {
-    const formatter = new Intl.DateTimeFormat("en-CA", {
-        timeZone: "America/Bogota",
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-    });
-
-    return formatter.format(new Date());
-}
-
-function getDefaultBookingTimeRange() {
-    const startTime = getBogotaCurrentTimeKey();
-    const [hoursText = "00", minutesText = "00"] = startTime.split(":");
-    const hours = Number(hoursText);
-    const minutes = Number(minutesText);
-    const safeHours = Number.isFinite(hours) ? hours : 0;
-    const safeMinutes = Number.isFinite(minutes) ? minutes : 0;
-    const endTotalMinutes = safeHours * 60 + safeMinutes + 120;
-    const endHours = Math.floor((endTotalMinutes / 60) % 24);
-    const endMinutes = endTotalMinutes % 60;
-
-    return {
-        startTime,
-        endTime: `${String(endHours).padStart(2, "0")}:${String(endMinutes).padStart(2, "0")}`,
-    };
-}
-
-function timeToMinutes(timeStr: string): number {
-    const [hours = "0", minutes = "0"] = timeStr.split(":");
-    return Number(hours) * 60 + Number(minutes);
-}
-
-function timeRangesOverlap(aStart: string, aEnd: string, bStart: string, bEnd: string): boolean {
-    const aStartMin = timeToMinutes(aStart);
-    const aEndMin = timeToMinutes(aEnd);
-    const bStartMin = timeToMinutes(bStart);
-    const bEndMin = timeToMinutes(bEnd);
-    return aStartMin < bEndMin && bStartMin < aEndMin;
-}
 
 function formatTime(value: string) {
     if (!value) {
@@ -251,9 +192,106 @@ function normalizeSearchText(value: string) {
     return value.trim().toLowerCase();
 }
 
+function getBogotaTodayKey() {
+    const formatter = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "America/Bogota",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+    });
+
+    const parts = formatter.formatToParts(new Date());
+    const year = parts.find((part) => part.type === "year")?.value ?? "0000";
+    const month = parts.find((part) => part.type === "month")?.value ?? "01";
+    const day = parts.find((part) => part.type === "day")?.value ?? "01";
+
+    return `${year}-${month}-${day}`;
+}
+
+function getBogotaCurrentTimeKey() {
+    const formatter = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "America/Bogota",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+    });
+
+    return formatter.format(new Date());
+}
+
+function timeToMinutes(timeStr: string) {
+    const [hours = "0", minutes = "0"] = timeStr.split(":");
+    return Number(hours) * 60 + Number(minutes);
+}
+
+function timeRangesOverlap(aStart: string, aEnd: string, bStart: string, bEnd: string): boolean {
+    const aStartMin = timeToMinutes(aStart);
+    const aEndMin = timeToMinutes(aEnd);
+    const bStartMin = timeToMinutes(bStart);
+    const bEndMin = timeToMinutes(bEnd);
+    return aStartMin < bEndMin && bStartMin < aEndMin;
+}
+
+function getDefaultBookingTimeRange() {
+    const startTime = getDefaultBookingStartTime();
+    const startMinutes = timeToMinutes(startTime);
+    const endTotalMinutes = Math.min(startMinutes + 120, BOOKING_END_MINUTES);
+
+    return {
+        startTime,
+        endTime: minutesToTimeString(endTotalMinutes),
+    };
+}
+
+const BOOKING_START_MINUTES = 6 * 60;
+const BOOKING_END_MINUTES = 22 * 60;
+const BOOKING_SLOT_STEP_MINUTES = 30;
+
+function minutesToTimeString(totalMinutes: number) {
+    const normalizedMinutes = Math.max(0, totalMinutes);
+    const hours = Math.floor(normalizedMinutes / 60);
+    const minutes = normalizedMinutes % 60;
+    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+function getTimeOptionLabel(timeValue: string) {
+    return formatTime(timeValue);
+}
+
+function buildTimeOptions(startMinutes: number, endMinutes: number, stepMinutes: number) {
+    const options: string[] = [];
+
+    for (let currentMinutes = startMinutes; currentMinutes <= endMinutes; currentMinutes += stepMinutes) {
+        options.push(minutesToTimeString(currentMinutes));
+    }
+
+    return options;
+}
+
+function getNextBookingEndTime(startTime: string) {
+    const nextEndMinutes = Math.min(timeToMinutes(startTime) + BOOKING_SLOT_STEP_MINUTES, BOOKING_END_MINUTES);
+    return minutesToTimeString(nextEndMinutes);
+}
+
+function getDefaultBookingStartTime() {
+    const currentMinutes = timeToMinutes(getBogotaCurrentTimeKey());
+    const roundedMinutes = Math.ceil(currentMinutes / BOOKING_SLOT_STEP_MINUTES) * BOOKING_SLOT_STEP_MINUTES;
+    const clampedMinutes = Math.max(BOOKING_START_MINUTES, Math.min(BOOKING_END_MINUTES - BOOKING_SLOT_STEP_MINUTES, roundedMinutes));
+    return minutesToTimeString(clampedMinutes);
+}
+
 export default function ReservasPage() {
     const todayKey = useMemo(() => getBogotaTodayKey(), []);
     const defaultBookingTimeRange = useMemo(() => getDefaultBookingTimeRange(), []);
+    const bookingTimeOptions = useMemo(
+        () => buildTimeOptions(BOOKING_START_MINUTES, BOOKING_END_MINUTES, BOOKING_SLOT_STEP_MINUTES),
+        [],
+    );
+    const bookingStartOptions = useMemo(
+        () => bookingTimeOptions.filter((timeValue) => timeToMinutes(timeValue) < BOOKING_END_MINUTES),
+        [bookingTimeOptions],
+    );
+    const bookingEndOptions = bookingTimeOptions;
     const [resourceType, setResourceType] = useState<ResourceType>("televisor");
     const [selectedResourceId, setSelectedResourceId] = useState<string>("");
     const [bookingDate, setBookingDate] = useState(todayKey);
@@ -291,6 +329,10 @@ export default function ReservasPage() {
     const [televisorCandidates, setTelevisorCandidates] = useState<TelevisorReservationCandidate[]>([]);
     const [televisorCandidatesMessage, setTelevisorCandidatesMessage] = useState<string | null>(null);
     const [televisorCandidatesLoading, setTelevisorCandidatesLoading] = useState(false);
+    const validBookingEndOptions = useMemo(
+        () => bookingEndOptions.filter((timeValue) => timeToMinutes(timeValue) > timeToMinutes(startTime)),
+        [bookingEndOptions, startTime],
+    );
 
     const availableInventoryItems = useMemo(() => {
         const desiredDate = bookingDate;
@@ -322,6 +364,12 @@ export default function ReservasPage() {
     const canViewReservations = authSession?.role === "admin" || authSession?.role === "monitor";
 
     const tvReservationItems = televisorCandidates;
+
+    useEffect(() => {
+        if (timeToMinutes(endTime) <= timeToMinutes(startTime)) {
+            setEndTime(getNextBookingEndTime(startTime));
+        }
+    }, [endTime, startTime]);
 
     const equipmentGroupOptions = useMemo(
         () => inventoryGroups.filter((group) => group.name.trim().toLowerCase() !== "televisores"),
@@ -1517,88 +1565,58 @@ export default function ReservasPage() {
                                     </label>
 
                                     <div className="space-y-4">
-                                        {/* Time Range Picker */}
                                         <div className="rounded-xl border border-slate-200 bg-white p-2 shadow-sm">
                                             <div className="grid gap-2 sm:grid-cols-2">
-                                                {/* Start Time */}
                                                 <div className="space-y-1">
                                                     <label className="text-xs font-bold text-slate-500 uppercase">Inicio</label>
-                                                    <div className="flex items-center gap-1.5">
-                                                        <div className="rounded-lg border border-slate-200 bg-slate-50 px-1 py-1 flex-1 min-w-0">
-                                                            <div className="flex items-center gap-0.5 justify-center">
-                                                                <input
-                                                                    type="number"
-                                                                    min="6"
-                                                                    max="22"
-                                                                    value={startTime.split(":")[0]}
-                                                                    onChange={(e) => {
-                                                                        const h = Math.max(6, Math.min(22, parseInt(e.target.value) || 6));
-                                                                        const m = startTime.split(":")[1] || "00";
-                                                                        setStartTime(`${String(h).padStart(2, "0")}:${m}`);
-                                                                    }}
-                                                                    className="w-12 bg-transparent text-center text-xs font-bold text-slate-900 outline-none"
-                                                                />
-                                                                <span className="text-xs font-bold text-slate-400">:</span>
-                                                                <input
-                                                                    type="number"
-                                                                    min="0"
-                                                                    max="59"
-                                                                    value={startTime.split(":")[1] || "00"}
-                                                                    onChange={(e) => {
-                                                                        const h = startTime.split(":")[0] || "06";
-                                                                        const m = Math.max(0, Math.min(59, parseInt(e.target.value) || 0));
-                                                                        setStartTime(`${h}:${String(m).padStart(2, "0")}`);
-                                                                    }}
-                                                                    className="w-12 bg-transparent text-center text-xs font-bold text-slate-900 outline-none"
-                                                                />
-                                                            </div>
-                                                        </div>
-                                                        
-                                                        
+                                                    <div className="relative">
+                                                        <select
+                                                            value={startTime}
+                                                            onChange={(event) => {
+                                                                const nextStart = event.target.value;
+                                                                setStartTime(nextStart);
+                                                                if (timeToMinutes(endTime) <= timeToMinutes(nextStart)) {
+                                                                    setEndTime(getNextBookingEndTime(nextStart));
+                                                                }
+                                                            }}
+                                                            className="w-full appearance-none rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm font-semibold text-slate-900 shadow-sm outline-none transition focus:border-[#3a5f94]"
+                                                        >
+                                                            {bookingStartOptions.map((timeValue) => (
+                                                                <option key={timeValue} value={timeValue}>
+                                                                    {getTimeOptionLabel(timeValue)}
+                                                                </option>
+                                                            ))}
+                                                        </select>
+                                                        <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-slate-600">
+                                                            <span className="material-symbols-outlined text-[20px]">expand_more</span>
+                                                        </span>
                                                     </div>
                                                 </div>
 
-                                                {/* End Time */}
                                                 <div className="space-y-1">
                                                     <label className="text-xs font-bold text-slate-500 uppercase">Fin</label>
-                                                    <div className="flex items-center gap-1.5">
-                                                        <div className="rounded-lg border border-slate-200 bg-slate-50 px-1 py-1 flex-1 min-w-0">
-                                                            <div className="flex items-center gap-0.5 justify-center">
-                                                                <input
-                                                                    type="number"
-                                                                    min="6"
-                                                                    max="22"
-                                                                    value={endTime.split(":")[0]}
-                                                                    onChange={(e) => {
-                                                                        const h = Math.max(6, Math.min(22, parseInt(e.target.value) || 6));
-                                                                        const m = endTime.split(":")[1] || "00";
-                                                                        setEndTime(`${String(h).padStart(2, "0")}:${m}`);
-                                                                    }}
-                                                                    className="w-12 bg-transparent text-center text-xs font-bold text-slate-900 outline-none"
-                                                                />
-                                                                <span className="text-xs font-bold text-slate-400">:</span>
-                                                                <input
-                                                                    type="number"
-                                                                    min="0"
-                                                                    max="59"
-                                                                    value={endTime.split(":")[1] || "00"}
-                                                                    onChange={(e) => {
-                                                                        const h = endTime.split(":")[0] || "06";
-                                                                        const m = Math.max(0, Math.min(59, parseInt(e.target.value) || 0));
-                                                                        setEndTime(`${h}:${String(m).padStart(2, "0")}`);
-                                                                    }}
-                                                                    className="w-12 bg-transparent text-center text-xs font-bold text-slate-900 outline-none"
-                                                                />
-                                                            </div>
-                                                        </div>
-                                                        
-                                                        
+                                                    <div className="relative">
+                                                        <select
+                                                            value={endTime}
+                                                            onChange={(event) => setEndTime(event.target.value)}
+                                                            className="w-full appearance-none rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm font-semibold text-slate-900 shadow-sm outline-none transition focus:border-[#3a5f94]"
+                                                        >
+                                                            {validBookingEndOptions.map((timeValue) => (
+                                                                <option key={timeValue} value={timeValue}>
+                                                                    {getTimeOptionLabel(timeValue)}
+                                                                </option>
+                                                            ))}
+                                                        </select>
+                                                        <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-slate-600">
+                                                            <span className="material-symbols-outlined text-[20px]">expand_more</span>
+                                                        </span>
                                                     </div>
-                                                    
                                                 </div>
                                             </div>
 
-                                            
+                                            <p className="mt-2 px-1 text-[11px] font-medium text-slate-500">
+                                                Horario disponible de 6:00 AM a 10:00 PM, en bloques de 30 minutos.
+                                            </p>
                                         </div>
                                     </div>
                                 </div>
