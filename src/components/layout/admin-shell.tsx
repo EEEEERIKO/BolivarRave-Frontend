@@ -292,29 +292,32 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    try {
-      const [requestsResponse, upcomingResponse] = await Promise.all([
-        canManageSchedules
-          ? fetchApiJson<{ requests?: PendingScheduleRequest[] }>("/api/schedules/requests", { cache: "no-store" })
-          : Promise.resolve({ requests: [] as PendingScheduleRequest[] }),
-        canReadAuditorioNotifications
-          ? fetchApiJson<{ notifications?: UpcomingAuditorioNotification[]; pendingNotifications?: PendingAuditorioNotification[] }>("/api/auditorio/notifications/upcoming", {
-              cache: "no-store",
-            })
-          : Promise.resolve({
-              notifications: [] as UpcomingAuditorioNotification[],
-              pendingNotifications: [] as PendingAuditorioNotification[],
-            }),
-      ]);
+    const [requestsResult, upcomingResult] = await Promise.allSettled([
+      canManageSchedules
+        ? fetchApiJson<{ requests?: PendingScheduleRequest[] }>("/api/schedules/requests", { cache: "no-store" })
+        : Promise.resolve({ requests: [] as PendingScheduleRequest[] }),
+      canReadAuditorioNotifications
+        ? fetchApiJson<{ notifications?: UpcomingAuditorioNotification[]; pendingNotifications?: PendingAuditorioNotification[] }>("/api/auditorio/notifications/upcoming", {
+            cache: "no-store",
+          })
+        : Promise.resolve({
+            notifications: [] as UpcomingAuditorioNotification[],
+            pendingNotifications: [] as PendingAuditorioNotification[],
+          }),
+    ]);
 
-      setPendingRequests(requestsResponse.requests ?? []);
-      setUpcomingAuditorioEvents(upcomingResponse.notifications ?? []);
-      setPendingAuditorioRequests(upcomingResponse.pendingNotifications ?? []);
-    } catch {
-      setPendingRequests([]);
-      setUpcomingAuditorioEvents([]);
-      setPendingAuditorioRequests([]);
-    }
+    const requestsResponse = requestsResult.status === "fulfilled" ? requestsResult.value : { requests: [] as PendingScheduleRequest[] };
+    const upcomingResponse =
+      upcomingResult.status === "fulfilled"
+        ? upcomingResult.value
+        : {
+            notifications: [] as UpcomingAuditorioNotification[],
+            pendingNotifications: [] as PendingAuditorioNotification[],
+          };
+
+    setPendingRequests(requestsResponse.requests ?? []);
+    setUpcomingAuditorioEvents(upcomingResponse.notifications ?? []);
+    setPendingAuditorioRequests(upcomingResponse.pendingNotifications ?? []);
   };
 
   useEffect(() => {

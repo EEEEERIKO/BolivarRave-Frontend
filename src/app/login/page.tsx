@@ -21,7 +21,7 @@ export default function LoginPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [legalModal, setLegalModal] = useState<LegalModalType | null>(null);
 
-  const cleanCedula = useMemo(() => cedula.replace(/\D/g, ""), [cedula]);
+  const cleanCedula = useMemo(() => cedula.trim(), [cedula]);
 
   const legalModalContent = useMemo(() => {
     if (legalModal === "privacy") {
