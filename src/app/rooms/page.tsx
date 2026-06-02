@@ -3,7 +3,17 @@
 import { useEffect, useMemo, useState } from "react";
 import { fetchApiJson } from "@/lib/api-client";
 import { readAuthSession } from "@/lib/auth-session";
-import { getDisabledRoomKeys, isRoomDisabled, loadSharedScheduleState, setSharedRoomDisabledState } from "@/lib/disabled-rooms";
+import {
+  getDisabledRoomKeys,
+  isRoomDisabled,
+  loadRoomActionHistory,
+  loadSharedScheduleState,
+  markRoomClean,
+  reportRoomDamage,
+  setSharedRoomDisabledState,
+  type RoomActionHistoryItem,
+  type RoomActionType,
+} from "@/lib/disabled-rooms";
 import toast from "react-hot-toast";
 import { confirmToast, promptToast } from "@/lib/toast-dialog";
 
@@ -285,6 +295,33 @@ function writeRoomsCache(rooms: RoomData[]) {
   }
 }
 
+function roomActionLabel(actionType: RoomActionType): string {
+  if (actionType === "inhabilitado") return "Salón inhabilitado";
+  if (actionType === "habilitado") return "Salón habilitado";
+  if (actionType === "danio_reportado") return "Daño reportado";
+  return "Salón marcado como limpio";
+}
+
+function roomActionStyle(actionType: RoomActionType): string {
+  if (actionType === "inhabilitado") return "bg-red-100 text-red-700 border border-red-200";
+  if (actionType === "habilitado") return "bg-emerald-100 text-emerald-700 border border-emerald-200";
+  if (actionType === "danio_reportado") return "bg-amber-100 text-amber-800 border border-amber-200";
+  return "bg-blue-100 text-blue-700 border border-blue-200";
+}
+
+function formatHistoryDate(value: string): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat("es-CO", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "America/Bogota",
+  }).format(parsed);
+}
+
 export default function RoomsPage() {
   const [allRoomsData, setAllRoomsData] = useState<RoomData[]>([]);
   const [roomEquipment, setRoomEquipment] = useState<InventoryEquipmentItem[]>([]);
@@ -293,8 +330,14 @@ export default function RoomsPage() {
   const [selectedRoom, setSelectedRoom] = useState<string | null>(null);
   const [isRoomModalOpen, setIsRoomModalOpen] = useState(false);
   const [disabledRoomNames, setDisabledRoomNames] = useState<string[]>([]);
+  const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
+  const [roomHistory, setRoomHistory] = useState<RoomActionHistoryItem[]>([]);
+  const [isHistoryLoading, setIsHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [roomActionLoading, setRoomActionLoading] = useState<"damage" | "clean" | null>(null);
   const authSession = useMemo(() => readAuthSession(), []);
   const canManageRoomState = authSession?.role === "admin";
+  const canLogRoomActions = Boolean(authSession);
 
   useEffect(() => {
     let cancelled = false;
@@ -639,6 +682,85 @@ export default function RoomsPage() {
     toast("Editar sala: Esta función aún no está implementada. Dirígete a Inventario para editar el salón del elemento.");
   };
 
+  const loadSelectedRoomHistory = async () => {
+    if (!selectedInfo) return;
+
+    setIsHistoryLoading(true);
+    setHistoryError(null);
+    try {
+      const history = await loadRoomActionHistory(selectedInfo.id);
+      setRoomHistory(history);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "No se pudo cargar el historial del salón.";
+      setHistoryError(message);
+    } finally {
+      setIsHistoryLoading(false);
+    }
+  };
+
+  const openHistoryModal = async () => {
+    if (!selectedInfo) return;
+    setIsHistoryModalOpen(true);
+    await loadSelectedRoomHistory();
+  };
+
+  const handleReportRoomDamage = async () => {
+    if (!selectedInfo || !canLogRoomActions) return;
+
+    const note = await promptToast(`Describe el daño en ${selectedInfo.nombre}`, {
+      title: "Reportar daños",
+      placeholder: "Ej. Silla rota, tablero fisurado, lámpara dañada...",
+      confirmLabel: "Reportar",
+    });
+
+    if (!note) return;
+
+    setRoomActionLoading("damage");
+    try {
+      await reportRoomDamage({
+        roomId: selectedInfo.id,
+        note,
+      });
+      toast.success("Daño reportado correctamente.");
+      if (isHistoryModalOpen) {
+        await loadSelectedRoomHistory();
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "No se pudo registrar el daño.";
+      toast.error(message);
+    } finally {
+      setRoomActionLoading(null);
+    }
+  };
+
+  const handleMarkRoomClean = async () => {
+    if (!selectedInfo || !canLogRoomActions) return;
+
+    setRoomActionLoading("clean");
+    try {
+      await markRoomClean({ roomId: selectedInfo.id });
+      toast.success("Salón marcado como limpio.");
+      if (isHistoryModalOpen) {
+        await loadSelectedRoomHistory();
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "No se pudo registrar la limpieza del salón.";
+      toast.error(message);
+    } finally {
+      setRoomActionLoading(null);
+    }
+  };
+
+  const handleToggleSelectedRoomDisabled = async () => {
+    if (!selectedInfo) return;
+
+    const next = await setSharedRoomDisabledState(selectedInfo.nombre, !isSelectedRoomDisabled);
+    setDisabledRoomNames(next.disabledRooms);
+    if (isHistoryModalOpen) {
+      await loadSelectedRoomHistory();
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex min-h-[calc(100vh-4rem)] items-center justify-center p-4">
@@ -784,11 +906,7 @@ export default function RoomsPage() {
               {canManageRoomState ? (
                 <button
                   type="button"
-                  onClick={async () => {
-                    if (!selectedInfo) return;
-                    const next = await setSharedRoomDisabledState(selectedInfo.nombre, !isSelectedRoomDisabled);
-                    setDisabledRoomNames(next.disabledRooms);
-                  }}
+                  onClick={handleToggleSelectedRoomDisabled}
                   className={`mb-3 flex w-full items-center justify-center gap-2 rounded-xl py-3 text-sm font-bold text-white shadow-lg transition-all ${
                     isSelectedRoomDisabled
                       ? "bg-emerald-600 shadow-emerald-500/20 hover:bg-emerald-700"
@@ -799,17 +917,96 @@ export default function RoomsPage() {
                   {isSelectedRoomDisabled ? "Habilitar Salón" : "Inhabilitar Salón"}
                 </button>
               ) : null}
-              <button className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-white shadow-lg shadow-primary/20 transition-all hover:bg-primary/90">
+              <button
+                type="button"
+                onClick={handleReportRoomDamage}
+                disabled={!canLogRoomActions || roomActionLoading === "damage"}
+                className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-white shadow-lg shadow-primary/20 transition-all hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+              >
                 <span className="material-symbols-outlined text-sm">edit</span>
-                Administrar Horario
+                {roomActionLoading === "damage" ? "Reportando..." : "Reportar Daños"}
               </button>
-              <button className="mt-3 w-full rounded-xl border border-slate-200 py-3 text-sm font-bold text-slate-600 transition-all hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800">
+              <button
+                type="button"
+                onClick={handleMarkRoomClean}
+                disabled={!canLogRoomActions || roomActionLoading === "clean"}
+                className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-500/20 transition-all hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <span className="material-symbols-outlined text-sm">check_circle</span>
+                {roomActionLoading === "clean" ? "Registrando..." : "Salón Limpio"}
+              </button>
+              <button
+                type="button"
+                onClick={openHistoryModal}
+                disabled={!canLogRoomActions}
+                className="mt-3 w-full rounded-xl border border-slate-200 py-3 text-sm font-bold text-slate-600 transition-all hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
+              >
                 Ver Historial Completo
               </button>
             </div>
           </div>
         </div>
       </aside>
+
+      {isHistoryModalOpen && selectedInfo ? (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/60 p-4" role="dialog" aria-modal="true">
+          <button
+            type="button"
+            aria-label="Cerrar historial"
+            className="absolute inset-0"
+            onClick={() => setIsHistoryModalOpen(false)}
+          />
+          <div className="relative z-10 w-full max-w-3xl rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4 dark:border-slate-800">
+              <div>
+                <p className="text-[10px] font-bold tracking-widest text-slate-400 uppercase">Historial completo</p>
+                <h4 className="mt-1 text-lg font-black text-slate-900 dark:text-slate-100">{selectedInfo.nombre}</h4>
+              </div>
+              <button
+                type="button"
+                className="rounded-lg p-1 text-slate-500 transition hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+                onClick={() => setIsHistoryModalOpen(false)}
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div className="max-h-[70vh] space-y-3 overflow-y-auto p-5">
+              {isHistoryLoading ? (
+                <p className="text-sm text-slate-500">Cargando historial...</p>
+              ) : historyError ? (
+                <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{historyError}</p>
+              ) : roomHistory.length === 0 ? (
+                <p className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-800/40 dark:text-slate-400">
+                  No hay registros todavía para este salón.
+                </p>
+              ) : (
+                roomHistory.map((entry) => (
+                  <article key={entry.id} className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/40">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className={`inline-flex items-center rounded-full px-2 py-1 text-[10px] font-bold tracking-wide uppercase ${roomActionStyle(entry.actionType)}`}>
+                        {roomActionLabel(entry.actionType)}
+                      </span>
+                      <span className="text-xs text-slate-500 dark:text-slate-400">{formatHistoryDate(entry.createdAt)}</span>
+                    </div>
+
+                    <p className="mt-2 text-xs text-slate-600 dark:text-slate-300">
+                      Registrado por: <span className="font-semibold">{entry.createdByName?.trim() || "Usuario sin nombre"}</span>
+                      {entry.createdByRole ? ` (${entry.createdByRole})` : ""}
+                    </p>
+
+                    {entry.note ? (
+                      <p className="mt-2 rounded-lg bg-white/80 px-3 py-2 text-sm text-slate-700 dark:bg-slate-900/40 dark:text-slate-200">
+                        {entry.note}
+                      </p>
+                    ) : null}
+                  </article>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {isRoomModalOpen && selectedInfo ? (
         <div className="fixed inset-0 z-50 flex items-end bg-slate-900/50 p-0 lg:hidden" role="dialog" aria-modal="true">
@@ -910,11 +1107,7 @@ export default function RoomsPage() {
                 {canManageRoomState ? (
                   <button
                     type="button"
-                    onClick={async () => {
-                      if (!selectedInfo) return;
-                      const next = await setSharedRoomDisabledState(selectedInfo.nombre, !isSelectedRoomDisabled);
-                      setDisabledRoomNames(next.disabledRooms);
-                    }}
+                    onClick={handleToggleSelectedRoomDisabled}
                     className={`mb-3 flex w-full items-center justify-center gap-2 rounded-xl py-3 text-sm font-bold text-white shadow-lg transition-all ${
                       isSelectedRoomDisabled
                         ? "bg-emerald-600 shadow-emerald-500/20 hover:bg-emerald-700"
@@ -925,11 +1118,30 @@ export default function RoomsPage() {
                     {isSelectedRoomDisabled ? "Habilitar Salón" : "Inhabilitar Salón"}
                   </button>
                 ) : null}
-                <button className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-white shadow-lg shadow-primary/20 transition-all hover:bg-primary/90">
+                <button
+                  type="button"
+                  onClick={handleReportRoomDamage}
+                  disabled={!canLogRoomActions || roomActionLoading === "damage"}
+                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-bold text-white shadow-lg shadow-primary/20 transition-all hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+                >
                   <span className="material-symbols-outlined text-sm">edit</span>
-                  Administrar Horario
+                  {roomActionLoading === "damage" ? "Reportando..." : "Reportar Daños"}
                 </button>
-                <button className="mt-3 w-full rounded-xl border border-slate-200 py-3 text-sm font-bold text-slate-600 transition-all hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800">
+                <button
+                  type="button"
+                  onClick={handleMarkRoomClean}
+                  disabled={!canLogRoomActions || roomActionLoading === "clean"}
+                  className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-500/20 transition-all hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <span className="material-symbols-outlined text-sm">check_circle</span>
+                  {roomActionLoading === "clean" ? "Registrando..." : "Salón Limpio"}
+                </button>
+                <button
+                  type="button"
+                  onClick={openHistoryModal}
+                  disabled={!canLogRoomActions}
+                  className="mt-3 w-full rounded-xl border border-slate-200 py-3 text-sm font-bold text-slate-600 transition-all hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
+                >
                   Ver Historial Completo
                 </button>
               </div>

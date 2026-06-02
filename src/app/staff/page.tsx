@@ -1928,7 +1928,6 @@ function StaffScheduleBoard({
 export default function StaffPage() {
   const authSession = useMemo(() => readAuthSession(), []);
   const canManageStaff = authSession?.role === "admin";
-  const canReadTaskSkills = authSession?.role === "admin" || authSession?.role === "monitor";
   const isCollaborador = authSession?.role === "colaborador";
   const collaboratorStaffId = authSession?.staffId ?? null;
   const [view, setView] = useState<StaffView>("directory");
@@ -2794,7 +2793,7 @@ export default function StaffPage() {
   }
 
   const loadSkills = async () => {
-    if (isCollaborador || !canReadTaskSkills) {
+    if (isCollaborador) {
       setSkillsCatalog([]);
       return;
     }
@@ -4547,7 +4546,108 @@ export default function StaffPage() {
           </div>
 
           <div className="space-y-6 overflow-y-auto p-4 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden sm:p-5 lg:space-y-8 lg:p-6">
-            
+            <section className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-3" ref={balanceMovementsSectionRef}>
+              <div className="flex items-center justify-between gap-2">
+                <h4 className="text-[11px] font-black tracking-widest text-[#566166] uppercase">Movimientos de horas</h4>
+                {isLoadingBalanceMovements ? <span className="text-[10px] text-slate-500">Cargando...</span> : null}
+              </div>
+
+              {canManageStaff ? (
+                <form className="space-y-2" onSubmit={handleRegisterBalanceMovement}>
+                  <div className="flex gap-2">
+                    <button
+                      className={`flex flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-bold transition ${
+                        balanceAdjustmentMode === "a_favor"
+                          ? "bg-emerald-600 text-white"
+                          : "border border-slate-300 bg-white text-[#566166] hover:bg-slate-50"
+                      }`}
+                      type="button"
+                      onClick={() => selectBalanceAdjustmentMode("a_favor")}
+                      aria-pressed={balanceAdjustmentMode === "a_favor"}
+                    >
+                      <Plus className="h-4 w-4" aria-hidden="true" />
+                      Sumar horas
+                    </button>
+                    <button
+                      className={`flex flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-bold transition ${
+                        balanceAdjustmentMode === "en_contra"
+                          ? "bg-rose-600 text-white"
+                          : "border border-slate-300 bg-white text-[#566166] hover:bg-slate-50"
+                      }`}
+                      type="button"
+                      onClick={() => selectBalanceAdjustmentMode("en_contra")}
+                      aria-pressed={balanceAdjustmentMode === "en_contra"}
+                    >
+                      <Minus className="h-4 w-4" aria-hidden="true" />
+                      Restar horas
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-1 gap-2">
+                    <input
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs"
+                      type="number"
+                      step="1"
+                      min="0"
+                      max="200"
+                      value={balanceAdjustmentHours}
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      onChange={(event) => {
+                        const nextValue = event.target.value;
+                        if (nextValue === "" || /^\d+$/.test(nextValue)) {
+                          setBalanceAdjustmentHours(nextValue);
+                        }
+                      }}
+                      placeholder={balanceAdjustmentMode === "a_favor" ? "Ej: 2 horas a favor" : balanceAdjustmentMode === "en_contra" ? "Ej: 1 hora en contra" : "Primero elige sumar o restar"}
+                      required
+                    />
+                    <input
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs"
+                      type="number"
+                      step="1"
+                      min="0"
+                      max="60"
+                      value={balanceAdjustmentMinutes}
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      onChange={(event) => {
+                        const nextValue = event.target.value;
+                        if (nextValue === "" || /^\d+$/.test(nextValue)) {
+                          setBalanceAdjustmentMinutes(nextValue);
+                        }
+                      }}
+                      placeholder="Minutos"
+                    />
+                  </div>
+                  <p className={`text-[10px] font-bold uppercase tracking-wider ${balanceAdjustmentMode === "a_favor" ? "text-emerald-700" : balanceAdjustmentMode === "en_contra" ? "text-rose-700" : "text-slate-500"}`}>
+                    {balanceAdjustmentMode === "a_favor" ? "Se sumarán horas a favor" : balanceAdjustmentMode === "en_contra" ? "Se restarán horas en contra" : "Selecciona una opción para continuar"}
+                  </p>
+                  <button
+                    className="w-full rounded-lg bg-[#3a5f94] px-3 py-2 text-xs font-bold text-white disabled:opacity-60"
+                    type="submit"
+                    disabled={isSavingBalanceMovement || !balanceAdjustmentMode}
+                  >
+                    {isSavingBalanceMovement ? "Registrando..." : "Registrar ajuste"}
+                  </button>
+                </form>
+              ) : null}
+
+              {balanceMovements.length === 0 ? (
+                <p className="text-xs text-[#566166]">No hay movimientos registrados todavía.</p>
+              ) : (
+                <div className="space-y-2">
+                  {balanceMovements.slice(0, 5).map((movement) => (
+                    <div key={movement.id} className="rounded-lg border border-slate-200 bg-white px-2.5 py-2">
+                      <p className={`text-xs font-black ${movement.horasDelta >= 0 ? "text-green-600" : "text-[#9f403d]"}`}>
+                        {movement.horasDelta >= 0 ? "+" : ""}{movement.horasDelta} horas
+                      </p>
+                      <p className="text-[10px] text-[#566166]">{formatMovementDate(movement.createdAt)}</p>
+                      <p className="text-[10px] text-[#2a3439]">{movement.motivo?.trim() ? movement.motivo : "Sin motivo"}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
 
             <section>
               <h4 className="mb-4 flex items-center gap-2 text-[11px] font-black tracking-widest text-[#566166] uppercase">

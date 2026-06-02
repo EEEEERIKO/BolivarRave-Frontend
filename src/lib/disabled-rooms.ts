@@ -20,6 +20,20 @@ export type SharedScheduleState = {
   visualAssignments: SharedScheduleVisualAssignment[];
 };
 
+export type RoomActionType = "inhabilitado" | "habilitado" | "danio_reportado" | "salon_limpio";
+
+export type RoomActionHistoryItem = {
+  id: string;
+  roomId: string;
+  roomName: string;
+  actionType: RoomActionType;
+  note: string | null;
+  createdAt: string;
+  createdByStaffId: string | null;
+  createdByName: string | null;
+  createdByRole: string | null;
+};
+
 export const getDisabledRoomKeys = (disabledRooms: string[]): Set<string> => {
   return new Set(disabledRooms.map((name) => normalizeRoomIdentifier(name)));
 };
@@ -68,6 +82,35 @@ export const clearSharedVisualRoomAssignment = async (payload: {
     },
     body: JSON.stringify(payload),
   });
+};
+
+export const reportRoomDamage = async (payload: {
+  roomId: string;
+  note: string;
+}): Promise<{ message: string }> => {
+  return fetchApiJson<{ message: string }>(`/api/schedules/rooms/${payload.roomId}/actions/damage`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ note: payload.note }),
+  });
+};
+
+export const markRoomClean = async (payload: {
+  roomId: string;
+}): Promise<{ message: string }> => {
+  return fetchApiJson<{ message: string }>(`/api/schedules/rooms/${payload.roomId}/actions/clean`, {
+    method: "POST",
+  });
+};
+
+export const loadRoomActionHistory = async (roomId: string): Promise<RoomActionHistoryItem[]> => {
+  const response = await fetchApiJson<{ history?: RoomActionHistoryItem[] }>(`/api/schedules/rooms/${roomId}/history`, {
+    cache: "no-store",
+  });
+
+  return response.history ?? [];
 };
 
 export { normalizeRoomIdentifier };
