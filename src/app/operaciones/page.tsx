@@ -123,22 +123,6 @@ type StaffPausasBulkResponse = {
   pausas: Record<string, StaffPausaBulkItem[]>;
 };
 
-type RegistroNoRegistradoItem = {
-  id: string;
-  staffId: string;
-  nombreCompleto: string;
-  rol: string;
-  horaEntrada: string;
-  horaSalida: string;
-  estadoRegistro: "registrado" | "no registrado";
-};
-
-type RegistroDashboardResponse = {
-  dashboard?: {
-    usuariosNoRegistradosAhora?: RegistroNoRegistradoItem[];
-  };
-};
-
 const formatTime = (value: string) => {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value;
@@ -308,7 +292,6 @@ export default function OperacionesPage() {
   const [autoFocusedRoomIndex, setAutoFocusedRoomIndex] = useState(0);
   const [liveJornadaByStaffId, setLiveJornadaByStaffId] = useState<Record<string, StaffJornadaBulkItem[]>>({});
   const [livePausaByStaffId, setLivePausaByStaffId] = useState<Record<string, StaffPausaBulkItem[]>>({});
-  const [registroNoRegistradosAhora, setRegistroNoRegistradosAhora] = useState<RegistroNoRegistradoItem[]>([]);
 
   useEffect(() => {
     const checkViewport = () => {
@@ -321,7 +304,7 @@ export default function OperacionesPage() {
   }, []);
 
   useEffect(() => {
-    if (authSession?.role !== "admin" && authSession?.role !== "monitor" && authSession?.role !== "registro") {
+    if (authSession?.role !== "admin" && authSession?.role !== "monitor") {
       window.location.replace("/");
     }
   }, [authSession?.role]);
@@ -343,16 +326,10 @@ export default function OperacionesPage() {
       setError(null);
 
       try {
-        const [operationsResponse, registroResponse] = await Promise.all([
-          fetchApiJson<DashboardResponse>("/api/operaciones/dashboard", { cache: "no-store" }),
-          fetchApiJson<RegistroDashboardResponse>("/api/registro/dashboard", { cache: "no-store" }).catch(() => ({ dashboard: { usuariosNoRegistradosAhora: [] } })),
-        ]);
-
-        setDashboard(operationsResponse);
-        setRegistroNoRegistradosAhora(registroResponse.dashboard?.usuariosNoRegistradosAhora ?? []);
+        const response = await fetchApiJson<DashboardResponse>("/api/operaciones/dashboard", { cache: "no-store" });
+        setDashboard(response);
       } catch (loadError) {
         setDashboard(null);
-        setRegistroNoRegistradosAhora([]);
         setError(loadError instanceof Error ? loadError.message : "No se pudo cargar el panel operativo");
       } finally {
         setIsLoading(false);
@@ -381,42 +358,7 @@ export default function OperacionesPage() {
       && !containsGhostTestValue(loan.requesterDocument)
       && !containsGhostTestValue(loan.actionLabel);
   });
-  const registroMissingAlerts = registroNoRegistradosAhora.reduce<DashboardAlertItem[]>((accumulator, person) => {
-    const startMinute = timeToMinutes(person.horaEntrada);
-    if (startMinute < 0) {
-      return accumulator;
-    }
-
-    const bogotaMinutes = getBogotaCurrentMinutes();
-    let delayMinutes = bogotaMinutes - startMinute;
-
-    // Handle cross-midnight schedules conservatively.
-    if (delayMinutes < -720) {
-      delayMinutes += 24 * 60;
-    }
-
-    if (delayMinutes < 0) {
-      return accumulator;
-    }
-
-    accumulator.push({
-      id: `registro-staff-missing:${person.staffId}`,
-      kind: "staff",
-      severity: delayMinutes >= 20 ? "danger" : "warning",
-      title: `Falta registro de ingreso: ${person.nombreCompleto}`,
-      message: delayMinutes >= 20
-        ? `Han pasado ${delayMinutes} min desde ${person.horaEntrada} y no se ha registrado (turno hasta ${person.horaSalida})`
-        : `Debía iniciar a las ${person.horaEntrada} y aún no se registra (${delayMinutes} min)`,
-      createdAt: new Date().toISOString(),
-    });
-
-    return accumulator;
-  }, []);
-
-  const combinedAlerts = [...registroMissingAlerts, ...(dashboard?.alerts ?? [])];
-  const dedupedAlerts = Array.from(new Map(combinedAlerts.map((alert) => [alert.id, alert])).values());
-
-  const normalizedAlerts = dedupedAlerts
+  const normalizedAlerts = (dashboard?.alerts ?? [])
     .filter((alert) => !containsGhostTestValue(alert.title) && !containsGhostTestValue(alert.message))
     .filter((alert) => !alert.title.toLowerCase().includes("nuevo personal registrado"));
   const missingCheckinAlerts = normalizedAlerts

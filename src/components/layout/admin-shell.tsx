@@ -95,7 +95,7 @@ const navItems: NavItem[] = [
   { label: "Salones", icon: "meeting_room", href: "/rooms", isRoute: true },
   { label: "Auditorio", icon: "theater_comedy", href: "/auditorio", isRoute: true, allowedRoles: ["admin", "monitor"] },
   { label: "Reservas", icon: "", iconElement: <CalendarRange size={18} strokeWidth={2.2} />, href: "/reservas", isRoute: true, allowedRoles: ["admin", "monitor"] },
-  { label: "Centro de Mando", icon: "monitoring", href: "/operaciones", isRoute: true, allowedRoles: ["admin", "monitor", "registro"] },
+  { label: "Centro de Mando", icon: "monitoring", href: "/operaciones", isRoute: true, allowedRoles: ["admin", "monitor"] },
   { label: "Personal", icon: "groups", href: "/staff", isRoute: true },
   { label: "Registro", icon: "badge", href: "/registro", isRoute: true, allowedRoles: ["admin", "registro"] },
   { label: "Tareas", icon: "assignment_turned_in", href: "/tasks", isRoute: true, allowedRoles: ["admin", "monitor"] },
