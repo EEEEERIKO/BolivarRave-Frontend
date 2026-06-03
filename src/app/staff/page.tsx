@@ -968,7 +968,7 @@ function StaffScheduleBoard({
       ...prev,
       {
         id: `jornada-${Date.now()}-${prev.length + 1}`,
-        diaSemana: "",
+        diaSemana: editorSelectedDay,
         horaEntrada: "07:00",
         horaSalida: "12:00",
         totalHorasDia: "5",
@@ -999,7 +999,7 @@ function StaffScheduleBoard({
       ...prev,
       {
         id: `pausa-${Date.now()}-${prev.length + 1}`,
-        diaSemana: "",
+        diaSemana: editorSelectedDay,
         tipoPausa: "",
         horaInicio: "12:00",
         horaFin: "13:00",
@@ -1723,9 +1723,9 @@ function StaffScheduleBoard({
 
                 <div className="space-y-2">
                   {editorRows
-                    .filter((row) => row.diaSemana === editorSelectedDay || row.diaSemana === "")
+                    .filter((row) => row.diaSemana === editorSelectedDay)
                     .map((row, filteredIndex) => {
-                      const totalFilteredForDay = editorRows.filter((r) => r.diaSemana === editorSelectedDay || r.diaSemana === "").length;
+                      const totalFilteredForDay = editorRows.filter((r) => r.diaSemana === editorSelectedDay).length;
                       return (
                         <div className="grid grid-cols-1 gap-2 rounded-xl border border-slate-200 bg-white p-3 md:grid-cols-[auto_1fr_1fr_1fr_auto]" key={row.id}>
                           <select
@@ -1742,7 +1742,7 @@ function StaffScheduleBoard({
                           </select>
 
                           <div className="hidden rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs font-bold text-[#2a3439] md:flex items-center">
-                            {row.diaSemana || editorSelectedDay}
+                            {row.diaSemana}
                           </div>
 
                           <select
@@ -1785,7 +1785,7 @@ function StaffScheduleBoard({
                         </div>
                       );
                     })}
-                  {editorRows.filter((row) => row.diaSemana === editorSelectedDay || row.diaSemana === "").length === 0 && (
+                  {editorRows.filter((row) => row.diaSemana === editorSelectedDay).length === 0 && (
                     <p className="rounded-lg border border-dashed border-slate-300 bg-white px-3 py-2 text-xs text-[#566166]">
                       No hay bloques de jornada para {editorSelectedDay}
                     </p>
@@ -1812,7 +1812,7 @@ function StaffScheduleBoard({
                 ) : (
                   <div className="space-y-2">
                     {sortedEditorPausaRows
-                      .filter((row) => row.diaSemana === editorSelectedDay || row.diaSemana === "")
+                      .filter((row) => row.diaSemana === editorSelectedDay)
                       .map((row) => (
                         <div className="grid grid-cols-1 gap-2 rounded-lg border border-slate-200 bg-white p-3 md:grid-cols-[auto_1fr_1fr_1fr_1fr_auto]" key={row.id}>
                           <select
@@ -1829,7 +1829,7 @@ function StaffScheduleBoard({
                           </select>
 
                           <div className="hidden rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs font-bold text-[#2a3439] md:flex items-center">
-                            {row.diaSemana || editorSelectedDay}
+                            {row.diaSemana}
                           </div>
 
                           <select
@@ -1880,7 +1880,7 @@ function StaffScheduleBoard({
                           </button>
                         </div>
                       ))}
-                    {sortedEditorPausaRows.filter((row) => row.diaSemana === editorSelectedDay || row.diaSemana === "").length === 0 && (
+                    {sortedEditorPausaRows.filter((row) => row.diaSemana === editorSelectedDay).length === 0 && (
                       <p className="rounded-lg border border-dashed border-slate-300 bg-white px-3 py-2 text-xs text-[#566166]">
                         No hay pausas configuradas para {editorSelectedDay}
                       </p>
