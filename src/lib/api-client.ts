@@ -1,4 +1,4 @@
-import { clearAuthSession, readAuthSession } from "@/lib/auth-session";
+import { clearAuthSession, readAuthSession, writeAuthSession, type AuthSession } from "@/lib/auth-session";
 
 const trimSlash = (value: string) => value.replace(/\/+$/, "");
 
@@ -147,6 +147,58 @@ const getCandidates = () => {
   return [...new Set(candidates)];
 };
 
+let refreshInFlight: Promise<AuthSession | null> | null = null;
+
+const refreshAccessTokenSilently = async (): Promise<AuthSession | null> => {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  if (refreshInFlight) {
+    return refreshInFlight;
+  }
+
+  const refreshTask = (async () => {
+    const candidates = getCandidates();
+
+    for (const base of candidates) {
+      const refreshUrl = `${base}/api/staff/refresh`;
+      try {
+        const response = await fetch(refreshUrl, {
+          method: "POST",
+          credentials: "include",
+        });
+
+        if (!response.ok) {
+          if (response.status === 404 && base === "") {
+            continue;
+          }
+          return null;
+        }
+
+        const body = (await response.json()) as { session?: AuthSession };
+        if (!body.session?.accessToken) {
+          return null;
+        }
+
+        writeAuthSession(body.session);
+        return body.session;
+      } catch {
+        continue;
+      }
+    }
+
+    return null;
+  })();
+
+  refreshInFlight = refreshTask;
+  try {
+    return await refreshTask;
+  } finally {
+    refreshInFlight = null;
+  }
+};
+
 export async function fetchApiJson<T>(path: string, init?: RequestInit): Promise<T> {
   return fetchApiJsonWithOptions<T>(path, init);
 }
@@ -185,6 +237,7 @@ export async function fetchApiJsonWithRetry<T>(
 }
 type FetchApiOptions = {
   suppressExpectedStatuses?: number[];
+  skipRefreshOnAuthError?: boolean;
 };
 
 export async function fetchApiJsonWithOptions<T>(path: string, init?: RequestInit, options?: FetchApiOptions): Promise<T> {
@@ -210,6 +263,7 @@ export async function fetchApiJsonWithOptions<T>(path: string, init?: RequestIni
       const response = await fetch(url, {
         ...init,
         headers,
+        credentials: init?.credentials ?? "include",
       });
       const rawText = await response.text();
       let body: (T | { error?: string }) | null = null;
@@ -249,10 +303,30 @@ export async function fetchApiJsonWithOptions<T>(path: string, init?: RequestIni
       attemptDetails.push(`${url} -> ${lastError.message}`);
 
       const isLoginCall = normalizedPath.includes("/api/staff/login");
+      const isRefreshCall = normalizedPath.includes("/api/staff/refresh");
+      const isLogoutCall = normalizedPath.includes("/api/staff/logout");
       const isAuthHttpError =
         error instanceof HttpResponseError &&
         (error.status === 401 || error.status === 403) &&
         isSessionExpiredMessage(lastError.message);
+
+      const canTryRefresh =
+        typeof window !== "undefined" &&
+        !options?.skipRefreshOnAuthError &&
+        !isLoginCall &&
+        !isRefreshCall &&
+        !isLogoutCall &&
+        isAuthHttpError;
+
+      if (canTryRefresh) {
+        const refreshedSession = await refreshAccessTokenSilently();
+        if (refreshedSession?.accessToken) {
+          return fetchApiJsonWithOptions<T>(path, init, {
+            ...options,
+            skipRefreshOnAuthError: true,
+          });
+        }
+      }
 
       if (!isLoginCall && isAuthHttpError && typeof window !== "undefined") {
         clearAuthSession();
