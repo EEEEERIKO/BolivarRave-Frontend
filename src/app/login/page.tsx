@@ -22,14 +22,17 @@ export default function LoginPage() {
   const [legalModal, setLegalModal] = useState<LegalModalType | null>(null);
 
   const cleanCedula = useMemo(() => {
-    const raw = cedula.trim();
-    if (!raw) return "";
-
-    if (raw.toLowerCase() === "monitor") {
-      return "Monitor";
+    const trimmed = cedula.trim();
+    if (!trimmed) {
+      return "";
     }
 
-    return raw.replace(/\D/g, "");
+    // Keep helper usernames (e.g. Monitor) while still cleaning numeric IDs with separators.
+    if (/[a-zA-Z]/.test(trimmed)) {
+      return trimmed;
+    }
+
+    return trimmed.replace(/\D/g, "");
   }, [cedula]);
 
   const legalModalContent = useMemo(() => {

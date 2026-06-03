@@ -1929,7 +1929,6 @@ export default function StaffPage() {
   const authSession = useMemo(() => readAuthSession(), []);
   const canManageStaff = authSession?.role === "admin";
   const isCollaborador = authSession?.role === "colaborador";
-  const canReadTaskSkills = authSession?.role === "admin" || authSession?.role === "monitor";
   const collaboratorStaffId = authSession?.staffId ?? null;
   const [view, setView] = useState<StaffView>("directory");
   const [showAddStaffForm, setShowAddStaffForm] = useState(false);
@@ -2794,7 +2793,7 @@ export default function StaffPage() {
   }
 
   const loadSkills = async () => {
-    if (!canReadTaskSkills) {
+    if (isCollaborador) {
       setSkillsCatalog([]);
       return;
     }
@@ -2855,7 +2854,7 @@ export default function StaffPage() {
   useEffect(() => {
     void loadStaff();
     void loadSkills();
-  }, [canReadTaskSkills]);
+  }, []);
 
   async function handleAddStaffSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
