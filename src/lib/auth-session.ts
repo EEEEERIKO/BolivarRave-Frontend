@@ -12,7 +12,19 @@ export type AuthSession = {
 
 const AUTH_SESSION_KEY = "unac_auth_session_v1";
 
-function normalizeUserRole(rawRole: unknown, roleLabel?: string): UserRole | null {
+function normalizeUserRole(rawRole: unknown, roleLabel?: string, name?: string): UserRole | null {
+  const normalizedName = typeof name === "string" ? name.trim().toLowerCase() : "";
+
+  if (typeof roleLabel === "string") {
+    const normalizedLabel = roleLabel.trim().toLowerCase();
+    if (normalizedLabel.includes("monitor") && normalizedLabel.includes("registro")) return "registro";
+    if (normalizedLabel === "registro") return "registro";
+  }
+
+  if (normalizedName.includes("monitor registro")) {
+    return "registro";
+  }
+
   if (typeof rawRole === "string") {
     const normalized = rawRole.trim().toLowerCase();
     if (normalized === "admin" || normalized === "monitor" || normalized === "colaborador" || normalized === "registro") {
@@ -47,7 +59,7 @@ export function readAuthSession(): AuthSession | null {
 
   try {
     const parsed = JSON.parse(raw) as Partial<AuthSession>;
-    const normalizedRole = normalizeUserRole(parsed?.role, parsed?.roleLabel);
+    const normalizedRole = normalizeUserRole(parsed?.role, parsed?.roleLabel, parsed?.name);
 
     if (!parsed || !normalizedRole || !parsed.name || !parsed.roleLabel || !parsed.cedula || !parsed.accessToken) {
       return null;
@@ -72,7 +84,7 @@ export function writeAuthSession(session: AuthSession): void {
     return;
   }
 
-  const normalizedRole = normalizeUserRole(session.role, session.roleLabel);
+  const normalizedRole = normalizeUserRole(session.role, session.roleLabel, session.name);
 
   window.localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify({
     ...session,

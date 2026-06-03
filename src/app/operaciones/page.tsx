@@ -277,6 +277,19 @@ function getLoanActionClass(loan: DashboardLoanItem) {
 
 export default function OperacionesPage() {
   const authSession = useMemo(() => readAuthSession(), []);
+  const isMonitorRegistroSupervisor = useMemo(() => {
+    if (!authSession) {
+      return false;
+    }
+
+    if (authSession.role !== "registro") {
+      return false;
+    }
+
+    const normalizedLabel = authSession.roleLabel.trim().toLowerCase();
+    const normalizedName = authSession.name.trim().toLowerCase();
+    return normalizedLabel.includes("monitor") || normalizedName.includes("monitor registro");
+  }, [authSession]);
   const [now, setNow] = useState(() => new Date());
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -304,10 +317,10 @@ export default function OperacionesPage() {
   }, []);
 
   useEffect(() => {
-    if (authSession?.role !== "admin" && authSession?.role !== "monitor") {
+    if (authSession?.role !== "admin" && authSession?.role !== "monitor" && !isMonitorRegistroSupervisor) {
       window.location.replace("/");
     }
-  }, [authSession?.role]);
+  }, [authSession?.role, isMonitorRegistroSupervisor]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 1000);
