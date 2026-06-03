@@ -12,6 +12,25 @@ export type AuthSession = {
 
 const AUTH_SESSION_KEY = "unac_auth_session_v1";
 
+function normalizeUserRole(rawRole: unknown, roleLabel?: string): UserRole | null {
+  if (typeof rawRole === "string") {
+    const normalized = rawRole.trim().toLowerCase();
+    if (normalized === "admin" || normalized === "monitor" || normalized === "colaborador" || normalized === "registro") {
+      return normalized;
+    }
+  }
+
+  if (typeof roleLabel === "string") {
+    const normalizedLabel = roleLabel.trim().toLowerCase();
+    if (normalizedLabel.includes("monitor")) return "monitor";
+    if (normalizedLabel.includes("admin")) return "admin";
+    if (normalizedLabel.includes("registro")) return "registro";
+    if (normalizedLabel.includes("colaborador")) return "colaborador";
+  }
+
+  return null;
+}
+
 export function getAuthSessionKey(): string {
   return AUTH_SESSION_KEY;
 }
@@ -27,11 +46,22 @@ export function readAuthSession(): AuthSession | null {
   }
 
   try {
-    const parsed = JSON.parse(raw) as AuthSession;
-    if (!parsed || !parsed.role || !parsed.name || !parsed.roleLabel || !parsed.cedula || !parsed.accessToken) {
+    const parsed = JSON.parse(raw) as Partial<AuthSession>;
+    const normalizedRole = normalizeUserRole(parsed?.role, parsed?.roleLabel);
+
+    if (!parsed || !normalizedRole || !parsed.name || !parsed.roleLabel || !parsed.cedula || !parsed.accessToken) {
       return null;
     }
-    return parsed;
+
+    return {
+      role: normalizedRole,
+      name: parsed.name,
+      roleLabel: parsed.roleLabel,
+      cedula: parsed.cedula,
+      accessToken: parsed.accessToken,
+      ...(parsed.avatarUrl ? { avatarUrl: parsed.avatarUrl } : {}),
+      ...(parsed.staffId ? { staffId: parsed.staffId } : {}),
+    };
   } catch {
     return null;
   }
@@ -42,7 +72,12 @@ export function writeAuthSession(session: AuthSession): void {
     return;
   }
 
-  window.localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(session));
+  const normalizedRole = normalizeUserRole(session.role, session.roleLabel);
+
+  window.localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify({
+    ...session,
+    role: normalizedRole ?? session.role,
+  }));
 }
 
 export function clearAuthSession(): void {
