@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { readAuthSession } from "@/lib/auth-session";
+import { isMonitorRegistroSession, readAuthSession } from "@/lib/auth-session";
 import { fetchApiJson } from "@/lib/api-client";
 import toast from "react-hot-toast";
 import { confirmToast, promptToast } from "@/lib/toast-dialog";
@@ -361,7 +361,7 @@ export default function ReservasPage() {
     }, [inventoryItems, allReservations, bookingDate, startTime, endTime]);
 
     const authSession = useMemo(() => readAuthSession(), []);
-    const canViewReservations = authSession?.role === "admin" || authSession?.role === "monitor";
+    const canViewReservations = authSession?.role === "admin" || authSession?.role === "monitor" || isMonitorRegistroSession(authSession);
 
     const tvReservationItems = televisorCandidates;
 

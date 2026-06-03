@@ -7,7 +7,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { CalendarRange } from "lucide-react";
-import { readAuthSession, type AuthSession } from "@/lib/auth-session";
+import { isMonitorRegistroSession, readAuthSession, type AuthSession } from "@/lib/auth-session";
 import { fetchApiJson } from "@/lib/api-client";
 import { useWebSocketSchedules } from "@/lib/use-websocket-schedules";
 import { Toaster } from "react-hot-toast";
@@ -229,6 +229,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   const [authSession, setAuthSession] = useState<AuthSession | null>(null);
   const [isSessionReady, setIsSessionReady] = useState(false);
   const notificationsPanelRef = useRef<HTMLDivElement>(null);
+  const isMonitorRegistro = useMemo(() => isMonitorRegistroSession(authSession), [authSession]);
 
   useEffect(() => {
     setIsMobileMenuOpen(false);
@@ -284,7 +285,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   const syncNotifications = async () => {
     const role = authSession?.role;
     const canManageSchedules = role === "admin";
-    const canReadAuditorioNotifications = role === "admin" || role === "monitor" || role === "colaborador";
+    const canReadAuditorioNotifications = role === "admin" || role === "monitor" || role === "colaborador" || isMonitorRegistro;
 
     if (!role) {
       setPendingRequests([]);
@@ -320,7 +321,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     void syncNotifications();
-  }, [authSession]);
+  }, [authSession, isMonitorRegistro]);
 
   useWebSocketSchedules({
     enabled: Boolean(authSession && (authSession.role === "admin" || authSession.role === "monitor" || authSession.role === "colaborador")),
@@ -342,16 +343,32 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
       return upcomingAuditorioEvents.length;
     }
 
+    if (isMonitorRegistro) {
+      return upcomingAuditorioEvents.length;
+    }
+
     if (authSession.role === "colaborador") {
       return upcomingAuditorioEvents.length;
     }
 
     return 0;
-  }, [authSession, pendingRequests.length, upcomingAuditorioEvents.length, pendingAuditorioRequests.length]);
+  }, [authSession, isMonitorRegistro, pendingRequests.length, upcomingAuditorioEvents.length, pendingAuditorioRequests.length]);
 
   const visibleNavItems = useMemo(
-    () => navItems.filter((item) => !item.allowedRoles || item.allowedRoles.includes(authSession?.role ?? "colaborador")),
-    [authSession]
+    () =>
+      navItems.filter((item) => {
+        if (!item.allowedRoles) {
+          return true;
+        }
+
+        const role = authSession?.role ?? "colaborador";
+        if (item.allowedRoles.includes(role)) {
+          return true;
+        }
+
+        return isMonitorRegistro && item.allowedRoles.includes("monitor");
+      }),
+    [authSession, isMonitorRegistro]
   );
 
   const handleSidebarRouteClick = (event: ReactMouseEvent<HTMLAnchorElement>, href: string) => {
@@ -539,7 +556,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
               className="relative flex size-10 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-600 transition hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700"
             >
               <span className="material-symbols-outlined">notifications</span>
-              {(authSession.role === "admin" || authSession.role === "monitor" || authSession.role === "colaborador") && totalNotifications > 0 ? (
+              {(authSession.role === "admin" || authSession.role === "monitor" || authSession.role === "colaborador" || isMonitorRegistro) && totalNotifications > 0 ? (
                 <span className="absolute top-1.5 right-1.5 flex min-h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold leading-none text-white">
                   {totalNotifications > 9 ? "9+" : totalNotifications}
                 </span>
