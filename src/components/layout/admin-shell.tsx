@@ -229,15 +229,6 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   const [authSession, setAuthSession] = useState<AuthSession | null>(null);
   const [isSessionReady, setIsSessionReady] = useState(false);
   const notificationsPanelRef = useRef<HTMLDivElement>(null);
-  const isMonitorRegistroSupervisor = Boolean(
-    authSession
-      && authSession.role === "registro"
-      && (
-        authSession.roleLabel.trim().toLowerCase().includes("monitor")
-        || authSession.name.trim().toLowerCase().includes("monitor registro")
-      )
-  );
-  const effectiveRoleForMonitorFeatures: AuthSession["role"] = isMonitorRegistroSupervisor ? "monitor" : (authSession?.role ?? "colaborador");
 
   useEffect(() => {
     setIsMobileMenuOpen(false);
@@ -291,7 +282,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   }, [isPublicRoute, pathname, router]);
 
   const syncNotifications = async () => {
-    const role = effectiveRoleForMonitorFeatures;
+    const role = authSession?.role;
     const canManageSchedules = role === "admin";
     const canReadAuditorioNotifications = role === "admin" || role === "monitor" || role === "colaborador";
 
@@ -329,10 +320,10 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     void syncNotifications();
-  }, [authSession, effectiveRoleForMonitorFeatures]);
+  }, [authSession]);
 
   useWebSocketSchedules({
-    enabled: Boolean(authSession && (effectiveRoleForMonitorFeatures === "admin" || effectiveRoleForMonitorFeatures === "monitor" || effectiveRoleForMonitorFeatures === "colaborador")),
+    enabled: Boolean(authSession && (authSession.role === "admin" || authSession.role === "monitor" || authSession.role === "colaborador")),
     onScheduleRefresh: () => {
       void syncNotifications();
     },
@@ -343,39 +334,25 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
       return 0;
     }
 
-    if (effectiveRoleForMonitorFeatures === "admin") {
+    if (authSession.role === "admin") {
       return pendingRequests.length + upcomingAuditorioEvents.length + pendingAuditorioRequests.length;
     }
 
-    if (effectiveRoleForMonitorFeatures === "monitor") {
+    if (authSession.role === "monitor") {
       return upcomingAuditorioEvents.length;
     }
 
-    if (effectiveRoleForMonitorFeatures === "colaborador") {
+    if (authSession.role === "colaborador") {
       return upcomingAuditorioEvents.length;
     }
 
     return 0;
-  }, [authSession, effectiveRoleForMonitorFeatures, pendingRequests.length, upcomingAuditorioEvents.length, pendingAuditorioRequests.length]);
+  }, [authSession, pendingRequests.length, upcomingAuditorioEvents.length, pendingAuditorioRequests.length]);
 
-  const visibleNavItems = useMemo(() => {
-    return navItems.filter((item) => {
-      if (!item.allowedRoles) {
-        return true;
-      }
-
-      if (item.allowedRoles.includes(effectiveRoleForMonitorFeatures)) {
-        return true;
-      }
-
-      // Special supervisor: keep monitor capabilities and additionally expose Registro.
-      if (isMonitorRegistroSupervisor && item.allowedRoles.includes("registro")) {
-        return true;
-      }
-
-      return false;
-    });
-  }, [effectiveRoleForMonitorFeatures, isMonitorRegistroSupervisor]);
+  const visibleNavItems = useMemo(
+    () => navItems.filter((item) => !item.allowedRoles || item.allowedRoles.includes(authSession?.role ?? "colaborador")),
+    [authSession]
+  );
 
   const handleSidebarRouteClick = (event: ReactMouseEvent<HTMLAnchorElement>, href: string) => {
     if (pathname === href) {

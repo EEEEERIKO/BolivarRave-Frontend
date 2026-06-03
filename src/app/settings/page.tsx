@@ -2,7 +2,7 @@
 
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
-import { fetchApiJson } from "@/lib/api-client";
+import { fetchApiJson, fetchApiJsonWithOptions } from "@/lib/api-client";
 import { clearAuthSession, readAuthSession } from "@/lib/auth-session";
 
 export default function SettingsPage() {
@@ -76,7 +76,13 @@ export default function SettingsPage() {
     }
   };
 
-  const handleSignOut = () => {
+  const handleSignOut = async () => {
+    try {
+      await fetchApiJsonWithOptions<null>("/api/staff/logout", { method: "POST" }, { suppressExpectedStatuses: [401, 403, 404] });
+    } catch {
+      // Local sign-out still proceeds even if network logout fails.
+    }
+
     clearAuthSession();
     router.replace("/login");
     router.refresh();
