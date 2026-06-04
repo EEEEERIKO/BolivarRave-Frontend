@@ -203,6 +203,11 @@ const isRecentReport = (createdAtIso: string | null): boolean => {
   }
 };
 
+const getStaffAvatarUrl = (cedula: string): string => {
+  const normalizedCedula = String(cedula ?? "").trim();
+  return `/api/staff-photo/${encodeURIComponent(normalizedCedula)}`;
+};
+
 const formatClockTime = (value: string | null | undefined) => {
   if (!value) return "--:--";
   const [hourText, minuteText] = value.split(":");
@@ -965,11 +970,12 @@ export default function OperacionesPage() {
             render={(person) => {
               const status = liveStatusByStaffId[person.id] ?? (person.attendanceStatus === "registrado" ? "Activo" : "No registrado");
               const style = staffStatusStyle[status as Exclude<StaffLiveStatus, "Inactivo">] ?? staffStatusStyle.Activo;
+              const avatarUrl = getStaffAvatarUrl(person.cedula);
 
               return (
               <div key={person.id} className="flex shrink-0 items-center gap-3 rounded-lg bg-[#f0f4f7] px-3 py-2">
-                <div className={`relative h-9 w-9 rounded-full border-2 p-0.5 ${style.ringClass}`}>
-                  <div className="h-full w-full rounded-full bg-[linear-gradient(135deg,#d5e3ff,#f0f4f7)]" />
+                <div className={`relative h-9 w-9 shrink-0 rounded-full border-2 overflow-hidden ${style.ringClass}`}>
+                  <img src={avatarUrl} alt={person.nombre} className="h-full w-full object-cover" />
                   <span className={`absolute -bottom-1 -right-1 h-3 w-3 rounded-full border-2 border-white ${style.dotClass}`} />
                 </div>
                 <div>
