@@ -4,7 +4,7 @@ import { FormEvent, Fragment, useEffect, useLayoutEffect, useMemo, useRef, useSt
 import { useSearchParams } from "next/navigation";
 import { Rnd, RndDragCallback, RndResizeCallback } from "react-rnd";
 import { fetchApiJson, fetchApiJsonWithRetry } from "@/lib/api-client";
-import { readAuthSession } from "@/lib/auth-session";
+import { isMonitorRegistroSession, readAuthSession } from "@/lib/auth-session";
 import { getDisabledRoomKeys, isRoomDisabled, loadSharedScheduleState, setSharedVisualRoomAssignment } from "@/lib/disabled-rooms";
 import { useWebSocketSchedules } from "@/lib/use-websocket-schedules";
 
@@ -820,7 +820,7 @@ export default function SchedulesPage() {
   const isSchedulesWsEnabled = (process.env.NEXT_PUBLIC_ENABLE_SCHEDULES_WS ?? "true").trim().toLowerCase() !== "false";
   const authSession = useMemo(() => readAuthSession(), []);
   const canManageSchedules = authSession?.role === "admin";
-  const canRequestSchedule = authSession?.role === "monitor";
+  const canRequestSchedule = authSession?.role === "monitor" || isMonitorRegistroSession(authSession);
   const disabledRoomKeys = useMemo(() => getDisabledRoomKeys(disabledRoomNames), [disabledRoomNames]);
 
   useEffect(() => {
