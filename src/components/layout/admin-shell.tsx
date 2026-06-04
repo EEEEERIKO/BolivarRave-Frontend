@@ -100,7 +100,6 @@ const navItems: NavItem[] = [
   { label: "Registro", icon: "badge", href: "/registro", isRoute: true, allowedRoles: ["admin", "registro"] },
   { label: "Tareas", icon: "assignment_turned_in", href: "/tasks", isRoute: true, allowedRoles: ["admin", "monitor"] },
   { label: "Inventario", icon: "inventory_2", href: "/inventory", isRoute: true, allowedRoles: ["admin", "monitor"] },
-  { label: "Objetos Perdidos", icon: "search", href: "/objetos-perdidos", isRoute: true, allowedRoles: ["admin", "colaborador", "registro"] },
   { label: "Importar Excel", icon: "upload_file", href: "/excel-import", isRoute: true, allowedRoles: ["admin"] },
   { label: "Configuración", icon: "settings", href: "/settings", isRoute: true },
 ];
@@ -290,11 +289,6 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
       session.role === "colaborador" &&
       (pathname.startsWith("/auditorio") || pathname.startsWith("/tasks") || pathname.startsWith("/inventory"))
     ) {
-      router.replace("/");
-      return;
-    }
-
-    if (session.role === "monitor" && pathname.startsWith("/objetos-perdidos")) {
       router.replace("/");
     }
   }, [isPublicRoute, pathname, router]);
