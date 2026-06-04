@@ -79,6 +79,8 @@ type InventoryEquipmentItem = {
   hdmiItemId?: string | null;
 };
 
+type EquipmentPresenceAnswer = "si" | "no";
+
 type RoomsCachePayload = {
   timestamp: number;
   rooms: RoomData[];
@@ -335,6 +337,9 @@ export default function RoomsPage() {
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [roomActionLoading, setRoomActionLoading] = useState<"damage" | "clean" | null>(null);
+  const [isCleanAuditModalOpen, setIsCleanAuditModalOpen] = useState(false);
+  const [equipmentPresence, setEquipmentPresence] = useState<Record<string, EquipmentPresenceAnswer | undefined>>({});
+  const [unregisteredEquipmentNote, setUnregisteredEquipmentNote] = useState("");
   const authSession = useMemo(() => readAuthSession(), []);
   const canManageRoomState = authSession?.role === "admin";
   const canLogRoomActions = Boolean(authSession);
@@ -736,10 +741,56 @@ export default function RoomsPage() {
   const handleMarkRoomClean = async () => {
     if (!selectedInfo || !canLogRoomActions) return;
 
+    const initialPresence: Record<string, EquipmentPresenceAnswer | undefined> = {};
+    selectedRoomEquipment.forEach((item) => {
+      initialPresence[item.id] = undefined;
+    });
+
+    setEquipmentPresence(initialPresence);
+    setUnregisteredEquipmentNote("");
+    setIsCleanAuditModalOpen(true);
+  };
+
+  const allEquipmentAnswered = selectedRoomEquipment.every((item) => equipmentPresence[item.id] === "si" || equipmentPresence[item.id] === "no");
+
+  const handleConfirmCleanAudit = async () => {
+    if (!selectedInfo || !canLogRoomActions) return;
+
+    if (!allEquipmentAnswered) {
+      toast.error("Debes marcar Sí o No en todos los elementos asignados.");
+      return;
+    }
+
+    const missingItems = selectedRoomEquipment
+      .filter((item) => equipmentPresence[item.id] === "no")
+      .map((item) => `${item.name}${item.code ? ` (${item.code})` : ""}`);
+    const extraItems = unregisteredEquipmentNote.trim();
+    const hasAnyIssue = missingItems.length > 0 || extraItems.length > 0;
+
     setRoomActionLoading("clean");
     try {
-      await markRoomClean({ roomId: selectedInfo.id });
-      toast.success("Salón marcado como limpio.");
+      if (hasAnyIssue) {
+        const reportParts: string[] = [];
+
+        if (missingItems.length > 0) {
+          reportParts.push(`Elementos no encontrados: ${missingItems.join(", ")}.`);
+        }
+
+        if (extraItems.length > 0) {
+          reportParts.push(`No registrados encontrados: ${extraItems}.`);
+        }
+
+        await reportRoomDamage({
+          roomId: selectedInfo.id,
+          note: reportParts.join(" "),
+        });
+        toast.success("Se registró un reporte de daños automáticamente.");
+      } else {
+        await markRoomClean({ roomId: selectedInfo.id });
+        toast.success("Salón marcado como limpio.");
+      }
+
+      setIsCleanAuditModalOpen(false);
       if (isHistoryModalOpen) {
         await loadSelectedRoomHistory();
       }
@@ -1003,6 +1054,132 @@ export default function RoomsPage() {
                   </article>
                 ))
               )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {isCleanAuditModalOpen && selectedInfo ? (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/60 p-4" role="dialog" aria-modal="true">
+          <button
+            type="button"
+            aria-label="Cerrar verificación de equipamiento"
+            className="absolute inset-0"
+            onClick={() => {
+              if (roomActionLoading !== "clean") {
+                setIsCleanAuditModalOpen(false);
+              }
+            }}
+          />
+          <div className="relative z-10 w-full max-w-2xl rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4 dark:border-slate-800">
+              <div>
+                <p className="text-[10px] font-bold tracking-widest text-slate-400 uppercase">Confirmación previa</p>
+                <h4 className="mt-1 text-lg font-black text-slate-900 dark:text-slate-100">Equipamiento de {selectedInfo.nombre}</h4>
+              </div>
+              <button
+                type="button"
+                className="rounded-lg p-1 text-slate-500 transition hover:bg-slate-100 disabled:opacity-40 dark:text-slate-300 dark:hover:bg-slate-800"
+                disabled={roomActionLoading === "clean"}
+                onClick={() => setIsCleanAuditModalOpen(false)}
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div className="max-h-[70vh] space-y-4 overflow-y-auto p-5">
+              <p className="text-sm text-slate-600 dark:text-slate-300">
+                Los siguientes elementos se encuentran asignados al salón. Marca si cada elemento está presente.
+              </p>
+
+              {selectedRoomEquipment.length > 0 ? (
+                <div className="space-y-3">
+                  {selectedRoomEquipment.map((item) => {
+                    const selectedAnswer = equipmentPresence[item.id];
+                    return (
+                      <article key={item.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/40">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{item.name}</p>
+                            <p className="text-xs text-slate-500 dark:text-slate-400">
+                              {item.groupName}
+                              {item.code ? ` • ${item.code}` : ""}
+                            </p>
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              disabled={roomActionLoading === "clean"}
+                              onClick={() => setEquipmentPresence((prev) => ({ ...prev, [item.id]: "si" }))}
+                              className={`rounded-lg border px-3 py-1.5 text-xs font-bold transition ${
+                                selectedAnswer === "si"
+                                  ? "border-emerald-600 bg-emerald-600 text-white"
+                                  : "border-slate-300 bg-white text-slate-600 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+                              }`}
+                            >
+                              Sí
+                            </button>
+                            <button
+                              type="button"
+                              disabled={roomActionLoading === "clean"}
+                              onClick={() => setEquipmentPresence((prev) => ({ ...prev, [item.id]: "no" }))}
+                              className={`rounded-lg border px-3 py-1.5 text-xs font-bold transition ${
+                                selectedAnswer === "no"
+                                  ? "border-rose-600 bg-rose-600 text-white"
+                                  : "border-slate-300 bg-white text-slate-600 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+                              }`}
+                            >
+                              No
+                            </button>
+                          </div>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-3 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-800/40 dark:text-slate-400">
+                  Este salón no tiene elementos asignados. Puedes continuar y marcarlo limpio si todo está en orden.
+                </p>
+              )}
+
+              <div className="space-y-2">
+                <label htmlFor="unregistered-equipment" className="text-sm font-semibold text-slate-800 dark:text-slate-200">
+                  Aquí hay elementos no registrados en el salón (opcional)
+                </label>
+                <textarea
+                  id="unregistered-equipment"
+                  value={unregisteredEquipmentNote}
+                  onChange={(event) => setUnregisteredEquipmentNote(event.target.value)}
+                  disabled={roomActionLoading === "clean"}
+                  rows={3}
+                  placeholder="Ej. 2 sillas adicionales, 1 cable HDMI suelto, 1 micrófono no inventariado..."
+                  className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+                />
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Si falta algún elemento o escribes elementos no registrados, se enviará automáticamente como reporte de daños.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-col-reverse gap-2 border-t border-slate-200 px-5 py-4 sm:flex-row sm:justify-end dark:border-slate-800">
+              <button
+                type="button"
+                disabled={roomActionLoading === "clean"}
+                onClick={() => setIsCleanAuditModalOpen(false)}
+                className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmCleanAudit}
+                disabled={roomActionLoading === "clean" || !allEquipmentAnswered}
+                className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white shadow-lg shadow-emerald-500/20 transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {roomActionLoading === "clean" ? "Registrando..." : "Confirmar verificación"}
+              </button>
             </div>
           </div>
         </div>

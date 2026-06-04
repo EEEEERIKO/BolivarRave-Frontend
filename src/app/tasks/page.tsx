@@ -3,7 +3,7 @@
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import toast from "react-hot-toast";
 import { fetchApiJson } from "@/lib/api-client";
-import { isMonitorRegistroSession, readAuthSession } from "@/lib/auth-session";
+import { readAuthSession } from "@/lib/auth-session";
 import { confirmToast } from "@/lib/toast-dialog";
 
 type TaskType = "Recurrente" | "Esporadica";
@@ -882,7 +882,7 @@ function summarizeWorkerPreviewSegments(
 
 export default function TasksPage() {
   const authSession = useMemo(() => readAuthSession(), []);
-  const isLimitedTaskAccess = authSession?.role === "monitor" || authSession?.role === "colaborador" || isMonitorRegistroSession(authSession);
+  const isLimitedTaskAccess = authSession?.role === "monitor" || authSession?.role === "colaborador";
   const canEditTaskSchedule = authSession?.role === "admin";
   const currentStaffIdentifier = authSession?.staffId ?? authSession?.cedula ?? null;
 

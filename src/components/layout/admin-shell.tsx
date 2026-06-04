@@ -3,11 +3,11 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { CalendarRange } from "lucide-react";
-import { isMonitorRegistroSession, readAuthSession, type AuthSession } from "@/lib/auth-session";
+import { readAuthSession, type AuthSession } from "@/lib/auth-session";
 import { fetchApiJson } from "@/lib/api-client";
 import { useWebSocketSchedules } from "@/lib/use-websocket-schedules";
 import { Toaster } from "react-hot-toast";
@@ -215,11 +215,13 @@ function getNotificationStatus(event: UpcomingAuditorioNotification): "en_curso"
 
 export function AdminShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const router = useRouter();
   const isLoginRoute = pathname.startsWith("/login");
   const isPublicContentRoute = pathname.startsWith("/public");
   const isPublicReservationConfirmRoute = pathname.startsWith("/reservas/confirm");
   const isPublicRoute = isLoginRoute || isPublicContentRoute || isPublicReservationConfirmRoute;
+  const isOperacionesFullscreen = pathname.startsWith("/operaciones") && searchParams.get("fullscreen") === "1";
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [pendingRequests, setPendingRequests] = useState<PendingScheduleRequest[]>([]);
@@ -229,7 +231,16 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   const [authSession, setAuthSession] = useState<AuthSession | null>(null);
   const [isSessionReady, setIsSessionReady] = useState(false);
   const notificationsPanelRef = useRef<HTMLDivElement>(null);
-  const isMonitorRegistro = useMemo(() => isMonitorRegistroSession(authSession), [authSession]);
+  const isMonitorRegistroSupervisor = Boolean(
+    authSession && (
+      ((authSession.role === "registro" || authSession.role === "monitor")
+        && authSession.roleLabel.trim().toLowerCase().includes("monitor")
+        && authSession.roleLabel.trim().toLowerCase().includes("registro"))
+      || authSession.name.trim().toLowerCase().includes("monitor registro")
+      || authSession.cedula.trim().toLowerCase() === "monitor"
+    )
+  );
+  const effectiveRoleForMonitorFeatures: AuthSession["role"] = isMonitorRegistroSupervisor ? "monitor" : (authSession?.role ?? "colaborador");
 
   useEffect(() => {
     setIsMobileMenuOpen(false);
@@ -283,9 +294,9 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   }, [isPublicRoute, pathname, router]);
 
   const syncNotifications = async () => {
-    const role = authSession?.role;
+    const role = effectiveRoleForMonitorFeatures;
     const canManageSchedules = role === "admin";
-    const canReadAuditorioNotifications = role === "admin" || role === "monitor" || role === "colaborador" || isMonitorRegistro;
+    const canReadAuditorioNotifications = role === "admin" || role === "monitor" || role === "colaborador";
 
     if (!role) {
       setPendingRequests([]);
@@ -321,10 +332,10 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     void syncNotifications();
-  }, [authSession, isMonitorRegistro]);
+  }, [authSession, effectiveRoleForMonitorFeatures]);
 
   useWebSocketSchedules({
-    enabled: Boolean(authSession && (authSession.role === "admin" || authSession.role === "monitor" || authSession.role === "colaborador")),
+    enabled: Boolean(authSession && (effectiveRoleForMonitorFeatures === "admin" || effectiveRoleForMonitorFeatures === "monitor" || effectiveRoleForMonitorFeatures === "colaborador")),
     onScheduleRefresh: () => {
       void syncNotifications();
     },
@@ -335,41 +346,39 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
       return 0;
     }
 
-    if (authSession.role === "admin") {
+    if (effectiveRoleForMonitorFeatures === "admin") {
       return pendingRequests.length + upcomingAuditorioEvents.length + pendingAuditorioRequests.length;
     }
 
-    if (authSession.role === "monitor") {
+    if (effectiveRoleForMonitorFeatures === "monitor") {
       return upcomingAuditorioEvents.length;
     }
 
-    if (isMonitorRegistro) {
-      return upcomingAuditorioEvents.length;
-    }
-
-    if (authSession.role === "colaborador") {
+    if (effectiveRoleForMonitorFeatures === "colaborador") {
       return upcomingAuditorioEvents.length;
     }
 
     return 0;
-  }, [authSession, isMonitorRegistro, pendingRequests.length, upcomingAuditorioEvents.length, pendingAuditorioRequests.length]);
+  }, [authSession, effectiveRoleForMonitorFeatures, pendingRequests.length, upcomingAuditorioEvents.length, pendingAuditorioRequests.length]);
 
-  const visibleNavItems = useMemo(
-    () =>
-      navItems.filter((item) => {
-        if (!item.allowedRoles) {
-          return true;
-        }
+  const visibleNavItems = useMemo(() => {
+    return navItems.filter((item) => {
+      if (!item.allowedRoles) {
+        return true;
+      }
 
-        const role = authSession?.role ?? "colaborador";
-        if (item.allowedRoles.includes(role)) {
-          return true;
-        }
+      if (item.allowedRoles.includes(effectiveRoleForMonitorFeatures)) {
+        return true;
+      }
 
-        return isMonitorRegistro && item.allowedRoles.includes("monitor");
-      }),
-    [authSession, isMonitorRegistro]
-  );
+      // Special supervisor: keep monitor capabilities and additionally expose Registro.
+      if (isMonitorRegistroSupervisor && item.allowedRoles.includes("registro")) {
+        return true;
+      }
+
+      return false;
+    });
+  }, [effectiveRoleForMonitorFeatures, isMonitorRegistroSupervisor]);
 
   const handleSidebarRouteClick = (event: ReactMouseEvent<HTMLAnchorElement>, href: string) => {
     if (pathname === href) {
@@ -398,6 +407,15 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
         <div className="rounded-xl border border-slate-200 bg-white px-5 py-4 text-sm font-medium text-slate-600 shadow-sm">
           Cargando sesión...
         </div>
+      </div>
+    );
+  }
+
+  if (isOperacionesFullscreen) {
+    return (
+      <div className="min-h-screen bg-[#f6f7f8] text-slate-900 dark:bg-[#13181f] dark:text-slate-100">
+        <Toaster position="top-right" toastOptions={{ duration: 4000 }} />
+        {children}
       </div>
     );
   }
@@ -556,7 +574,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
               className="relative flex size-10 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-600 transition hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700"
             >
               <span className="material-symbols-outlined">notifications</span>
-              {(authSession.role === "admin" || authSession.role === "monitor" || authSession.role === "colaborador" || isMonitorRegistro) && totalNotifications > 0 ? (
+              {(effectiveRoleForMonitorFeatures === "admin" || effectiveRoleForMonitorFeatures === "monitor" || effectiveRoleForMonitorFeatures === "colaborador") && totalNotifications > 0 ? (
                 <span className="absolute top-1.5 right-1.5 flex min-h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold leading-none text-white">
                   {totalNotifications > 9 ? "9+" : totalNotifications}
                 </span>
@@ -579,7 +597,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
                   </button>
                 </div>
 
-                {authSession.role === "admin" ? (
+                {effectiveRoleForMonitorFeatures === "admin" ? (
                   <div className="mt-4 space-y-3">
                     {upcomingAuditorioEvents.length > 0 ? (
                       <div className="space-y-2">
@@ -746,7 +764,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
                       </div>
                     ) : null}
                   </div>
-                ) : authSession.role === "monitor" ? (
+                ) : effectiveRoleForMonitorFeatures === "monitor" ? (
                   <div className="mt-4 space-y-3">
                     {upcomingAuditorioEvents.length > 0 ? (
                       upcomingAuditorioEvents.map((event) => {
@@ -849,7 +867,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
                       </div>
                     )}
                   </div>
-                ) : authSession.role === "colaborador" ? (
+                ) : effectiveRoleForMonitorFeatures === "colaborador" ? (
                   <div className="mt-4 space-y-3">
                     {upcomingAuditorioEvents.length > 0 ? (
                       upcomingAuditorioEvents.map((event) => {
