@@ -1,10 +1,9 @@
 /* eslint-disable @next/next/no-img-element */
 "use client";
 
-import { fetchApiJson, fetchApiJsonWithOptions } from "@/lib/api-client";
+import { fetchApiJson } from "@/lib/api-client";
 import { getCachedData, setCachedData } from "@/lib/cache-storage";
 import { readAuthSession } from "@/lib/auth-session";
-import { loadRoomActionHistory, type RoomActionHistoryItem } from "@/lib/disabled-rooms";
 import { useEffect, useMemo, useRef, useState, type SyntheticEvent } from "react";
 import toast from "react-hot-toast";
 import { confirmToast } from "@/lib/toast-dialog";
@@ -173,47 +172,6 @@ type EditablePausaItem = {
   horaInicio: string;
   horaFin: string;
 };
- 
-type StaffRecentActivityItem = {
-  id: string;
-  staffId: string | null;
-  activityType:
-    | "asistencia_entrada"
-    | "asistencia_salida"
-    | "salon_danio"
-    | "salon_limpio"
-    | "salon_inhabilitado"
-    | "salon_habilitado";
-  severity: "success" | "warning";
-  title: string;
-  description: string;
-  actorName: string | null;
-  createdAt: string;
-};
- 
-type StaffRecentActivityResponse = {
-  items?: StaffRecentActivityItem[];
-};
-
-type RegistroDashboardMovementItem = {
-  id: string;
-  staffId: string;
-  nombreCompleto: string;
-  actividad: "Entrada" | "Salida";
-  estado: string;
-  fecha: string;
-  hora: string;
-};
-
-type RegistroDashboardResponse = {
-  dashboard?: {
-    movimientosRecientes?: RegistroDashboardMovementItem[];
-  };
-};
-
-type SchedulesRoomsInfoResponse = {
-  roomsByFloor?: Array<Array<{ id: string }>>;
-};
 
 type BackendWorkWeekDay = "Lunes" | "Martes" | "Miercoles" | "Jueves" | "Viernes" | "Sabado" | "Domingo";
 
@@ -301,102 +259,6 @@ function formatDurationHuman(hoursDecimal: number): string {
   }
 
   return `${minutes} min`;
-}
- 
-function formatRecentActivityDateLabel(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "Fecha invalida";
-  }
- 
-  const now = new Date();
-  const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const startTomorrow = new Date(startToday);
-  startTomorrow.setDate(startTomorrow.getDate() + 1);
-  const startYesterday = new Date(startToday);
-  startYesterday.setDate(startYesterday.getDate() - 1);
- 
-  const timeLabel = date.toLocaleTimeString("es-CO", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
- 
-  if (date >= startToday && date < startTomorrow) {
-    return `HOY, ${timeLabel}`;
-  }
- 
-  if (date >= startYesterday && date < startToday) {
-    return `AYER, ${timeLabel}`;
-  }
- 
-  const dayMonth = date
-    .toLocaleDateString("es-CO", { day: "2-digit", month: "short" })
-    .replace(".", "")
-    .toUpperCase();
- 
-  return `${dayMonth}, ${timeLabel}`;
-}
-
-function mapRegistroMovementToRecentActivity(item: RegistroDashboardMovementItem): StaffRecentActivityItem {
-  const isEntrada = item.actividad === "Entrada";
-  const isWarning = /tarde|anticipada|retraso/i.test(item.estado);
-
-  return {
-    id: `registro-${item.id}`,
-    staffId: item.staffId,
-    activityType: isEntrada ? "asistencia_entrada" : "asistencia_salida",
-    severity: isWarning ? "warning" : "success",
-    title: isEntrada
-      ? isWarning
-        ? "Entrada tardia registrada"
-        : "Entrada registrada a tiempo"
-      : isWarning
-        ? "Salida anticipada registrada"
-        : "Salida registrada a tiempo",
-    description: item.estado,
-    actorName: item.nombreCompleto,
-    createdAt: `${item.fecha}T${item.hora}`,
-  };
-}
-
-function mapRoomActionToRecentActivity(item: RoomActionHistoryItem): StaffRecentActivityItem {
-  const isWarning = item.actionType === "danio_reportado" || item.actionType === "inhabilitado";
-
-  let title = "Actividad en salon";
-  let description = item.note?.trim() || "Actividad registrada.";
-
-  if (item.actionType === "danio_reportado") {
-    title = `Danio reportado en ${item.roomName}`;
-    description = item.note?.trim() || "Se reporto un incidente en el salon.";
-  } else if (item.actionType === "salon_limpio") {
-    title = `${item.roomName} limpiado`;
-    description = item.note?.trim() || "Actividad de limpieza registrada.";
-  } else if (item.actionType === "inhabilitado") {
-    title = `${item.roomName} inhabilitado`;
-    description = item.note?.trim() || "Salon marcado como no disponible.";
-  } else if (item.actionType === "habilitado") {
-    title = `${item.roomName} habilitado`;
-    description = item.note?.trim() || "Salon devuelto a disponibilidad.";
-  }
-
-  return {
-    id: `room-${item.id}`,
-    staffId: item.createdByStaffId,
-    activityType:
-      item.actionType === "danio_reportado"
-        ? "salon_danio"
-        : item.actionType === "salon_limpio"
-          ? "salon_limpio"
-          : item.actionType === "inhabilitado"
-            ? "salon_inhabilitado"
-            : "salon_habilitado",
-    severity: isWarning ? "warning" : "success",
-    title,
-    description,
-    actorName: item.createdByName,
-    createdAt: item.createdAt,
-  };
 }
 function formatMovementDate(value: string): string {
   const parsed = new Date(value);
@@ -1106,7 +968,7 @@ function StaffScheduleBoard({
       ...prev,
       {
         id: `jornada-${Date.now()}-${prev.length + 1}`,
-        diaSemana: editorSelectedDay,
+        diaSemana: "",
         horaEntrada: "07:00",
         horaSalida: "12:00",
         totalHorasDia: "5",
@@ -1137,7 +999,7 @@ function StaffScheduleBoard({
       ...prev,
       {
         id: `pausa-${Date.now()}-${prev.length + 1}`,
-        diaSemana: editorSelectedDay,
+        diaSemana: "",
         tipoPausa: "",
         horaInicio: "12:00",
         horaFin: "13:00",
@@ -1861,9 +1723,9 @@ function StaffScheduleBoard({
 
                 <div className="space-y-2">
                   {editorRows
-                    .filter((row) => row.diaSemana === editorSelectedDay)
+                    .filter((row) => row.diaSemana === editorSelectedDay || row.diaSemana === "")
                     .map((row, filteredIndex) => {
-                      const totalFilteredForDay = editorRows.filter((r) => r.diaSemana === editorSelectedDay).length;
+                      const totalFilteredForDay = editorRows.filter((r) => r.diaSemana === editorSelectedDay || r.diaSemana === "").length;
                       return (
                         <div className="grid grid-cols-1 gap-2 rounded-xl border border-slate-200 bg-white p-3 md:grid-cols-[auto_1fr_1fr_1fr_auto]" key={row.id}>
                           <select
@@ -1880,7 +1742,7 @@ function StaffScheduleBoard({
                           </select>
 
                           <div className="hidden rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs font-bold text-[#2a3439] md:flex items-center">
-                            {row.diaSemana}
+                            {row.diaSemana || editorSelectedDay}
                           </div>
 
                           <select
@@ -1923,7 +1785,7 @@ function StaffScheduleBoard({
                         </div>
                       );
                     })}
-                  {editorRows.filter((row) => row.diaSemana === editorSelectedDay).length === 0 && (
+                  {editorRows.filter((row) => row.diaSemana === editorSelectedDay || row.diaSemana === "").length === 0 && (
                     <p className="rounded-lg border border-dashed border-slate-300 bg-white px-3 py-2 text-xs text-[#566166]">
                       No hay bloques de jornada para {editorSelectedDay}
                     </p>
@@ -1950,7 +1812,7 @@ function StaffScheduleBoard({
                 ) : (
                   <div className="space-y-2">
                     {sortedEditorPausaRows
-                      .filter((row) => row.diaSemana === editorSelectedDay)
+                      .filter((row) => row.diaSemana === editorSelectedDay || row.diaSemana === "")
                       .map((row) => (
                         <div className="grid grid-cols-1 gap-2 rounded-lg border border-slate-200 bg-white p-3 md:grid-cols-[auto_1fr_1fr_1fr_1fr_auto]" key={row.id}>
                           <select
@@ -1967,7 +1829,7 @@ function StaffScheduleBoard({
                           </select>
 
                           <div className="hidden rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs font-bold text-[#2a3439] md:flex items-center">
-                            {row.diaSemana}
+                            {row.diaSemana || editorSelectedDay}
                           </div>
 
                           <select
@@ -2018,7 +1880,7 @@ function StaffScheduleBoard({
                           </button>
                         </div>
                       ))}
-                    {sortedEditorPausaRows.filter((row) => row.diaSemana === editorSelectedDay).length === 0 && (
+                    {sortedEditorPausaRows.filter((row) => row.diaSemana === editorSelectedDay || row.diaSemana === "").length === 0 && (
                       <p className="rounded-lg border border-dashed border-slate-300 bg-white px-3 py-2 text-xs text-[#566166]">
                         No hay pausas configuradas para {editorSelectedDay}
                       </p>
@@ -2094,11 +1956,6 @@ export default function StaffPage() {
   const [isLoadingAssignedTasksToday, setIsLoadingAssignedTasksToday] = useState(false);
   const [balanceMovements, setBalanceMovements] = useState<StaffBalanceMovementApi[]>([]);
   const [isLoadingBalanceMovements, setIsLoadingBalanceMovements] = useState(false);
-  const [recentActivity, setRecentActivity] = useState<StaffRecentActivityItem[]>([]);
-  const [isLoadingRecentActivity, setIsLoadingRecentActivity] = useState(false);
-  const [recentActivityError, setRecentActivityError] = useState<string | null>(null);
-  const [isRecentActivityHistoryModalOpen, setIsRecentActivityHistoryModalOpen] = useState(false);
-  const [recentActivityFetchLimit, setRecentActivityFetchLimit] = useState(5);
   const [isSavingBalanceMovement, setIsSavingBalanceMovement] = useState(false);
   const [balanceAdjustmentHours, setBalanceAdjustmentHours] = useState("");
   const [balanceAdjustmentMinutes, setBalanceAdjustmentMinutes] = useState("");
@@ -2196,136 +2053,6 @@ export default function StaffPage() {
 
     void loadBalanceMovements(selectedStaff.id);
   }, [selectedStaff?.id]);
-
-  useEffect(() => {
-    setIsRecentActivityHistoryModalOpen(false);
-    setRecentActivityFetchLimit(5);
-  }, [selectedStaff?.id]);
-
-  useEffect(() => {
-    if (!selectedStaff?.id) {
-      setRecentActivity([]);
-      setRecentActivityError(null);
-      setIsLoadingRecentActivity(false);
-      return;
-    }
-
-    let isCancelled = false;
-    const selectedStaffId = selectedStaff.id;
-    const selectedStaffName = `${selectedStaff.nombres} ${selectedStaff.apellidos}`.trim().toLowerCase();
-
-    const loadRecentActivity = async () => {
-      try {
-        setIsLoadingRecentActivity(true);
-        setRecentActivityError(null);
-
-        let items: StaffRecentActivityItem[] | null = null;
-
-        try {
-          const response = await fetchApiJsonWithOptions<StaffRecentActivityResponse>(`/api/staff/${selectedStaffId}/activity/recent?limit=${recentActivityFetchLimit}`, {
-            cache: "no-store",
-          }, {
-            suppressExpectedStatuses: [404],
-          });
-          items = Array.isArray(response.items)
-            ? response.items.filter((item) => !item.staffId || item.staffId === selectedStaffId)
-            : [];
-        } catch {
-          try {
-            const response = await fetchApiJsonWithOptions<StaffRecentActivityResponse>(`/api/staff/activity/recent?limit=${Math.max(recentActivityFetchLimit, 50)}`, {
-              cache: "no-store",
-            }, {
-              suppressExpectedStatuses: [404],
-            });
-            items = Array.isArray(response.items)
-              ? response.items.filter((item) => !item.staffId || item.staffId === selectedStaffId)
-              : [];
-          } catch {
-            const dashboardResponse = await fetchApiJson<RegistroDashboardResponse>("/api/registro/dashboard", {
-              cache: "no-store",
-            });
-            const movimientos = dashboardResponse.dashboard?.movimientosRecientes ?? [];
-            const attendanceItems = movimientos
-              .filter((movement) => movement.staffId === selectedStaffId)
-              .slice(0, recentActivityFetchLimit)
-              .map(mapRegistroMovementToRecentActivity);
-
-            let roomItems: StaffRecentActivityItem[] = [];
-            try {
-              const roomsInfo = await fetchApiJsonWithOptions<SchedulesRoomsInfoResponse>("/api/schedules/rooms-info", {
-                cache: "no-store",
-              }, {
-                suppressExpectedStatuses: [404],
-              });
-
-              const roomIds = (roomsInfo.roomsByFloor ?? [])
-                .flat()
-                .map((room) => room.id)
-                .filter(Boolean)
-                .slice(0, 80);
-
-              const histories = await Promise.all(
-                roomIds.map(async (roomId) => {
-                  try {
-                    return await loadRoomActionHistory(roomId);
-                  } catch {
-                    return [] as RoomActionHistoryItem[];
-                  }
-                })
-              );
-
-              const mergedRoomHistory = histories
-                .flat()
-                .filter((entry) => {
-                  if (entry.createdByStaffId) {
-                    return entry.createdByStaffId === selectedStaffId;
-                  }
-
-                  return (entry.createdByName ?? "").trim().toLowerCase() === selectedStaffName;
-                })
-                .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
-                .slice(0, recentActivityFetchLimit);
-
-              roomItems = mergedRoomHistory.map(mapRoomActionToRecentActivity);
-            } catch {
-              roomItems = [];
-            }
-
-            items = [...attendanceItems, ...roomItems]
-              .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
-              .slice(0, recentActivityFetchLimit);
-          }
-        }
-
-        if (isCancelled) {
-          return;
-        }
-
-        setRecentActivity(items ?? []);
-      } catch (error) {
-        if (isCancelled) {
-          return;
-        }
-
-        setRecentActivity([]);
-        setRecentActivityError(error instanceof Error ? error.message : "No se pudieron cargar las actividades recientes.");
-      } finally {
-        if (!isCancelled) {
-          setIsLoadingRecentActivity(false);
-        }
-      }
-    };
-
-    void loadRecentActivity();
-    const intervalId = window.setInterval(() => {
-      void loadRecentActivity();
-    }, 60_000);
-
-    return () => {
-      isCancelled = true;
-      window.clearInterval(intervalId);
-    };
-  }, [selectedStaff?.id, selectedStaff?.nombres, selectedStaff?.apellidos, recentActivityFetchLimit]);
 
   useEffect(() => {
     if (isCollaborador) return;
@@ -2942,70 +2669,6 @@ export default function StaffPage() {
       )}
     </section>
   );
-
-  const renderRecentActivityTimeline = (items: StaffRecentActivityItem[], isMobile = false) => (
-    <div className={`relative space-y-6 pl-6 before:absolute before:top-2 before:bottom-2 before:left-[7px] before:w-[2px] before:bg-[#cfdce3] before:content-[''] ${isMobile ? "" : "pr-1"}`}>
-      {items.map((item) => {
-        const isWarning = item.severity === "warning";
-        const dotClass = isWarning ? "bg-[#9f403d]" : "bg-green-500";
-        const titleClass = isWarning ? "text-sm font-bold text-[#9f403d]" : "text-sm font-bold text-[#2a3439]";
-        const description = item.actorName
-          ? `${item.actorName}: ${item.description}`
-          : item.description;
-
-        return (
-          <div className="relative" key={item.id}>
-            <span className={`absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white ${dotClass}`} />
-            <p className="text-[10px] font-bold text-slate-400">{formatRecentActivityDateLabel(item.createdAt)}</p>
-            <p className={titleClass}>{item.title}</p>
-            <p className="text-xs text-[#566166]">{description}</p>
-          </div>
-        );
-      })}
-    </div>
-  );
-
-  const renderRecentActivityPanel = (sectionClassName: string, isMobile = false) => {
-    const summaryItems = recentActivity.slice(0, 5);
-
-    return (
-      <section className={sectionClassName}>
-        <div className="mb-4 flex items-center justify-between gap-2">
-          <h4 className="flex items-center gap-2 text-[11px] font-black tracking-widest text-[#566166] uppercase">
-            <span className="h-1.5 w-1.5 rounded-full bg-[#3a5f94]" />
-            Actividades recientes e informes
-          </h4>
-
-          <button
-            className="rounded-lg border border-slate-300 px-3 py-1 text-[11px] font-bold text-[#3a5f94] hover:bg-slate-100"
-            type="button"
-            onClick={() => {
-              setIsRecentActivityHistoryModalOpen(true);
-              setRecentActivityFetchLimit((prev) => Math.max(prev, 10));
-            }}
-          >
-            Ver historial completo
-          </button>
-        </div>
-
-        {isLoadingRecentActivity ? (
-          <p className="rounded-lg border border-dashed border-slate-300 bg-white px-3 py-2 text-xs text-[#566166]">
-            Cargando actividades recientes...
-          </p>
-        ) : recentActivityError ? (
-          <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-[#9f403d]">
-            {recentActivityError}
-          </p>
-        ) : summaryItems.length === 0 ? (
-          <p className="rounded-lg border border-dashed border-slate-300 bg-white px-3 py-2 text-xs text-[#566166]">
-            Aún no hay actividades recientes para mostrar.
-          </p>
-        ) : (
-          renderRecentActivityTimeline(summaryItems, isMobile)
-        )}
-      </section>
-    );
-  };
 
   const academicUnavailabilityMatrix = useMemo(() => {
     const slots = (selectedStaff?.bloqueosClase ?? [])
@@ -4651,7 +4314,32 @@ export default function StaffPage() {
                 </div>
               ) : null}
             </section>
-            {renderRecentActivityPanel("rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5 lg:p-6")}
+            <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5 lg:p-6">
+              <h4 className="mb-4 flex items-center gap-2 text-[11px] font-black tracking-widest text-[#566166] uppercase">
+                <span className="h-1.5 w-1.5 rounded-full bg-[#3a5f94]" />
+                Actividades recientes e informes
+              </h4>
+              <div className="relative space-y-6 pl-6 pr-1 before:absolute before:top-2 before:bottom-2 before:left-[7px] before:w-[2px] before:bg-[#cfdce3] before:content-['']">
+                <div className="relative">
+                  <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-green-500" />
+                  <p className="text-[10px] font-bold text-slate-400">HOY, 10:45</p>
+                  <p className="text-sm font-bold text-[#2a3439]">Salón 302 limpiado</p>
+                  <p className="text-xs text-[#566166]">Actividad: registro de mantenimiento</p>
+                </div>
+                <div className="relative">
+                  <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-[#9f403d]" />
+                  <p className="text-[10px] font-bold text-slate-400">AYER, 14:15</p>
+                  <p className="text-sm font-bold text-[#9f403d]">Informe de llegada tardía</p>
+                  <p className="text-xs text-[#566166]">Infracción: 15 min de retraso sin aviso.</p>
+                </div>
+                <div className="relative">
+                  <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-green-500" />
+                  <p className="text-[10px] font-bold text-slate-400">24 OCT, 09:00</p>
+                  <p className="text-sm font-bold text-[#2a3439]">Inventario verificado</p>
+                  <p className="text-xs text-[#566166]">Actividad: auditoría de equipos</p>
+                </div>
+              </div>
+            </section>
           </div>
           </>
           ) : selectedStaff && isCollaborador ? (
@@ -4757,7 +4445,32 @@ export default function StaffPage() {
                   ) : null}
                 </section>
 
-                {renderRecentActivityPanel("rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5 lg:p-6")}
+                <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5 lg:p-6">
+                  <h4 className="mb-4 flex items-center gap-2 text-[11px] font-black tracking-widest text-[#566166] uppercase">
+                    <span className="h-1.5 w-1.5 rounded-full bg-[#3a5f94]" />
+                    Actividades recientes e informes
+                  </h4>
+                  <div className="relative space-y-6 pl-6 pr-1 before:absolute before:top-2 before:bottom-2 before:left-[7px] before:w-[2px] before:bg-[#cfdce3] before:content-['']">
+                    <div className="relative">
+                      <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-green-500" />
+                      <p className="text-[10px] font-bold text-slate-400">HOY, 10:45</p>
+                      <p className="text-sm font-bold text-[#2a3439]">Salón 302 limpiado</p>
+                      <p className="text-xs text-[#566166]">Actividad: registro de mantenimiento</p>
+                    </div>
+                    <div className="relative">
+                      <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-[#9f403d]" />
+                      <p className="text-[10px] font-bold text-slate-400">AYER, 14:15</p>
+                      <p className="text-sm font-bold text-[#9f403d]">Informe de llegada tardía</p>
+                      <p className="text-xs text-[#566166]">Infracción: 15 min de retraso sin aviso.</p>
+                    </div>
+                    <div className="relative">
+                      <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-green-500" />
+                      <p className="text-[10px] font-bold text-slate-400">24 OCT, 09:00</p>
+                      <p className="text-sm font-bold text-[#2a3439]">Inventario verificado</p>
+                      <p className="text-xs text-[#566166]">Actividad: auditoría de equipos</p>
+                    </div>
+                  </div>
+                </section>
               </div>
             </div>
           ) : !isCollaborador ? (
@@ -5237,7 +4950,32 @@ export default function StaffPage() {
                     ) : null}
 
                     {mobileDetailTab === "activity" ? (
-                      renderRecentActivityPanel("rounded-2xl border border-slate-200 bg-white p-4", true)
+                      <section className="rounded-2xl border border-slate-200 bg-white p-4">
+                        <h4 className="mb-4 flex items-center gap-2 text-[11px] font-black tracking-widest text-[#566166] uppercase">
+                          <span className="h-1.5 w-1.5 rounded-full bg-[#3a5f94]" />
+                          Actividades recientes e informes
+                        </h4>
+                        <div className="relative space-y-6 pl-6 before:absolute before:top-2 before:bottom-2 before:left-[7px] before:w-[2px] before:bg-[#cfdce3] before:content-['']">
+                          <div className="relative">
+                            <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-green-500" />
+                            <p className="text-[10px] font-bold text-slate-400">HOY, 10:45</p>
+                            <p className="text-sm font-bold text-[#2a3439]">Salón 302 limpiado</p>
+                            <p className="text-xs text-[#566166]">Actividad: registro de mantenimiento</p>
+                          </div>
+                          <div className="relative">
+                            <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-[#9f403d]" />
+                            <p className="text-[10px] font-bold text-slate-400">AYER, 14:15</p>
+                            <p className="text-sm font-bold text-[#9f403d]">Informe de llegada tardía</p>
+                            <p className="text-xs text-[#566166]">Infracción: 15 min de retraso sin aviso.</p>
+                          </div>
+                          <div className="relative">
+                            <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-green-500" />
+                            <p className="text-[10px] font-bold text-slate-400">24 OCT, 09:00</p>
+                            <p className="text-sm font-bold text-[#2a3439]">Inventario verificado</p>
+                            <p className="text-xs text-[#566166]">Actividad: auditoría de equipos</p>
+                          </div>
+                        </div>
+                      </section>
                     ) : null}
 
                     {mobileDetailTab === "profile" && canManageStaff ? (
@@ -5274,71 +5012,6 @@ export default function StaffPage() {
         ) : null}
       </main>
       )}
-        {isRecentActivityHistoryModalOpen ? (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/55 p-4 backdrop-blur-sm">
-            <div className="w-full max-w-3xl rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_30px_80px_rgba(15,23,42,0.22)]">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-[10px] font-black tracking-[0.3em] text-[#3a5f94] uppercase">Historial</p>
-                  <h3 className="mt-1 text-2xl font-extrabold tracking-tight text-[#1A365D]">Actividades recientes e informes</h3>
-                  <p className="mt-2 text-sm text-[#566166]">Se muestran {recentActivity.length} registros.</p>
-                </div>
-                <button
-                  className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-600 transition hover:bg-slate-200"
-                  type="button"
-                  aria-label="Cerrar historial de actividades"
-                  onClick={() => {
-                    setIsRecentActivityHistoryModalOpen(false);
-                    setRecentActivityFetchLimit(5);
-                  }}
-                >
-                  <X className="h-5 w-5" aria-hidden="true" />
-                </button>
-              </div>
-
-              <div className="mt-6 max-h-[60vh] overflow-y-auto pr-1">
-                {isLoadingRecentActivity ? (
-                  <p className="rounded-lg border border-dashed border-slate-300 bg-white px-3 py-2 text-xs text-[#566166]">
-                    Cargando actividades recientes...
-                  </p>
-                ) : recentActivityError ? (
-                  <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-[#9f403d]">
-                    {recentActivityError}
-                  </p>
-                ) : recentActivity.length === 0 ? (
-                  <p className="rounded-lg border border-dashed border-slate-300 bg-white px-3 py-2 text-xs text-[#566166]">
-                    Aún no hay actividades recientes para mostrar.
-                  </p>
-                ) : (
-                  renderRecentActivityTimeline(recentActivity)
-                )}
-              </div>
-
-              <div className="mt-6 flex flex-wrap justify-end gap-2">
-                {recentActivity.length >= recentActivityFetchLimit && !isLoadingRecentActivity ? (
-                  <button
-                    className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-bold text-[#3a5f94] hover:bg-slate-100"
-                    type="button"
-                    onClick={() => setRecentActivityFetchLimit((prev) => prev + 10)}
-                  >
-                    Cargar 10 más
-                  </button>
-                ) : null}
-
-                <button
-                  className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-[#566166] transition hover:bg-slate-50"
-                  type="button"
-                  onClick={() => {
-                    setIsRecentActivityHistoryModalOpen(false);
-                    setRecentActivityFetchLimit(5);
-                  }}
-                >
-                  Cerrar
-                </button>
-              </div>
-            </div>
-          </div>
-        ) : null}
       {isBalanceAdjustmentDialogOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/55 p-4 backdrop-blur-sm">
           <form className="w-full max-w-md rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_30px_80px_rgba(15,23,42,0.22)]" onSubmit={handleRegisterBalanceMovement}>

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { fetchApiJson, fetchApiJsonWithOptions } from "@/lib/api-client";
-import { isMonitorRegistroSession, readAuthSession } from "@/lib/auth-session";
+import { readAuthSession } from "@/lib/auth-session";
 
 type InventoryGroup = {
   id: string;
@@ -164,7 +164,7 @@ export default function InventoryPage() {
   const groupsScrollRef = useRef<HTMLDivElement | null>(null);
 
   const authSession = useMemo(() => readAuthSession(), []);
-  const canManageInventory = authSession?.role === "admin" || authSession?.role === "monitor" || isMonitorRegistroSession(authSession);
+  const canManageInventory = authSession?.role === "admin" || authSession?.role === "monitor";
   const canDeleteGroup = authSession?.role === "admin";
 
   useEffect(() => {

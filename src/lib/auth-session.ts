@@ -12,15 +12,11 @@ export type AuthSession = {
 
 const AUTH_SESSION_KEY = "unac_auth_session_v1";
 
-function normalizeSessionText(value: string | undefined): string {
-  return value?.trim().toLowerCase() ?? "";
-}
-
 function normalizeUserRole(rawRole: unknown, roleLabel?: string, name?: string): UserRole | null {
-  const normalizedName = normalizeSessionText(typeof name === "string" ? name : undefined);
+  const normalizedName = typeof name === "string" ? name.trim().toLowerCase() : "";
 
   if (typeof roleLabel === "string") {
-    const normalizedLabel = normalizeSessionText(roleLabel);
+    const normalizedLabel = roleLabel.trim().toLowerCase();
     if (normalizedLabel.includes("monitor") && normalizedLabel.includes("registro")) return "registro";
     if (normalizedLabel === "registro") return "registro";
   }
@@ -37,7 +33,7 @@ function normalizeUserRole(rawRole: unknown, roleLabel?: string, name?: string):
   }
 
   if (typeof roleLabel === "string") {
-    const normalizedLabel = normalizeSessionText(roleLabel);
+    const normalizedLabel = roleLabel.trim().toLowerCase();
     if (normalizedLabel.includes("monitor")) return "monitor";
     if (normalizedLabel.includes("admin")) return "admin";
     if (normalizedLabel.includes("registro")) return "registro";
@@ -45,17 +41,6 @@ function normalizeUserRole(rawRole: unknown, roleLabel?: string, name?: string):
   }
 
   return null;
-}
-
-export function isMonitorRegistroSession(session: Pick<AuthSession, "role" | "roleLabel" | "name"> | null | undefined): boolean {
-  if (!session) {
-    return false;
-  }
-
-  const normalizedLabel = normalizeSessionText(session.roleLabel);
-  const normalizedName = normalizeSessionText(session.name);
-
-  return (session.role === "registro" && normalizedLabel.includes("monitor") && normalizedLabel.includes("registro")) || normalizedName.includes("monitor registro");
 }
 
 export function getAuthSessionKey(): string {

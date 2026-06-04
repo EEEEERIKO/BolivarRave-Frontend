@@ -149,17 +149,24 @@ const getCandidates = () => {
 
 let refreshInFlight: Promise<AuthSession | null> | null = null;
 
-const refreshAccessTokenSilently = async (): Promise<AuthSession | null> => {
+type RefreshOutcome = {
+  status: "success" | "invalid" | "unavailable";
+  session: AuthSession | null;
+};
+
+const refreshAccessTokenSilently = async (): Promise<RefreshOutcome> => {
   if (typeof window === "undefined") {
-    return null;
+    return { status: "unavailable", session: null };
   }
 
   if (refreshInFlight) {
-    return refreshInFlight;
+    const session = await refreshInFlight;
+    return session ? { status: "success", session } : { status: "unavailable", session: null };
   }
 
   const refreshTask = (async () => {
     const candidates = getCandidates();
+    let sawExplicitInvalid = false;
 
     for (const base of candidates) {
       const refreshUrl = `${base}/api/staff/refresh`;
@@ -170,28 +177,40 @@ const refreshAccessTokenSilently = async (): Promise<AuthSession | null> => {
         });
 
         if (!response.ok) {
+          if (response.status === 401 || response.status === 403) {
+            sawExplicitInvalid = true;
+            continue;
+          }
+
           if (response.status === 404 && base === "") {
             continue;
           }
-          return null;
+
+          continue;
         }
 
         const body = (await response.json()) as { session?: AuthSession };
         if (!body.session?.accessToken) {
-          return null;
+          continue;
         }
 
         writeAuthSession(body.session);
-        return body.session;
+        return { status: "success" as const, session: body.session };
       } catch {
         continue;
       }
     }
 
-    return null;
+    return sawExplicitInvalid
+      ? { status: "invalid" as const, session: null }
+      : { status: "unavailable" as const, session: null };
   })();
 
-  refreshInFlight = refreshTask;
+  refreshInFlight = (async () => {
+    const result = await refreshTask;
+    return result.session;
+  })();
+
   try {
     return await refreshTask;
   } finally {
@@ -238,6 +257,7 @@ export async function fetchApiJsonWithRetry<T>(
 type FetchApiOptions = {
   suppressExpectedStatuses?: number[];
   skipRefreshOnAuthError?: boolean;
+  authRecoveryAttempted?: boolean;
 };
 
 export async function fetchApiJsonWithOptions<T>(path: string, init?: RequestInit, options?: FetchApiOptions): Promise<T> {
@@ -252,8 +272,10 @@ export async function fetchApiJsonWithOptions<T>(path: string, init?: RequestIni
     const url = `${base}${normalizedPath}`;
     lastUrl = url;
     attempts += 1;
+    let requestAccessToken: string | null = null;
     try {
       const session = typeof window !== "undefined" ? readAuthSession() : null;
+      requestAccessToken = session?.accessToken ?? null;
       const headers = new Headers(init?.headers ?? undefined);
 
       if (session?.accessToken && !headers.has("Authorization")) {
@@ -318,17 +340,62 @@ export async function fetchApiJsonWithOptions<T>(path: string, init?: RequestIni
         !isLogoutCall &&
         isAuthHttpError;
 
+      let refreshOutcome: RefreshOutcome | null = null;
+      let attemptedInvalidRecovery = false;
+
       if (canTryRefresh) {
-        const refreshedSession = await refreshAccessTokenSilently();
-        if (refreshedSession?.accessToken) {
+        refreshOutcome = await refreshAccessTokenSilently();
+
+        if (refreshOutcome.status === "success" && refreshOutcome.session?.accessToken) {
           return fetchApiJsonWithOptions<T>(path, init, {
             ...options,
             skipRefreshOnAuthError: true,
           });
         }
+
+        // A rotation race (multi-tab) can make the first refresh look invalid.
+        // Try one more silent refresh before deciding to clear the session.
+        if (refreshOutcome.status === "invalid" && !options?.authRecoveryAttempted) {
+          attemptedInvalidRecovery = true;
+          const recoveryOutcome = await refreshAccessTokenSilently();
+
+          if (recoveryOutcome.status === "success" && recoveryOutcome.session?.accessToken) {
+            return fetchApiJsonWithOptions<T>(path, init, {
+              ...options,
+              skipRefreshOnAuthError: true,
+              authRecoveryAttempted: true,
+            });
+          }
+
+          refreshOutcome = recoveryOutcome;
+        }
       }
 
-      if (!isLoginCall && isAuthHttpError && typeof window !== "undefined") {
+      const shouldForceLogout =
+        !isLoginCall &&
+        isAuthHttpError &&
+        typeof window !== "undefined" &&
+        (
+          options?.skipRefreshOnAuthError === true
+          || refreshOutcome?.status === "invalid"
+          || (attemptedInvalidRecovery && refreshOutcome?.status !== "success")
+        );
+
+      if (shouldForceLogout) {
+        const latestSession = readAuthSession();
+        const tokenChangedAfterRequest =
+          requestAccessToken !== null &&
+          latestSession?.accessToken !== undefined &&
+          latestSession.accessToken !== requestAccessToken;
+
+        if (tokenChangedAfterRequest && !options?.skipRefreshOnAuthError) {
+          return fetchApiJsonWithOptions<T>(path, init, {
+            ...options,
+            skipRefreshOnAuthError: true,
+            authRecoveryAttempted: true,
+          });
+        }
+
         clearAuthSession();
 
         const pathname = window.location.pathname;

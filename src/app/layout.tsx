@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import "@fontsource/material-symbols-outlined";
 import "./globals.css";
 import { AdminShell } from "@/components/layout/admin-shell";
@@ -99,7 +100,9 @@ export default function RootLayout({
         <link rel="manifest" href="/manifest.json" />
       </head>
       <body className="antialiased" suppressHydrationWarning>
-        <AdminShell>{children}</AdminShell>
+        <Suspense fallback={null}>
+          <AdminShell>{children}</AdminShell>
+        </Suspense>
       </body>
     </html>
   );

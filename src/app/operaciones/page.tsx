@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { fetchApiJson } from "@/lib/api-client";
 import { readAuthSession } from "@/lib/auth-session";
 
@@ -60,20 +61,6 @@ type DashboardAlertItem = {
   message: string;
   createdAt: string;
   roomName?: string | null;
-};
-
-type ReservationFeedLoanItem = {
-  id: string;
-  resourceType: string;
-  resourceLabel: string;
-  resourceContext: string | null;
-  destinationRoomLabel: string | null;
-  requesterName: string;
-  requesterDocument: string;
-  bookingDate: string;
-  startTime: string;
-  endTime: string;
-  status: string;
 };
 
 type DashboardResponse = {
@@ -153,17 +140,72 @@ const formatRelativeMinutes = (minutes: number | null) => {
   return remaining > 0 ? `${hours}H ${remaining}M` : `${hours}H`;
 };
 
-const formatDateTimeShort = (value: string | null | undefined) => {
-  if (!value) return "Sin hora";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value;
+const formatElapsedTime = (createdAtIso: string | null) => {
+  if (!createdAtIso) return "SIN DATO";
 
-  return parsed.toLocaleString("es-CO", {
-    hour: "2-digit",
-    minute: "2-digit",
-    day: "2-digit",
-    month: "short",
-  });
+  try {
+    const createdDate = new Date(createdAtIso);
+    const now = new Date();
+    const diffMs = Math.max(0, now.getTime() - createdDate.getTime());
+    const diffMinutes = Math.round(diffMs / 60000);
+
+    if (diffMinutes < 60) {
+      return diffMinutes <= 0 ? "Ahora" : `${diffMinutes}`;
+    }
+
+    const diffHours = Math.round(diffMinutes / 60);
+    if (diffHours < 24) {
+      return `${diffHours}`;
+    }
+
+    const diffDays = Math.round(diffHours / 24);
+    return `${diffDays}`;
+  } catch {
+    return "SIN DATO";
+  }
+};
+
+const formatElapsedUnit = (createdAtIso: string | null) => {
+  if (!createdAtIso) return "MIN";
+
+  try {
+    const createdDate = new Date(createdAtIso);
+    const now = new Date();
+    const diffMs = Math.max(0, now.getTime() - createdDate.getTime());
+    const diffMinutes = Math.round(diffMs / 60000);
+
+    if (diffMinutes < 60) {
+      return "MIN";
+    }
+
+    const diffHours = Math.round(diffMinutes / 60);
+    if (diffHours < 24) {
+      return "H";
+    }
+
+    return "D";
+  } catch {
+    return "MIN";
+  }
+};
+
+const isRecentReport = (createdAtIso: string | null): boolean => {
+  if (!createdAtIso) return false;
+
+  try {
+    const createdDate = new Date(createdAtIso);
+    const now = new Date();
+    const diffMs = Math.max(0, now.getTime() - createdDate.getTime());
+    const diffMinutes = Math.round(diffMs / 60000);
+    return diffMinutes < 120;
+  } catch {
+    return false;
+  }
+};
+
+const getStaffAvatarUrl = (cedula: string): string => {
+  const normalizedCedula = String(cedula ?? "").trim();
+  return `/api/staff-photo/${encodeURIComponent(normalizedCedula)}`;
 };
 
 const formatClockTime = (value: string | null | undefined) => {
@@ -179,6 +221,38 @@ const formatClockTime = (value: string | null | undefined) => {
   const suffix = hour >= 12 ? "PM" : "AM";
   const normalizedHour = ((hour + 11) % 12) + 1;
   return `${normalizedHour}:${String(minute).padStart(2, "0")} ${suffix}`;
+};
+
+const formatOperationalDateTime = (value: string | null | undefined) => {
+  if (!value) return "SIN DATO";
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  const day = parsed.toLocaleDateString("es-CO", {
+    day: "numeric",
+    timeZone: "America/Bogota",
+  });
+  const month = parsed.toLocaleDateString("es-CO", {
+    month: "short",
+    timeZone: "America/Bogota",
+  }).toUpperCase();
+
+  const rawTime = parsed.toLocaleTimeString("es-CO", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+    timeZone: "America/Bogota",
+  });
+
+  const normalizedTime = rawTime
+    .replace(/\s*a\.\s*m\./i, " A.M.")
+    .replace(/\s*p\.\s*m\./i, " P.M.")
+    .toUpperCase();
+
+  return `${day} DE ${month}, ${normalizedTime}`;
 };
 
 const roomDisplayClasses: Record<DashboardRoomItem["displayState"], string> = {
@@ -209,6 +283,13 @@ const roomDisplayLabel: Record<DashboardRoomItem["displayState"], string> = {
   requerido: "requerido",
   recomendado: "recomendado",
   limpio: "limpio",
+};
+
+const roomDisplayPriorityRank: Record<DashboardRoomItem["displayState"], number> = {
+  requerido: 3,
+  recomendado: 2,
+  ocupado: 1,
+  limpio: 0,
 };
 
 const containsGhostTestValue = (value: string | null | undefined) => {
@@ -256,78 +337,6 @@ const getBogotaCurrentMinutes = () => {
 const getBogotaDayName = () =>
   normalizeDayName(new Date().toLocaleDateString("es-CO", { weekday: "long", timeZone: "America/Bogota" }));
 
-const weekdayIndexByName: Record<string, number> = {
-  lunes: 0,
-  martes: 1,
-  miercoles: 2,
-  jueves: 3,
-  viernes: 4,
-  sabado: 5,
-  domingo: 6,
-};
-
-const parseLabelMinutesUntilNextClass = (label: string | null | undefined): number | null => {
-  if (!label) {
-    return null;
-  }
-
-  const match = label.match(/([A-Za-zÁÉÍÓÚáéíóúÑñ]+)\s+(\d{1,2}):(\d{2})\s*(AM|PM)/i);
-  if (!match) {
-    return null;
-  }
-
-  const dayName = normalizeDayName(match[1]);
-  const dayIndex = weekdayIndexByName[dayName];
-  if (typeof dayIndex !== "number") {
-    return null;
-  }
-
-  const hourText = match[2] ?? "0";
-  const minuteText = match[3] ?? "0";
-  const amPm = (match[4] ?? "").toUpperCase();
-
-  let hour = Number(hourText);
-  const minute = Number(minuteText);
-  if (!Number.isFinite(hour) || !Number.isFinite(minute)) {
-    return null;
-  }
-
-  hour = hour % 12;
-  if (amPm === "PM") {
-    hour += 12;
-  }
-
-  const targetMinutes = hour * 60 + minute;
-  const currentDayName = getBogotaDayName();
-  const currentDayIndex = weekdayIndexByName[currentDayName];
-  if (typeof currentDayIndex !== "number") {
-    return null;
-  }
-
-  const currentMinutes = getBogotaCurrentMinutes();
-  let dayDelta = (dayIndex - currentDayIndex + 7) % 7;
-
-  // If label points to today's past hour, treat it as the next weekly occurrence.
-  if (dayDelta === 0 && targetMinutes < currentMinutes) {
-    dayDelta = 7;
-  }
-
-  return dayDelta * 24 * 60 + (targetMinutes - currentMinutes);
-};
-
-const getRoomSortMinutesUntilNextClass = (room: DashboardRoomItem): number => {
-  const parsedFromLabel = parseLabelMinutesUntilNextClass(room.nextClassLabel);
-  if (typeof parsedFromLabel === "number" && Number.isFinite(parsedFromLabel) && parsedFromLabel >= 0) {
-    return parsedFromLabel;
-  }
-
-  if (typeof room.minutesUntilNextClass === "number" && Number.isFinite(room.minutesUntilNextClass) && room.minutesUntilNextClass >= 0) {
-    return room.minutesUntilNextClass;
-  }
-
-  return Number.POSITIVE_INFINITY;
-};
-
 const staffStatusStyle: Record<Exclude<StaffLiveStatus, "Inactivo">, { textClass: string; dotClass: string; ringClass: string }> = {
   "No registrado": {
     textClass: "text-rose-700",
@@ -357,87 +366,6 @@ const alertClasses: Record<DashboardAlertItem["severity"], string> = {
   info: "border-sky-300 bg-sky-50 text-sky-800",
 };
 
-const DASHBOARD_REFRESH_INTERVAL_MS = 15_000;
-const LIVE_SCHEDULES_REFRESH_INTERVAL_MS = 30_000;
-const CLEAN_STALE_THRESHOLD_MINUTES = 5 * 60;
-const CLASS_SOON_WINDOW_MINUTES = 60;
-
-const roomDisplayPriorityOrder: Record<DashboardRoomItem["displayState"], number> = {
-  requerido: 0,
-  recomendado: 1,
-  ocupado: 2,
-  limpio: 3,
-};
-
-function getStaffPhotoUrl(cedula: string): string {
-  return `/api/staff-photo/${encodeURIComponent(cedula)}`;
-}
-
-function getDirectStaffPhotoUrl(cedula: string): string {
-  const normalizedCedula = (cedula ?? "").replace(/\D/g, "").trim();
-  const photoId = normalizedCedula || (cedula ?? "").trim();
-  return `https://bolivar-rave-staff-photos.s3.amazonaws.com/${encodeURIComponent(photoId)}.jpg`;
-}
-
-function getStaffInitials(fullName: string): string {
-  return fullName
-    .split(" ")
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0])
-    .join("")
-    .toUpperCase();
-}
-
-function isRoomStaleForCleaning(room: DashboardRoomItem): boolean {
-  if (typeof room.minutesSinceLastClean !== "number") {
-    return true;
-  }
-
-  return room.minutesSinceLastClean > CLEAN_STALE_THRESHOLD_MINUTES;
-}
-
-function isRoomClassStartingSoon(room: DashboardRoomItem): boolean {
-  if (typeof room.minutesUntilNextClass !== "number") {
-    return false;
-  }
-
-  return room.minutesUntilNextClass >= 0 && room.minutesUntilNextClass <= CLASS_SOON_WINDOW_MINUTES;
-}
-
-function getRoomPanelPriorityBucket(room: DashboardRoomItem): number {
-  if (!isRoomStaleForCleaning(room)) {
-    return 99;
-  }
-
-  if (isRoomClassStartingSoon(room)) {
-    return 0;
-  }
-
-  if (room.occupiedNow) {
-    return 2;
-  }
-
-  if (room.displayState === "requerido") {
-    return 0;
-  }
-
-  return 1;
-}
-
-function getOperationalRoomDisplayState(room: DashboardRoomItem): DashboardRoomItem["displayState"] {
-  if (!isRoomStaleForCleaning(room)) {
-    return "limpio";
-  }
-
-  if (room.occupiedNow) {
-    return "ocupado";
-  }
-
-  // Any stale room that is not currently occupied must be required.
-  return "requerido";
-}
-
 function getLoanActionClass(loan: DashboardLoanItem) {
   if (loan.badge === "vencido") {
     return "text-rose-700 underline decoration-rose-700 decoration-2";
@@ -455,81 +383,29 @@ function getLoanActionClass(loan: DashboardLoanItem) {
   return "text-[#3a5f94]";
 }
 
-const parseLoanDateTime = (dateText: string, timeText: string) => {
-  if (!dateText || !timeText) return null;
-  const [yearText, monthText, dayText] = dateText.split("-");
-  const [hourText, minuteText] = timeText.split(":");
-  const year = Number(yearText);
-  const month = Number(monthText);
-  const day = Number(dayText);
-  const hour = Number(hourText);
-  const minute = Number(minuteText);
-
-  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day) || !Number.isFinite(hour) || !Number.isFinite(minute)) {
-    return null;
-  }
-
-  return new Date(year, month - 1, day, hour, minute, 0, 0);
-};
-
-const getLoanBadgeFromTimes = (minutesUntilStart: number, minutesUntilEnd: number, status: string): DashboardLoanItem["badge"] => {
-  const statusLower = status.trim().toLowerCase();
-  if (statusLower === "reportado" || minutesUntilEnd < 0) {
-    return "vencido";
-  }
-  if (minutesUntilStart > 0 && minutesUntilStart <= 20) {
-    return "alerta";
-  }
-  if (minutesUntilStart > 0) {
-    return "proximo";
-  }
-  return minutesUntilEnd <= 20 ? "alerta" : "vigente";
-};
-
-const buildLoanActionFromTimes = (loan: ReservationFeedLoanItem, minutesUntilStart: number, minutesUntilEnd: number, badge: DashboardLoanItem["badge"]) => {
-  const destination = loan.destinationRoomLabel?.trim() || "destino";
-
-  if (badge === "vencido") {
-    return {
-      nextAction: "devolver" as const,
-      actionLabel: `DEVOLVER URGENTE · ATRASADO ${Math.abs(minutesUntilEnd)} MIN`,
-    };
-  }
-
-  if (minutesUntilStart > 0) {
-    return {
-      nextAction: "desplazar" as const,
-      actionLabel: `DESPLAZAR A ${destination.toUpperCase()} EN ${minutesUntilStart} MIN`,
-    };
-  }
-
-  if (minutesUntilEnd >= 0) {
-    return {
-      nextAction: "devolver" as const,
-      actionLabel: `DEVOLVER EN ${minutesUntilEnd} MIN`,
-    };
-  }
-
-  return {
-    nextAction: "revisar" as const,
-    actionLabel: "REVISAR ESTADO DEL PRESTAMO",
-  };
-};
-
 export default function OperacionesPage() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const authSession = useMemo(() => readAuthSession(), []);
+  const isFullscreenMode = searchParams.get("fullscreen") === "1";
   const isMonitorRegistroSupervisor = useMemo(() => {
     if (!authSession) {
       return false;
     }
 
-    if (authSession.role !== "registro") {
+    if (authSession.role !== "registro" && authSession.role !== "monitor") {
       return false;
     }
 
     const normalizedLabel = authSession.roleLabel.trim().toLowerCase();
     const normalizedName = authSession.name.trim().toLowerCase();
-    return normalizedLabel.includes("monitor") || normalizedName.includes("monitor registro");
+    const normalizedCedula = authSession.cedula.trim().toLowerCase();
+    return (
+      (normalizedLabel.includes("monitor") && normalizedLabel.includes("registro"))
+      || normalizedName.includes("monitor registro")
+      || normalizedCedula === "monitor"
+    );
   }, [authSession]);
   const [now, setNow] = useState(() => new Date());
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
@@ -546,10 +422,6 @@ export default function OperacionesPage() {
   const [autoFocusedRoomIndex, setAutoFocusedRoomIndex] = useState(0);
   const [liveJornadaByStaffId, setLiveJornadaByStaffId] = useState<Record<string, StaffJornadaBulkItem[]>>({});
   const [livePausaByStaffId, setLivePausaByStaffId] = useState<Record<string, StaffPausaBulkItem[]>>({});
-  const [fallbackActiveLoans, setFallbackActiveLoans] = useState<DashboardLoanItem[]>([]);
-  const [lastDashboardSyncAt, setLastDashboardSyncAt] = useState<Date | null>(null);
-  const dashboardRequestInFlightRef = useRef(false);
-  const liveSchedulesRequestInFlightRef = useRef(false);
 
   useEffect(() => {
     const checkViewport = () => {
@@ -572,207 +444,85 @@ export default function OperacionesPage() {
     return () => window.clearInterval(timer);
   }, []);
 
-  const loadDashboard = useCallback(async ({ isBackground = false }: { isBackground?: boolean } = {}) => {
-    if (!isDesktopViewport || dashboardRequestInFlightRef.current) {
+  useEffect(() => {
+    if (!isDesktopViewport) {
+      setDashboard(null);
+      setIsLoading(false);
       return;
     }
 
-    dashboardRequestInFlightRef.current = true;
-
-    if (!isBackground) {
+    const loadDashboard = async () => {
       setIsLoading(true);
-    }
-
-    try {
-      const response = await fetchApiJson<DashboardResponse>("/api/operaciones/dashboard", { cache: "no-store" });
-      setDashboard(response);
       setError(null);
-      setLastDashboardSyncAt(new Date());
-    } catch (loadError) {
-      setDashboard(null);
-      setError(loadError instanceof Error ? loadError.message : "No se pudo cargar el panel operativo");
-    } finally {
-      setIsLoading(false);
-      dashboardRequestInFlightRef.current = false;
-    }
-  }, [isDesktopViewport]);
 
-  useEffect(() => {
-    if (!isDesktopViewport) {
-      setDashboard(null);
-      setIsLoading(false);
-      setLastDashboardSyncAt(null);
-      return;
-    }
-
-    void loadDashboard({ isBackground: false });
-
-    const refreshTimer = window.setInterval(() => {
-      void loadDashboard({ isBackground: true });
-    }, DASHBOARD_REFRESH_INTERVAL_MS);
-
-    const refreshOnFocus = () => {
-      void loadDashboard({ isBackground: true });
-    };
-
-    const refreshOnVisibility = () => {
-      if (document.visibilityState === "visible") {
-        void loadDashboard({ isBackground: true });
-      }
-    };
-
-    window.addEventListener("focus", refreshOnFocus);
-    document.addEventListener("visibilitychange", refreshOnVisibility);
-
-    return () => {
-      window.clearInterval(refreshTimer);
-      window.removeEventListener("focus", refreshOnFocus);
-      document.removeEventListener("visibilitychange", refreshOnVisibility);
-    };
-  }, [isDesktopViewport, loadDashboard]);
-
-  useEffect(() => {
-    if (!isDesktopViewport) {
-      setFallbackActiveLoans([]);
-      return;
-    }
-
-    let cancelled = false;
-
-    const loadFallbackActiveLoans = async () => {
       try {
-        const response = await fetchApiJson<{ reservas?: ReservationFeedLoanItem[] }>("/api/reservas", { cache: "no-store" });
-        if (cancelled) {
-          return;
-        }
-
-        const nowDate = new Date();
-        const loans = (response.reservas ?? [])
-          .filter((reservation) => reservation.resourceType?.toLowerCase() !== "rooms")
-          .filter((reservation) => {
-            const status = reservation.status?.toLowerCase() ?? "";
-            return !["devuelto", "reportado", "rechazada", "cancelada"].includes(status);
-          })
-          .map<DashboardLoanItem | null>((reservation) => {
-            const start = parseLoanDateTime(reservation.bookingDate, reservation.startTime);
-            const end = parseLoanDateTime(reservation.bookingDate, reservation.endTime);
-            if (!start || !end) {
-              return null;
-            }
-
-            const minutesUntilStart = Math.round((start.getTime() - nowDate.getTime()) / 60000);
-            const minutesUntilEnd = Math.round((end.getTime() - nowDate.getTime()) / 60000);
-            const badge = getLoanBadgeFromTimes(minutesUntilStart, minutesUntilEnd, reservation.status);
-            const action = buildLoanActionFromTimes(reservation, minutesUntilStart, minutesUntilEnd, badge);
-
-            return {
-              id: reservation.id,
-              resourceType: reservation.resourceType,
-              resourceLabel: reservation.resourceLabel,
-              resourceContext: reservation.resourceContext,
-              destinationRoomLabel: reservation.destinationRoomLabel,
-              requesterName: reservation.requesterName,
-              requesterDocument: reservation.requesterDocument,
-              bookingDate: reservation.bookingDate,
-              startTime: reservation.startTime,
-              endTime: reservation.endTime,
-              status: reservation.status,
-              minutesUntilStart,
-              minutesUntilEnd,
-              badge,
-              nextAction: action.nextAction,
-              actionLabel: action.actionLabel,
-            };
-          })
-          .filter((loan): loan is DashboardLoanItem => loan !== null)
-          .sort((left, right) => left.minutesUntilStart - right.minutesUntilStart)
-          .slice(0, 20);
-
-        setFallbackActiveLoans(loans);
-      } catch {
-        if (!cancelled) {
-          setFallbackActiveLoans([]);
-        }
+        const response = await fetchApiJson<DashboardResponse>("/api/operaciones/dashboard", { cache: "no-store" });
+        setDashboard(response);
+      } catch (loadError) {
+        setDashboard(null);
+        setError(loadError instanceof Error ? loadError.message : "No se pudo cargar el panel operativo");
+      } finally {
+        setIsLoading(false);
       }
     };
 
-    void loadFallbackActiveLoans();
-
+    void loadDashboard();
     const refreshTimer = window.setInterval(() => {
-      void loadFallbackActiveLoans();
-    }, DASHBOARD_REFRESH_INTERVAL_MS);
+      void loadDashboard();
+    }, 60_000);
 
-    return () => {
-      cancelled = true;
-      window.clearInterval(refreshTimer);
-    };
+    return () => window.clearInterval(refreshTimer);
   }, [isDesktopViewport]);
 
   const summary = dashboard?.summary;
   const operationsStatus = dashboard?.operationsStatus;
-  const cleanTasks = useMemo(() => {
-    const source = dashboard?.topCleanTasks ?? [];
-    const sortedByRecentClean = [...source].sort((left, right) => {
-      const leftDate = left.lastCleanAt ? new Date(left.lastCleanAt).getTime() : 0;
-      const rightDate = right.lastCleanAt ? new Date(right.lastCleanAt).getTime() : 0;
-      return rightDate - leftDate;
-    });
-
-    // Remove repeated rows with the exact same room and clean timestamp.
-    const uniqueRows = sortedByRecentClean.filter((item, index, all) => {
-      const duplicateIndex = all.findIndex((candidate) => candidate.id === item.id && candidate.lastCleanAt === item.lastCleanAt);
-      return duplicateIndex === index;
-    });
-
-    return uniqueRows.slice(0, 3);
-  }, [dashboard?.topCleanTasks]);
+  const cleanTasks = dashboard?.topCleanTasks.slice(0, 2) ?? [];
   const urgentRooms = useMemo(() => {
-    const rooms = dashboard?.urgentRooms ?? [];
-
-    return [...rooms]
-      .filter((room) => isRoomStaleForCleaning(room))
+    const source = dashboard?.urgentRooms ?? [];
+    return [...source]
       .sort((left, right) => {
-        // 1) Never-cleaned or older-cleaned rooms first.
-        const leftSince = typeof left.minutesSinceLastClean === "number" ? left.minutesSinceLastClean : Number.POSITIVE_INFINITY;
-        const rightSince = typeof right.minutesSinceLastClean === "number" ? right.minutesSinceLastClean : Number.POSITIVE_INFINITY;
-        if (leftSince !== rightSince) {
-          return rightSince - leftSince;
+        const leftState = getRoomDisplayState(left);
+        const rightState = getRoomDisplayState(right);
+        const byState = roomDisplayPriorityRank[rightState] - roomDisplayPriorityRank[leftState];
+        if (byState !== 0) {
+          return byState;
         }
 
-        // 2) If cleaning age is tied, prioritize rooms with the nearest upcoming class.
-        const leftMinutes = getRoomSortMinutesUntilNextClass(left);
-        const rightMinutes = getRoomSortMinutesUntilNextClass(right);
-        if (leftMinutes !== rightMinutes) {
-          return leftMinutes - rightMinutes;
+        const leftStaleMinutes = left.minutesSinceLastClean ?? Number.MAX_SAFE_INTEGER;
+        const rightStaleMinutes = right.minutesSinceLastClean ?? Number.MAX_SAFE_INTEGER;
+        const byStaleMinutes = rightStaleMinutes - leftStaleMinutes;
+        if (byStaleMinutes !== 0) {
+          return byStaleMinutes;
         }
 
-        // 3) Keep occupied rooms behind non-occupied rooms when ties remain.
-        if (left.occupiedNow !== right.occupiedNow) {
-          return left.occupiedNow ? 1 : -1;
+        const leftHasClassSoon = left.minutesUntilNextClass !== null && left.minutesUntilNextClass <= 60 ? 1 : 0;
+        const rightHasClassSoon = right.minutesUntilNextClass !== null && right.minutesUntilNextClass <= 60 ? 1 : 0;
+        const byClassSoon = rightHasClassSoon - leftHasClassSoon;
+        if (byClassSoon !== 0) {
+          return byClassSoon;
         }
 
-        return right.priorityScore - left.priorityScore;
+        const leftNextClass = left.minutesUntilNextClass ?? Number.MAX_SAFE_INTEGER;
+        const rightNextClass = right.minutesUntilNextClass ?? Number.MAX_SAFE_INTEGER;
+        const byNextClass = leftNextClass - rightNextClass;
+        if (byNextClass !== 0) {
+          return byNextClass;
+        }
+
+        return right.priorityScore - left.priorityScore || left.name.localeCompare(right.name);
       })
       .slice(0, 6);
   }, [dashboard?.urgentRooms]);
-  const roomReports = useMemo(() => {
-    const reports = dashboard?.roomReports ?? [];
-    return [...reports]
-      .sort((left, right) => {
-        const leftTime = left.createdAt ? new Date(left.createdAt).getTime() : 0;
-        const rightTime = right.createdAt ? new Date(right.createdAt).getTime() : 0;
-        return rightTime - leftTime;
-      })
-      .slice(0, 4);
-  }, [dashboard?.roomReports]);
+  const roomReports = dashboard?.roomReports.slice(0, 4) ?? [];
   const rawStaff = dashboard?.staff ?? [];
-  const activeLoans = useMemo(() => {
-    const source = fallbackActiveLoans.length > 0 ? fallbackActiveLoans : (dashboard?.activeLoans ?? []);
-
-    return [...source]
-      .sort((left, right) => left.minutesUntilStart - right.minutesUntilStart)
-      .slice(0, 20);
-  }, [dashboard?.activeLoans, fallbackActiveLoans]);
+  const activeLoans = (dashboard?.activeLoans ?? []).filter((loan) => {
+    return !containsGhostTestValue(loan.resourceLabel)
+      && !containsGhostTestValue(loan.requesterName)
+      && !containsGhostTestValue(loan.resourceContext)
+      && !containsGhostTestValue(loan.destinationRoomLabel)
+      && !containsGhostTestValue(loan.requesterDocument)
+      && !containsGhostTestValue(loan.actionLabel);
+  });
   const normalizedAlerts = (dashboard?.alerts ?? [])
     .filter((alert) => !containsGhostTestValue(alert.title) && !containsGhostTestValue(alert.message))
     .filter((alert) => !alert.title.toLowerCase().includes("nuevo personal registrado"));
@@ -783,66 +533,41 @@ export default function OperacionesPage() {
     .filter((alert) => !alert.title.toLowerCase().includes("falta registro de ingreso"));
   const alerts = [...missingCheckinAlerts, ...remainingAlerts].slice(0, 8);
 
-  const rawStaffIds = useMemo(
-    () => rawStaff.map((person) => person.id).sort().join("|"),
-    [rawStaff]
-  );
-
-  const loadLiveSchedules = useCallback(async () => {
-    if (!isDesktopViewport || rawStaff.length === 0 || liveSchedulesRequestInFlightRef.current) {
-      return;
-    }
-
-    liveSchedulesRequestInFlightRef.current = true;
-
-    try {
-      const [jornadasResponse, pausasResponse] = await Promise.all([
-        fetchApiJson<StaffJornadasBulkResponse>("/api/staff/jornadas-bulk", { cache: "no-store" }).catch(() => ({ jornadas: {} })),
-        fetchApiJson<StaffPausasBulkResponse>("/api/staff/pausas-bulk", { cache: "no-store" }).catch(() => ({ pausas: {} })),
-      ]);
-
-      setLiveJornadaByStaffId(jornadasResponse.jornadas ?? {});
-      setLivePausaByStaffId(pausasResponse.pausas ?? {});
-    } catch {
+  useEffect(() => {
+    if (rawStaff.length === 0) {
       setLiveJornadaByStaffId({});
       setLivePausaByStaffId({});
-    } finally {
-      liveSchedulesRequestInFlightRef.current = false;
-    }
-  }, [isDesktopViewport, rawStaff.length]);
-
-  useEffect(() => {
-    if (!isDesktopViewport || rawStaff.length === 0) {
-      setLiveJornadaByStaffId((current) => (Object.keys(current).length === 0 ? current : {}));
-      setLivePausaByStaffId((current) => (Object.keys(current).length === 0 ? current : {}));
       return;
     }
 
-    void loadLiveSchedules();
+    let isCancelled = false;
+    const loadLiveSchedules = async () => {
+      try {
+        const [jornadasResponse, pausasResponse] = await Promise.all([
+          fetchApiJson<StaffJornadasBulkResponse>("/api/staff/jornadas-bulk", { cache: "no-store" }).catch(() => ({ jornadas: {} })),
+          fetchApiJson<StaffPausasBulkResponse>("/api/staff/pausas-bulk", { cache: "no-store" }).catch(() => ({ pausas: {} })),
+        ]);
 
-    const refreshTimer = window.setInterval(() => {
-      void loadLiveSchedules();
-    }, LIVE_SCHEDULES_REFRESH_INTERVAL_MS);
+        if (isCancelled) {
+          return;
+        }
 
-    const refreshOnFocus = () => {
-      void loadLiveSchedules();
-    };
-
-    const refreshOnVisibility = () => {
-      if (document.visibilityState === "visible") {
-        void loadLiveSchedules();
+        setLiveJornadaByStaffId(jornadasResponse.jornadas ?? {});
+        setLivePausaByStaffId(pausasResponse.pausas ?? {});
+      } catch {
+        if (!isCancelled) {
+          setLiveJornadaByStaffId({});
+          setLivePausaByStaffId({});
+        }
       }
     };
 
-    window.addEventListener("focus", refreshOnFocus);
-    document.addEventListener("visibilitychange", refreshOnVisibility);
+    void loadLiveSchedules();
 
     return () => {
-      window.clearInterval(refreshTimer);
-      window.removeEventListener("focus", refreshOnFocus);
-      document.removeEventListener("visibilitychange", refreshOnVisibility);
+      isCancelled = true;
     };
-  }, [isDesktopViewport, loadLiveSchedules, rawStaffIds, rawStaff.length]);
+  }, [rawStaff.length]);
 
   const liveStatusByStaffId = useMemo(() => {
     const statusMap: Record<string, StaffLiveStatus> = {};
@@ -939,21 +664,6 @@ export default function OperacionesPage() {
   const cleanCoverage5hPercent = Number(summary?.cleanCoverage5hPercent ?? operationsStatus?.cleanCoverage5hPercent ?? 0);
   const cleanedRoomsLast5h = Number(summary?.cleanedRoomsLast5h ?? 0);
   const totalRooms = Number(summary?.rooms ?? 0);
-  const operationsHealthLabel = operationsStatus?.label === "bien"
-    ? "Bien"
-    : operationsStatus?.label === "mal"
-      ? "Mal"
-      : "Sin datos";
-  const operationsHealthDotClass = operationsStatus?.label === "bien"
-    ? "bg-emerald-500"
-    : operationsStatus?.label === "mal"
-      ? "bg-rose-500"
-      : "bg-slate-400";
-  const operationsHealthTextClass = operationsStatus?.label === "bien"
-    ? "text-emerald-600"
-    : operationsStatus?.label === "mal"
-      ? "text-rose-600"
-      : "text-slate-500";
 
   useEffect(() => {
     if (urgentRooms.length === 0) {
@@ -986,22 +696,24 @@ export default function OperacionesPage() {
     urgentRooms[autoFocusedRoomIndex] ??
     cleanTasks[0] ??
     null;
+  const focusedRoomState = focusedRoom ? getRoomDisplayState(focusedRoom) : "limpio";
 
-  const urgentRoomsForGrid = urgentRooms;
+  const toggleFullscreenMode = () => {
+    const nextSearchParams = new URLSearchParams(searchParams.toString());
 
-  const roomPriorityById = useMemo(() => {
-    const priorityMap: Record<string, number> = {};
-    urgentRooms.forEach((room, index) => {
-      priorityMap[room.id] = index + 1;
-    });
-    return priorityMap;
-  }, [urgentRooms]);
+    if (isFullscreenMode) {
+      nextSearchParams.delete("fullscreen");
+    } else {
+      nextSearchParams.set("fullscreen", "1");
+    }
 
-  const focusedRoomState = focusedRoom ? getOperationalRoomDisplayState(focusedRoom) : "limpio";
+    const nextQuery = nextSearchParams.toString();
+    router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname);
+  };
 
   if (!isDesktopViewport) {
     return (
-      <div className="flex h-[calc(100vh-4rem)] items-center justify-center bg-[#f7f9fb] px-6 text-[#2a3439] sm:h-[calc(100vh-5rem)]">
+      <div className={`flex items-center justify-center bg-[#f7f9fb] px-6 text-[#2a3439] ${isFullscreenMode ? "h-screen" : "h-[calc(100vh-4rem)] sm:h-[calc(100vh-5rem)]"}`}>
         <div className="max-w-md rounded-2xl border border-[#e8eff3] bg-white p-6 text-center shadow-[0_10px_40px_rgba(42,52,57,0.08)]">
           <h1 className="text-lg font-black uppercase tracking-wide text-[#1A365D]">Disponible solo en PC</h1>
           <p className="mt-3 text-sm font-medium text-[#566166]">
@@ -1013,7 +725,7 @@ export default function OperacionesPage() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-4rem)] sm:h-[calc(100vh-5rem)] flex-col overflow-hidden bg-[#f7f9fb] text-[#2a3439]">
+    <div className={`flex flex-col overflow-hidden bg-[#f7f9fb] text-[#2a3439] ${isFullscreenMode ? "h-screen" : "h-[calc(100vh-4rem)] sm:h-[calc(100vh-5rem)]"}`}>
       <style jsx global>{`
         .material-symbols-outlined {
           font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
@@ -1048,6 +760,38 @@ export default function OperacionesPage() {
           0% { transform: translateX(0); }
           100% { transform: translateX(-50%); }
         }
+        .room-name-scroll {
+          display: inline-block;
+          will-change: transform;
+          animation-name: room-name-scroll-pan;
+          animation-timing-function: ease-in-out;
+          animation-iteration-count: infinite;
+          animation-direction: alternate;
+        }
+        @keyframes room-name-scroll-pan {
+          0%, 12% { transform: translateX(0); }
+          88%, 100% { transform: translateX(var(--room-name-shift, 0px)); }
+        }
+        .report-recent {
+          border: 2px solid rgba(239, 68, 68, 0.5);
+          background: rgba(254, 242, 242, 0.8);
+          box-shadow: 0 0 12px rgba(239, 68, 68, 0.3);
+          animation: report-glow 2s ease-in-out infinite;
+        }
+        @keyframes report-glow {
+          0%, 100% { box-shadow: 0 0 12px rgba(239, 68, 68, 0.3); }
+          50% { box-shadow: 0 0 20px rgba(239, 68, 68, 0.6); }
+        }
+        .report-new-badge {
+          display: inline-block;
+          padding: 2px 6px;
+          background: #ef4444;
+          color: white;
+          border-radius: 3px;
+          font-size: 8px;
+          font-weight: 700;
+          margin-left: 4px;
+        }
       `}</style>
 
       <header className="z-30 flex items-center justify-between border-b border-[#e1e9ee] bg-[#f7f9fb] px-6 py-3">
@@ -1066,10 +810,7 @@ export default function OperacionesPage() {
               Edificio Bolívar | <span className="font-black text-[#3a5f94]">Centro de Mando de Operaciones de Limpieza</span>
             </h1>
             <div className="flex items-center gap-2">
-              <span className={`status-pulse h-2 w-2 rounded-full ${operationsHealthDotClass}`} />
-              <span className={`text-[10px] font-semibold uppercase tracking-[0.22em] ${operationsHealthTextClass}`}>
-                Operaciones: {operationsHealthLabel}
-              </span>
+              
             </div>
             {!isLoading && operationsStatus ? (
               <span className={`text-[9px] font-bold uppercase tracking-[0.14em] ${operationsStatus.label === "bien" ? "text-emerald-700" : "text-rose-700"}`}>
@@ -1080,6 +821,7 @@ export default function OperacionesPage() {
         </div>
 
         <div className="flex items-center gap-6">
+          
           <div className="border-r border-[#e8eff3] pr-6 text-right">
             <span className="block text-[9px] font-bold uppercase tracking-[0.22em] text-[#566166]">Limpios Ult. 5h</span>
             <span className="text-xl font-black text-[#1A365D]">{summary ? `${cleanCoverage5hPercent}%` : "--%"}</span>
@@ -1097,10 +839,15 @@ export default function OperacionesPage() {
             Activo
             </span>
           </div>
-          <div className="border-l border-[#e8eff3] pl-4 text-right">
-            <span className="block text-[9px] font-bold uppercase tracking-[0.18em] text-[#566166]">Actualizado</span>
-            <span className="text-[11px] font-black text-[#1A365D]">{lastDashboardSyncAt ? formatTime(lastDashboardSyncAt.toISOString()) : "--:--"}</span>
-          </div>
+          <button
+            type="button"
+            onClick={toggleFullscreenMode}
+            className="inline-flex items-center gap-1.5 rounded-md border border-[#e1e9ee] bg-white px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-[#3a5f94] transition hover:bg-[#f0f4f7]"
+            aria-label={isFullscreenMode ? "Salir de pantalla completa" : "Entrar en pantalla completa"}
+          >
+            <span className="material-symbols-outlined text-sm">{isFullscreenMode ? "fullscreen_exit" : "fullscreen"}</span>
+            {isFullscreenMode ? "Salir" : "Pantalla completa"}
+          </button>
         </div>
       </header>
 
@@ -1108,36 +855,24 @@ export default function OperacionesPage() {
         <section className="col-span-3 row-span-4 flex min-h-0 flex-col overflow-hidden rounded-xl bg-white shadow-[0_10px_40px_rgba(42,52,57,0.04)]">
           <div className="flex items-center justify-between border-b border-[#e8eff3] px-5 py-3">
             <h2 className="text-xs font-bold uppercase tracking-[0.24em] text-[#566166]">Tareas de Limpieza Activas</h2>
-            <span className="rounded bg-[#d5e3ff] px-2 py-1 text-[10px] font-bold text-[#2c5287]">{summary ? `${summary.cleanReports} REGISTROS` : "Cargando"}</span>
           </div>
 
           <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden p-3">
             {cleanTasks.length > 0 ? (
               cleanTasks.map((room) => (
                 <div key={room.id} className="rounded-xl border-l-4 border-[#3a5f94] bg-[#f0f4f7] p-3">
-                  <div className="mb-2 flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <h3 className="truncate text-lg font-black leading-none text-[#1A365D]">{room.name}</h3>
-                      <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#3a5f94]">
-                        Limpieza completa • {room.cleanedByName?.trim() ? room.cleanedByName : "Monitoreo"}
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <span className="block text-[10px] font-black uppercase text-[#3a5f94]">Última limpieza</span>
-                      <span className="text-[9px] font-bold uppercase text-[#566166]">{formatDateTimeShort(room.lastCleanAt)}</span>
-                    </div>
+                  <div className="mb-2 min-w-0">
+                    <AutoScrollRoomName name={room.name} />
+                    <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#3a5f94]">
+                      Limpieza completa • {room.cleanedByName?.trim() ? room.cleanedByName : "Monitoreo"}
+                    </p>
+                    <p className="mt-2 text-[9px] font-black uppercase tracking-[0.2em] text-[#566166]">Última limpieza</p>
+                    <p className="text-[10px] font-bold uppercase text-[#2a3439]">{formatOperationalDateTime(room.lastCleanAt)}</p>
                   </div>
 
-                  <div className="mb-2 flex flex-wrap gap-1.5">
-                    {[
-                      room.reason.includes("daño") ? "Revisar daño" : "Barrer",
-                      "Trapear",
-                      "Organizar sillas",
-                      "Limpiar pizarra",
-                    ].map((chip) => (
-                      <span key={chip} className="rounded-sm border border-[#a9b4b9]/20 bg-white px-1.5 py-0.5 text-[9px] font-medium text-[#566166]">{chip}</span>
-                    ))}
-                  </div>
+                  
+
+                  
                 </div>
               ))
             ) : (
@@ -1150,23 +885,23 @@ export default function OperacionesPage() {
           <div className="flex items-start justify-between border-b border-[#e8eff3] px-5 py-3">
             <div>
               <h2 className="text-lg font-black uppercase tracking-tight text-[#1A365D]">Salones sin aseo</h2>
-              <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-[#566166]">Prioridad por tiempo sin limpiar; clase en 1h y ocupados al final</p>
+              <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-[#566166]">Priorizados por último aseo y próxima clase</p>
             </div>
             <div className="flex max-w-[280px] flex-wrap justify-end gap-x-3 gap-y-1.5">
-              <LegendDot label="Recomendado" color="bg-amber-400" />
               <LegendDot label="Requerido" color="bg-rose-500" />
+              <LegendDot label="Recomendado" color="bg-amber-400" />
               <LegendDot label="Ocupado" color="bg-[#3a5f94]" />
             </div>
           </div>
 
           <div className="relative flex min-h-0 flex-1 overflow-hidden bg-[#f0f4f7] p-3">
             <div className="grid h-full w-full grid-cols-3 grid-rows-2 gap-3">
-              {urgentRoomsForGrid.map((room) => (
+              {urgentRooms.map((room, index) => (
                 <RoomTile
                   key={room.id}
                   room={room}
-                  priorityRank={roomPriorityById[room.id]}
-                  highlight={focusedRoom?.id === room.id}
+                  priorityNumber={index + 1}
+                  highlight={(hoveredRoomId ? hoveredRoomId === room.id : index === autoFocusedRoomIndex)}
                   onHover={() => setHoveredRoomId(room.id)}
                   onLeave={() => setHoveredRoomId(null)}
                 />
@@ -1174,7 +909,7 @@ export default function OperacionesPage() {
             </div>
 
             <div className="pointer-events-none absolute inset-3 grid grid-cols-3 grid-rows-2 gap-3">
-              {urgentRoomsForGrid.map((room) => (
+              {urgentRooms.map((room) => (
                 <div key={`overlay-${room.id}`} className="relative">
                   {focusedRoom?.id === room.id ? (
                     <div className="absolute bottom-1 right-1 z-20 w-52 rounded-lg border border-[#e8eff3] bg-white/95 p-2.5 shadow-2xl">
@@ -1203,21 +938,25 @@ export default function OperacionesPage() {
           </div>
           <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden p-3">
             {roomReports.length > 0 ? (
-              roomReports.map((report) => (
-                <div key={report.id} className="flex gap-3 rounded-xl bg-white p-2.5">
-                  <div className="flex min-w-[50px] flex-col items-center rounded bg-rose-50 px-2 py-1 text-rose-700">
-                    <span className="text-[9px] font-black leading-none">{report.createdAt ? formatTime(report.createdAt) : "--:--"}</span>
-                    <span className="text-[8px] font-bold uppercase">hora</span>
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5">
-                      <span className="h-1.5 w-1.5 rounded-full bg-rose-500" />
-                      <p className="truncate text-xs font-extrabold text-[#1A365D]">{report.roomName}</p>
+              roomReports.map((report) => {
+                const isRecent = isRecentReport(report.createdAt);
+                return (
+                  <div key={report.id} className={`flex gap-3 rounded-xl p-2.5 ${isRecent ? "report-recent" : "bg-white"}`}>
+                    <div className="flex min-w-[50px] flex-col items-center rounded bg-rose-50 px-2 py-1 text-rose-700">
+                      <span className="text-xs font-black leading-none">{formatElapsedTime(report.createdAt)}</span>
+                      <span className="text-[8px] font-bold uppercase">{formatElapsedUnit(report.createdAt)}</span>
                     </div>
-                    <p className="truncate text-[10px] font-bold text-[#566166]">{report.note ?? "Daño reportado"}</p>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="h-1.5 w-1.5 rounded-full bg-rose-500" />
+                        <p className={`text-xs font-extrabold ${isRecent ? "text-rose-700" : "text-[#1A365D]"}`}>{report.roomName}</p>
+                        {isRecent && <span className="report-new-badge">NUEVO</span>}
+                      </div>
+                      <p className="text-[10px] font-bold text-[#566166]">{report.note ?? "Daño reportado"}</p>
+                    </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             ) : (
               <EmptyState label="No hay reportes" />
             )}
@@ -1231,40 +970,12 @@ export default function OperacionesPage() {
             render={(person) => {
               const status = liveStatusByStaffId[person.id] ?? (person.attendanceStatus === "registrado" ? "Activo" : "No registrado");
               const style = staffStatusStyle[status as Exclude<StaffLiveStatus, "Inactivo">] ?? staffStatusStyle.Activo;
+              const avatarUrl = getStaffAvatarUrl(person.cedula);
 
               return (
               <div key={person.id} className="flex shrink-0 items-center gap-3 rounded-lg bg-[#f0f4f7] px-3 py-2">
-                <div className={`relative h-9 w-9 rounded-full border-2 p-0.5 ${style.ringClass}`}>
-                  <img
-                    src={getStaffPhotoUrl(person.cedula)}
-                    alt={`Foto de ${person.nombre}`}
-                    className="h-full w-full rounded-full object-cover"
-                    onError={(event) => {
-                      const image = event.currentTarget;
-                      const fallback = image.parentElement?.querySelector<HTMLElement>("[data-staff-photo-fallback='true']");
-
-                      if (!image.dataset.directTried) {
-                        image.dataset.directTried = "true";
-                        image.src = getDirectStaffPhotoUrl(person.cedula);
-                        return;
-                      }
-
-                      image.style.display = "none";
-                      fallback?.classList.remove("hidden");
-                    }}
-                    onLoad={(event) => {
-                      const image = event.currentTarget;
-                      const fallback = image.parentElement?.querySelector<HTMLElement>("[data-staff-photo-fallback='true']");
-                      fallback?.classList.add("hidden");
-                      image.style.display = "block";
-                    }}
-                  />
-                  <div
-                    data-staff-photo-fallback="true"
-                    className="hidden h-full w-full items-center justify-center rounded-full bg-[linear-gradient(135deg,#d5e3ff,#f0f4f7)] text-[10px] font-black text-[#1A365D]"
-                  >
-                    {getStaffInitials(person.nombre)}
-                  </div>
+                <div className={`relative h-9 w-9 shrink-0 rounded-full border-2 overflow-hidden ${style.ringClass}`}>
+                  <img src={avatarUrl} alt={person.nombre} className="h-full w-full object-cover" />
                   <span className={`absolute -bottom-1 -right-1 h-3 w-3 rounded-full border-2 border-white ${style.dotClass}`} />
                 </div>
                 <div>
@@ -1428,6 +1139,61 @@ function AutoScrollStrip<T>({
   );
 }
 
+function AutoScrollRoomName({ name }: { name: string }) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const textRef = useRef<HTMLHeadingElement | null>(null);
+  const [overflowWidth, setOverflowWidth] = useState(0);
+
+  useEffect(() => {
+    const measureOverflow = () => {
+      const container = containerRef.current;
+      const text = textRef.current;
+
+      if (!container || !text) {
+        setOverflowWidth(0);
+        return;
+      }
+
+      const nextOverflow = Math.max(0, text.scrollWidth - container.clientWidth);
+      setOverflowWidth(nextOverflow);
+    };
+
+    measureOverflow();
+
+    if (typeof ResizeObserver !== "undefined") {
+      const observer = new ResizeObserver(() => measureOverflow());
+      if (containerRef.current) observer.observe(containerRef.current);
+      if (textRef.current) observer.observe(textRef.current);
+      return () => observer.disconnect();
+    }
+
+    window.addEventListener("resize", measureOverflow);
+    return () => window.removeEventListener("resize", measureOverflow);
+  }, [name]);
+
+  const shouldScroll = overflowWidth > 0;
+  const scrollDurationSeconds = Math.min(18, Math.max(7, overflowWidth / 16));
+  const scrollStyle = shouldScroll
+    ? ({
+        "--room-name-shift": `-${overflowWidth}px`,
+        animationDuration: `${scrollDurationSeconds}s`,
+      } as React.CSSProperties)
+    : undefined;
+
+  return (
+    <div ref={containerRef} className="min-w-0 overflow-hidden">
+      <h3
+        ref={textRef}
+        title={name}
+        className={`text-lg font-black leading-none text-[#1A365D] ${shouldScroll ? "room-name-scroll whitespace-nowrap" : "truncate"}`}
+        style={scrollStyle}
+      >
+        {name}
+      </h3>
+    </div>
+  );
+}
+
 function LegendDot({ label, color }: { label: string; color: string }) {
   return (
     <div className="flex items-center gap-1.5">
@@ -1448,29 +1214,31 @@ function KeyValue({ label, value, accent }: { label: string; value: string; acce
 
 function RoomTile({
   room,
-  priorityRank,
+  priorityNumber,
   highlight,
   onHover,
   onLeave,
 }: {
   room: DashboardRoomItem;
-  priorityRank?: number;
+  priorityNumber: number;
   highlight?: boolean;
   onHover: () => void;
   onLeave: () => void;
 }) {
-  const displayState = getOperationalRoomDisplayState(room);
+  const displayState = getRoomDisplayState(room);
   const statusClass = roomDisplayClasses[displayState];
 
   return (
     <div
-      className={`relative cursor-pointer rounded-xl border-2 p-2 text-center transition-all duration-200 ${statusClass} ${highlight ? "ring-2 ring-[#3a5f94] ring-offset-2" : ""}`}
+      className={`cursor-pointer rounded-xl border-2 p-2 text-center transition-all duration-200 ${statusClass} ${highlight ? "ring-2 ring-[#3a5f94] ring-offset-2" : ""}`}
       onMouseEnter={onHover}
       onMouseLeave={onLeave}
     >
-      <span className="absolute right-1.5 top-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-[#1A365D] px-1 text-[9px] font-black text-white">
-        {priorityRank ?? "-"}
-      </span>
+      <div className="mb-1 flex items-center justify-between">
+        <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-[#1A365D] px-1 text-[9px] font-black text-white">
+          {priorityNumber}
+        </span>
+      </div>
       <div className="flex h-full flex-col items-center justify-center">
         <span className="text-[10px] font-black uppercase leading-tight text-[#1A365D]">{room.name}</span>
         <span className="text-[8px] font-bold uppercase">{roomDisplayLabel[displayState]}</span>
