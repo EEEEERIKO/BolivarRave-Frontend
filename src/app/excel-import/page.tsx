@@ -1165,6 +1165,7 @@ export default function ExcelImportPage() {
   }, [fallbackDay]);
 
   const setConflictDecision = (classKeyValue: string, decision: ConflictDecision) => {
+    console.debug("[Excel Import] conflict decision changed", { classKeyValue, decision });
     setReviewClasses((current) =>
       current.map((item) => {
         if (item.key !== classKeyValue) return item;
@@ -1174,6 +1175,7 @@ export default function ExcelImportPage() {
   };
 
   const setDeletedClassDecision = (classKeyValue: string, decision: DeletedClassDecision) => {
+    console.debug("[Excel Import] deleted class decision changed", { classKeyValue, decision });
     setDeletedClassDecisions((current) => ({
       ...current,
       [classKeyValue]: decision,
@@ -1230,7 +1232,8 @@ export default function ExcelImportPage() {
         throw new Error("Debes adjuntar un archivo valido antes de confirmar.");
       }
 
-      const workingConflictClasses = workingReviewClasses.filter((item) => item.conflicts.length > 0);
+      const reviewClassesForValidation = workingReviewClasses.filter((item) => !unchangedClassKeys.has(item.key));
+      const workingConflictClasses = reviewClassesForValidation.filter((item) => item.conflicts.length > 0);
       const workingPending = workingConflictClasses.filter((item) => item.decision === "pending").length;
       const workingAccepted = workingConflictClasses.filter((item) => item.decision === "accept").length;
       const workingRejected = workingConflictClasses.filter((item) => item.decision === "reject").length;
@@ -1247,6 +1250,17 @@ export default function ExcelImportPage() {
         (item) => (deletedClassDecisions[item.key] ?? "pending") === "pending"
       ).length;
 
+      console.debug("[Excel Import] validation state", {
+        mode: manualMode ? "manual" : "file",
+        reviewClassesCount: workingReviewClasses.length,
+        reviewClassesForValidationCount: reviewClassesForValidation.length,
+        pendingConflictCount: workingPending,
+        acceptedConflictCount: workingAccepted,
+        rejectedConflictCount: workingRejected,
+        pendingDeletedCount: workingPendingDeleted,
+        deletedDecisionMap: deletedClassDecisions,
+      });
+
       if (workingPending > 0) {
         throw new Error("Debes revisar todos los conflictos antes de confirmar la importacion.");
       }
@@ -1255,8 +1269,8 @@ export default function ExcelImportPage() {
         throw new Error("Debes decidir qué hacer con todas las clases que no aparecen en el Excel (conservar o eliminar).");
       }
 
-      const rejectedClasses = workingReviewClasses.filter((item) => item.conflicts.length > 0 && item.decision === "reject");
-      const keptClasses = workingReviewClasses.filter(
+      const rejectedClasses = reviewClassesForValidation.filter((item) => item.conflicts.length > 0 && item.decision === "reject");
+      const keptClasses = reviewClassesForValidation.filter(
         (item) => item.conflicts.length === 0 || item.decision === "accept"
       );
 
@@ -1301,147 +1315,59 @@ export default function ExcelImportPage() {
         },
       });
 
-      const body = await new Promise<ImportResponse>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        let processingTicker: ReturnType<typeof setInterval> | null = null;
-        let processingStartedAt = 0;
+      if (!authSession?.accessToken) {
+        throw new Error("Sesión no válida. Inicia sesión nuevamente.");
+      }
 
-        if (!authSession?.accessToken) {
-          reject(new Error("Sesión no válida. Inicia sesión nuevamente."));
-          return;
-        }
+      console.groupCollapsed("[Excel Import] import request");
+      console.log("POST /api/schedules/import-parsed");
+      console.log("Auth present:", Boolean(authSession.accessToken));
+      console.log("Role:", authSession.role);
+      console.log("Payload rows:", finalRows.length);
+      console.log("Payload meta:", {
+        conflictsDetected: workingConflictClasses.length,
+        conflictsAccepted: workingAccepted,
+        conflictsRejected: workingRejected,
+        deletedPending: workingPendingDeleted,
+      });
+      console.groupEnd();
 
-        const stopTicker = () => {
-          if (processingTicker) {
-            clearInterval(processingTicker);
-            processingTicker = null;
-          }
-        };
+      setImportProgress({
+        active: true,
+        percent: 35,
+        stage: "Procesando servidor",
+        detail: "El horario está siendo actualizado. Puede tardar algunos segundos...",
+      });
 
-        xhr.open("POST", "/api/schedules/import-parsed", true);
-        xhr.setRequestHeader("Content-Type", "application/json");
-        xhr.setRequestHeader("Authorization", `Bearer ${authSession.accessToken}`);
+      const progressTimer = setInterval(() => {
+        setImportProgress((current) => {
+          if (current.percent >= 80) return current;
 
-        console.groupCollapsed("[Excel Import] XHR request");
-        console.log("POST /api/schedules/import-parsed");
-        console.log("Payload rows:", finalRows.length);
-        console.log("Payload meta:", {
-          conflictsDetected: workingConflictClasses.length,
-          conflictsAccepted: workingAccepted,
-          conflictsRejected: workingRejected,
-          deletedPending: workingPendingDeleted,
+          return {
+            ...current,
+            percent: current.percent + 5,
+            detail: "Validando clases y guardando cambios...",
+          };
         });
-        console.groupEnd();
+      }, 3000);
 
-        xhr.upload.onprogress = (event) => {
-          if (!event.lengthComputable) {
-            setImportProgress({
-              active: true,
-              percent: 45,
-              stage: "Enviando al servidor",
-              detail: `Registros por procesar: ~${totalRowsToSend}`,
-            });
-            return;
-          }
+      
+      //const body = await fetchApiJson<ImportResponse>("/api/schedules/import-parsed", {
+      const body = await fetchApiJson("http://localhost:4000/api/schedules/import-parsed",{
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authSession.accessToken}`,
+        },
+        body: requestBody,
+      });
 
-          const uploadRatio = event.total > 0 ? event.loaded / event.total : 0;
-          const percent = Math.min(80, 20 + Math.round(uploadRatio * 60));
-          const pending = Math.max(0, Math.ceil((1 - uploadRatio) * totalRowsToSend));
-
-          setImportProgress({
-            active: true,
-            percent,
-            stage: "Enviando al servidor",
-            detail: `Registros por enviar: ${pending}`,
-          });
-        };
-
-        xhr.upload.onload = () => {
-          processingStartedAt = Date.now();
-          setImportProgress({
-            active: true,
-            percent: 86,
-            stage: "Servidor recibio el archivo",
-            detail: "Procesando importacion en base de datos. Es normal que esta etapa tarde con archivos grandes.",
-          });
-
-          processingTicker = setInterval(() => {
-            setImportProgress((current) => {
-              if (!current.active) return current;
-              const elapsedSeconds = Math.floor((Date.now() - processingStartedAt) / 1000);
-              const next =
-                elapsedSeconds < 20
-                  ? Math.min(95, Math.max(current.percent, 86) + 1)
-                  : elapsedSeconds < 60
-                    ? Math.min(98, Math.max(current.percent, 95) + 1)
-                    : Math.min(99, Math.max(current.percent, 98) + 1);
-
-              const detail =
-                elapsedSeconds < 20
-                  ? "Insertando eventos y bloques en base de datos..."
-                  : elapsedSeconds < 60
-                    ? "Aplicando reemplazos y validaciones finales... Es normal que demore unos segundos."
-                    : `Finalizando confirmacion del servidor... (${elapsedSeconds}s). Es normal esta demora, por favor espera.`;
-
-              return {
-                active: true,
-                percent: next,
-                stage: "Aplicando cambios en base de datos",
-                detail,
-              };
-            });
-          }, 900);
-        };
-
-        xhr.onreadystatechange = () => {
-          if (xhr.readyState === 2 || xhr.readyState === 3) {
-            setImportProgress((current) => ({
-              active: true,
-              percent: Math.max(current.percent, 85),
-              stage: "Aplicando cambios en base de datos",
-              detail: "Guardando eventos y horarios. No cierres la pagina: el proceso sigue activo.",
-            }));
-          }
-        };
-
-        xhr.onerror = () => {
-          stopTicker();
-          reject(new Error("Error de red durante la importacion"));
-        };
-
-        xhr.onabort = () => {
-          stopTicker();
-          reject(new Error("La importacion fue cancelada"));
-        };
-
-        xhr.onload = () => {
-          stopTicker();
-          const text = xhr.responseText ?? "";
-
-          console.groupCollapsed("[Excel Import] XHR response");
-          console.log("Status:", xhr.status);
-          console.log("Response text:", text);
-          console.groupEnd();
-
-          if (xhr.status >= 200 && xhr.status < 300) {
-            try {
-              const parsed = JSON.parse(text) as ImportResponse;
-              resolve(parsed);
-            } catch {
-              reject(new Error("Respuesta invalida del servidor al importar"));
-            }
-            return;
-          }
-
-          try {
-            const parsed = JSON.parse(text) as { error?: string };
-            reject(new Error(parsed.error ?? `Error ${xhr.status} al importar`));
-          } catch {
-            reject(new Error(`Error ${xhr.status} al importar`));
-          }
-        };
-
-        xhr.send(requestBody);
+      setImportProgress({
+        active: true,
+        percent: 85,
+        stage: "Procesando importacion",
+        detail: "El servidor está aplicando los cambios en la base de datos.",
       });
 
       setImportResult(body.import);

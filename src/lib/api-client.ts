@@ -261,15 +261,23 @@ type FetchApiOptions = {
 };
 
 export async function fetchApiJsonWithOptions<T>(path: string, init?: RequestInit, options?: FetchApiOptions): Promise<T> {
-  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  //const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  const isAbsoluteUrl = path.startsWith("http");
+  const normalizedPath = isAbsoluteUrl
+    ? path
+    : path.startsWith("/")
+      ? path
+      : `/${path}`;
   const candidates = getCandidates();
   let lastError: Error | null = null;
   let lastUrl = "";
   const attemptDetails: string[] = [];
   let attempts = 0;
 
+  // for (const base of candidates) {
+  //   const url = `${base}${normalizedPath}`;
   for (const base of candidates) {
-    const url = `${base}${normalizedPath}`;
+    const url = isAbsoluteUrl ? normalizedPath : `${base}${normalizedPath}`;
     lastUrl = url;
     attempts += 1;
     let requestAccessToken: string | null = null;
