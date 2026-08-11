@@ -1352,8 +1352,7 @@ export default function ExcelImportPage() {
       }, 3000);
 
       
-      //const body = await fetchApiJson<ImportResponse>("/api/schedules/import-parsed", {
-      const body = await fetchApiJson("http://localhost:4000/api/schedules/import-parsed",{
+      const body = await fetchApiJson<ImportResponse>("/api/schedules/import-parsed", {
         method: "POST",
         credentials: "include",
         headers: {
