@@ -968,7 +968,7 @@ function StaffScheduleBoard({
       ...prev,
       {
         id: `jornada-${Date.now()}-${prev.length + 1}`,
-        diaSemana: "",
+        diaSemana: editorSelectedDay,
         horaEntrada: "07:00",
         horaSalida: "12:00",
         totalHorasDia: "5",
@@ -999,7 +999,7 @@ function StaffScheduleBoard({
       ...prev,
       {
         id: `pausa-${Date.now()}-${prev.length + 1}`,
-        diaSemana: "",
+        diaSemana: editorSelectedDay,
         tipoPausa: "",
         horaInicio: "12:00",
         horaFin: "13:00",
