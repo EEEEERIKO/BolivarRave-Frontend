@@ -8,6 +8,7 @@ import { useEffect, useMemo, useRef, useState, type SyntheticEvent } from "react
 import toast from "react-hot-toast";
 import { confirmToast } from "@/lib/toast-dialog";
 import { Minus, Plus, X } from "lucide-react";
+import * as XLSX from "xlsx";
 
 type StaffView = "directory" | "schedule";
 type StaffMobileDetailTab = "profile" | "tasks" | "daily" | "academic" | "activity";
@@ -605,6 +606,7 @@ function StaffScheduleBoard({
   const [editorPausaRows, setEditorPausaRows] = useState<EditablePausaItem[]>([]);
   const [isLoadingPausas, setIsLoadingPausas] = useState(false);
   const [isSavingJornada, setIsSavingJornada] = useState(false);
+  const [isDownloadingExcel, setIsDownloadingExcel] = useState(false);
   const [editorSelectedDay, setEditorSelectedDay] = useState<WorkWeekDay>("Lunes");
   const [selectedScheduleDay, setSelectedScheduleDay] = useState<WorkWeekDay>(() => getCurrentWorkWeekDay());
   const [nowTimestamp, setNowTimestamp] = useState(() => Date.now());
@@ -891,6 +893,187 @@ function StaffScheduleBoard({
       }
     } finally {
       setIsLoadingJornadas(false);
+    }
+  };
+
+  const downloadStaffScheduleExcel = () => {
+    if (isDownloadingExcel || staffList.length === 0) return;
+
+    try {
+      setIsDownloadingExcel(true);
+
+      const dayColumns = MASTER_WEEK_DAYS.map((day) => ({ day, key: normalizeDayName(day) }));
+      const orderedStaff = [...staffList].sort((left, right) => left.numeroStaff - right.numeroStaff);
+      const jornadasByStaff = new Map(
+        orderedStaff.map((staff) => [staff.id, jornadaByStaffId[staff.id] ?? []]),
+      );
+
+      const formatJornada = (row: StaffJornadaItem) =>
+        `${row.horaEntrada} - ${row.horaSalida} (${row.totalHorasDia.toFixed(1)} h)`;
+      const formatPausa = (row: StaffPausaItem) =>
+        `${row.horaInicio} - ${row.horaFin} (${calculateHoursDifference(row.horaInicio, row.horaFin).toFixed(1)} h)`;
+
+      const summaryRows = orderedStaff.map((staff) => {
+        const jornadas = jornadasByStaff.get(staff.id) ?? [];
+        const pausas = pausaByStaffId[staff.id] ?? [];
+        const dayValues = dayColumns.flatMap(({ key }) => {
+          const jornadaText = jornadas
+            .filter((row) => normalizeDayName(row.diaSemana) === key)
+            .sort((left, right) => timeToMinutes(left.horaEntrada) - timeToMinutes(right.horaEntrada))
+            .map(formatJornada)
+            .join("\n");
+          const pausaText = pausas
+            .filter((row) => normalizeDayName(row.diaSemana) === key)
+            .sort((left, right) => timeToMinutes(left.horaInicio) - timeToMinutes(right.horaInicio))
+            .map(formatPausa)
+            .join("\n");
+
+          return [jornadaText, pausaText];
+        });
+        const totalDescansoSemanal = pausas.reduce(
+          (total, row) => total + calculateHoursDifference(row.horaInicio, row.horaFin),
+          0,
+        );
+
+        return [
+          staff.numeroStaff,
+          `${staff.nombres} ${staff.apellidos}`.trim(),
+          staff.cedula,
+          ...dayValues,
+          jornadas.reduce((total, row) => total + row.totalHorasDia, 0),
+          totalDescansoSemanal,
+        ];
+      });
+
+      const summarySheet = XLSX.utils.aoa_to_sheet([
+        ["HORARIO SEMANAL DEL PERSONAL"],
+        [`Generado el ${new Date().toLocaleString("es-CO")}`],
+        [],
+        [
+          "N.º",
+          "Personal",
+          "Cédula",
+          ...dayColumns.flatMap(({ day }) => [`${day} - Jornada`, `${day} - Descanso`]),
+          "Total laboral semanal (h)",
+          "Descanso semanal (h)",
+        ],
+        ...summaryRows,
+      ]);
+
+      const detailRows = orderedStaff.flatMap((staff) => {
+        const jornadas = jornadasByStaff.get(staff.id) ?? [];
+        return jornadas
+          .slice()
+          .sort((left, right) => {
+            const dayDifference = (WORK_DAY_ORDER[left.diaSemana] ?? 99) - (WORK_DAY_ORDER[right.diaSemana] ?? 99);
+            return dayDifference || timeToMinutes(left.horaEntrada) - timeToMinutes(right.horaEntrada);
+          })
+          .map((row) => [
+            staff.numeroStaff,
+            `${staff.nombres} ${staff.apellidos}`.trim(),
+            staff.cedula,
+            row.diaSemana,
+            row.horaEntrada,
+            row.horaSalida,
+            row.totalHorasDia,
+          ]);
+      });
+
+      const detailSheet = XLSX.utils.aoa_to_sheet([
+        ["DETALLE DE JORNADAS"],
+        [],
+        ["N.º", "Personal", "Cédula", "Día", "Entrada", "Salida", "Horas"],
+        ...detailRows,
+      ]);
+
+      const pauseRows = orderedStaff.flatMap((staff) =>
+        (pausaByStaffId[staff.id] ?? [])
+          .slice()
+          .sort((left, right) => {
+            const dayDifference = (WORK_DAY_ORDER[left.diaSemana] ?? 99) - (WORK_DAY_ORDER[right.diaSemana] ?? 99);
+            return dayDifference || timeToMinutes(left.horaInicio) - timeToMinutes(right.horaInicio);
+          })
+          .map((row) => [
+            staff.numeroStaff,
+            `${staff.nombres} ${staff.apellidos}`.trim(),
+            row.diaSemana,
+            formatPausa(row),
+          ]),
+      );
+
+      const pauseSheet = XLSX.utils.aoa_to_sheet([
+        ["PAUSAS PROGRAMADAS"],
+        [],
+        ["N.º", "Personal", "Día", "Descanso"],
+        ...pauseRows,
+      ]);
+
+      const titleStyle = {
+        font: { bold: true, color: { rgb: "FFFFFF" }, sz: 14 },
+        fill: { fgColor: { rgb: "3A5F94" } },
+        alignment: { horizontal: "center", vertical: "center" },
+      };
+      const headerStyle = {
+        font: { bold: true, color: { rgb: "FFFFFF" } },
+        fill: { fgColor: { rgb: "566166" } },
+        alignment: { horizontal: "center", vertical: "center", wrapText: true },
+      };
+
+      const styleSheet = (
+        sheet: XLSX.WorkSheet,
+        titleRow: number,
+        headerRow: number,
+        columnWidths: number[],
+        lastRow: number,
+      ) => {
+        const lastColumn = columnWidths.length - 1;
+        const titleCell = sheet[XLSX.utils.encode_cell({ r: titleRow, c: 0 })];
+        if (titleCell) titleCell.s = titleStyle;
+
+        for (let column = 0; column <= lastColumn; column += 1) {
+          const headerCell = sheet[XLSX.utils.encode_cell({ r: headerRow, c: column })];
+          if (headerCell) headerCell.s = headerStyle;
+        }
+
+        for (let row = headerRow + 1; row <= lastRow; row += 1) {
+          for (let column = 0; column <= lastColumn; column += 1) {
+            const cell = sheet[XLSX.utils.encode_cell({ r: row, c: column })];
+            if (cell && typeof cell.v === "string" && cell.v.includes("\n")) {
+              cell.s = { alignment: { vertical: "top", wrapText: true } };
+            }
+          }
+        }
+
+        sheet["!cols"] = columnWidths.map((width) => ({ wch: width }));
+        sheet["!merges"] = [{ s: { r: titleRow, c: 0 }, e: { r: titleRow, c: lastColumn } }];
+        sheet["!autofilter"] = {
+          ref: `${XLSX.utils.encode_col(0)}${headerRow + 1}:${XLSX.utils.encode_col(lastColumn)}${lastRow + 1}`,
+        };
+        sheet["!freeze"] = { xSplit: 0, ySplit: headerRow + 1 };
+      };
+
+      const summaryColumnWidths = [
+        8,
+        28,
+        16,
+        ...dayColumns.flatMap(() => [20, 20]),
+        18,
+        18,
+      ];
+      styleSheet(summarySheet, 0, 3, summaryColumnWidths, summaryRows.length + 4);
+      styleSheet(detailSheet, 0, 2, [8, 28, 16, 14, 12, 12, 12], detailRows.length + 3);
+      styleSheet(pauseSheet, 0, 2, [8, 28, 14, 24], pauseRows.length + 3);
+
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, summarySheet, "Resumen semanal");
+      XLSX.utils.book_append_sheet(workbook, detailSheet, "Detalle jornadas");
+      XLSX.utils.book_append_sheet(workbook, pauseSheet, "Pausas");
+      XLSX.writeFile(workbook, `horario_personal_${new Date().toISOString().slice(0, 10)}.xlsx`);
+      toast.success("Horario descargado correctamente.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No se pudo generar el archivo Excel.");
+    } finally {
+      setIsDownloadingExcel(false);
     }
   };
 
@@ -1384,20 +1567,31 @@ function StaffScheduleBoard({
           <h2 className="text-xl font-bold tracking-tight text-[#2a3439] sm:text-2xl">Horario maestro semanal del personal</h2>
           <p className="mt-0.5 text-xs text-[#566166] sm:mt-1 sm:text-sm">Vista diaria • {selectedScheduleDay}</p>
         </div>
-        <div className="flex flex-wrap items-center gap-1.5 rounded-lg bg-[#f0f4f7] p-1">
-          {MASTER_WEEK_DAYS.map((day) => {
-            const isSelected = day === selectedScheduleDay;
-            return (
-              <button
-                className={`rounded-md px-2.5 py-1 text-[11px] font-bold transition sm:px-3 sm:py-1.5 sm:text-xs ${isSelected ? "bg-white text-[#3a5f94] shadow-sm" : "text-[#566166] hover:bg-white/70"}`}
-                key={day}
-                onClick={() => setSelectedScheduleDay(day)}
-                type="button"
-              >
-                {day}
-              </button>
-            );
-          })}
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <button
+            className="flex items-center gap-1.5 rounded-lg bg-[#3a5f94] px-3 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-[#2f507c] disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={isDownloadingExcel || isLoadingJornadas || staffList.length === 0}
+            onClick={downloadStaffScheduleExcel}
+            type="button"
+          >
+            <span className="material-symbols-outlined text-[17px]">download</span>
+            {isDownloadingExcel ? "Generando..." : "Descargar horario"}
+          </button>
+          <div className="flex flex-wrap items-center gap-1.5 rounded-lg bg-[#f0f4f7] p-1">
+            {MASTER_WEEK_DAYS.map((day) => {
+              const isSelected = day === selectedScheduleDay;
+              return (
+                <button
+                  className={`rounded-md px-2.5 py-1 text-[11px] font-bold transition sm:px-3 sm:py-1.5 sm:text-xs ${isSelected ? "bg-white text-[#3a5f94] shadow-sm" : "text-[#566166] hover:bg-white/70"}`}
+                  key={day}
+                  onClick={() => setSelectedScheduleDay(day)}
+                  type="button"
+                >
+                  {day}
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
 
