@@ -5,6 +5,7 @@ import toast from "react-hot-toast";
 import { fetchApiJson } from "@/lib/api-client";
 import { readAuthSession } from "@/lib/auth-session";
 import { confirmToast } from "@/lib/toast-dialog";
+import * as XLSX from "xlsx-js-style";
 
 type TaskType = "Recurrente" | "Esporadica";
 type AssignmentMode = "manual" | "automatica";
@@ -897,6 +898,7 @@ export default function TasksPage() {
   const [taskSpaces, setTaskSpaces] = useState<TaskSpaceItem[]>([]);
   const [loadingTaskLocations, setLoadingTaskLocations] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [isDownloadingTasksExcel, setIsDownloadingTasksExcel] = useState(false);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [notice, setNotice] = useState<NoticeState>(null);
   const [spaceName, setSpaceName] = useState("");
@@ -1398,6 +1400,210 @@ export default function TasksPage() {
 
     return uniqueIds.size;
   }, [filteredSchedulePreviewByShift]);
+
+  const downloadTasksScheduleExcel = () => {
+    if (isDownloadingTasksExcel || schedulePreviewByShift.length === 0) return;
+
+    try {
+      setIsDownloadingTasksExcel(true);
+
+      const workerMap = new Map<string, {
+        staff: StaffItem;
+        tasks: ScheduleTaskItem[];
+        jornadas: StaffJornadaItem[];
+        pausas: StaffPausaItem[];
+        shifts: Set<string>;
+      }>();
+
+      schedulePreviewByShift.forEach((shiftGroup) => {
+        shiftGroup.workers.forEach((worker) => {
+          const current = workerMap.get(worker.staff.id);
+          if (current) {
+            current.tasks.push(...worker.tasks);
+            current.jornadas.push(...worker.jornadas);
+            current.pausas.push(...worker.pausas);
+            current.shifts.add(worker.shiftLabel);
+            return;
+          }
+
+          workerMap.set(worker.staff.id, {
+            staff: worker.staff,
+            tasks: [...worker.tasks],
+            jornadas: [...worker.jornadas],
+            pausas: [...worker.pausas],
+            shifts: new Set([worker.shiftLabel]),
+          });
+        });
+      });
+
+      const workers = Array.from(workerMap.values())
+        .map((worker) => ({
+          ...worker,
+          tasks: Array.from(new Map(worker.tasks.map((task) => [task.id, task])).values()),
+          jornadas: Array.from(new Map(worker.jornadas.map((jornada) => [jornada.id, jornada])).values()),
+          pausas: Array.from(new Map(worker.pausas.map((pausa) => [pausa.id, pausa])).values()),
+        }))
+        .sort((left, right) => staffLabel(left.staff).localeCompare(staffLabel(right.staff), "es"));
+
+      const exportDayOrder = [1, 2, 3, 4, 5, 6, 0];
+      const exportDayLabels = exportDayOrder.map((dayIndex) => WEEK_DAY_SHORT_LABELS[dayIndex] ?? "");
+      const uniqueWorkers = workers.map((worker) => {
+        const range = getWorkerPreviewRangeWithPauses(worker.tasks, worker.jornadas, worker.pausas);
+        const gridSlots: number[] = [];
+
+        for (let slotStart = range.start; slotStart < range.end; slotStart += 30) {
+          const hasActivity = exportDayOrder.some((dayIndex) => {
+            const hasJornada = isSlotInsideJornada(dayIndex, slotStart, slotStart + 30, worker.jornadas);
+            const hasPause = worker.pausas.some((pause) => {
+              const pauseDay = getDayIndexFromLabel(pause.diaSemana);
+              const pauseStart = parseTimeToMinutes(pause.horaInicio);
+              const pauseEnd = parseTimeToMinutes(pause.horaFin);
+              return pauseDay === dayIndex && pauseStart !== null && pauseEnd !== null && slotStart < pauseEnd && slotStart + 30 > pauseStart;
+            });
+            const hasTask = worker.tasks.some((task) => {
+              if (!getTaskDayIndices(task).includes(dayIndex)) return false;
+              const taskStart = getTaskStartMinutes(task);
+              if (taskStart === null) return false;
+              const taskEnd = taskStart + Math.max(1, task.tiempoEstimadoMin);
+              return slotStart < taskEnd && slotStart + 30 > taskStart;
+            });
+
+            return hasJornada || hasPause || hasTask;
+          });
+
+          if (hasActivity) gridSlots.push(slotStart);
+        }
+
+        return { ...worker, gridSlots };
+      });
+
+      const titleStyle = {
+        font: { bold: true, color: { rgb: "FFFFFF" }, sz: 14 },
+        fill: { fgColor: { rgb: "3A5F94" } },
+        alignment: { horizontal: "center", vertical: "center" },
+      };
+      const headerStyle = {
+        font: { bold: true, color: { rgb: "FFFFFF" } },
+        fill: { fgColor: { rgb: "566166" } },
+        alignment: { horizontal: "center", vertical: "center", wrapText: true },
+      };
+
+      const workbook = XLSX.utils.book_new();
+      const usedSheetNames = new Set<string>();
+
+      uniqueWorkers.forEach((worker) => {
+        const gridRows: Array<Array<string>> = [];
+
+        for (const slotStart of worker.gridSlots) {
+          const row = [minutesToHHMM(slotStart)];
+
+          for (const dayIndex of exportDayOrder) {
+            const pause = worker.pausas.find((item) => {
+              const itemDay = getDayIndexFromLabel(item.diaSemana);
+              const pauseStart = parseTimeToMinutes(item.horaInicio);
+              const pauseEnd = parseTimeToMinutes(item.horaFin);
+              return itemDay === dayIndex && pauseStart !== null && pauseEnd !== null && slotStart < pauseEnd && slotStart + 30 > pauseStart;
+            });
+
+            if (pause) {
+              row.push("DESCANSO");
+              continue;
+            }
+
+            const insideWorkday = isSlotInsideJornada(dayIndex, slotStart, slotStart + 30, worker.jornadas);
+            if (!insideWorkday) {
+              row.push("FUERA DE TURNO");
+              continue;
+            }
+
+            const tasks = worker.tasks
+              .filter((task) => getTaskDayIndices(task).includes(dayIndex))
+              .filter((task) => {
+                const taskStart = getTaskStartMinutes(task);
+                if (taskStart === null) return false;
+                const taskEnd = taskStart + Math.max(1, task.tiempoEstimadoMin);
+                return slotStart < taskEnd && slotStart + 30 > taskStart;
+              })
+              .map((task) => task.nombre);
+
+            row.push(Array.from(new Set(tasks)).join(" / ") || "DISPONIBLE");
+          }
+
+          gridRows.push(row);
+        }
+
+        const sheet = XLSX.utils.aoa_to_sheet([
+          [`HORARIO DE TAREAS · ${staffLabel(worker.staff)}`],
+          [`Turno: ${Array.from(worker.shifts).sort().join(" / ") || "Sin turno"} · Generado el ${new Date().toLocaleString("es-CO")}`],
+          [],
+          ["Hora", ...exportDayLabels],
+          ...gridRows,
+        ]);
+
+        const lastColumn = exportDayLabels.length;
+        const headerRow = 3;
+        const headerCell = sheet[XLSX.utils.encode_cell({ r: headerRow, c: 0 })];
+        if (headerCell) headerCell.s = headerStyle;
+        for (let column = 1; column <= lastColumn; column += 1) {
+          const cell = sheet[XLSX.utils.encode_cell({ r: headerRow, c: column })];
+          if (cell) cell.s = headerStyle;
+        }
+        const titleCell = sheet["A1"];
+        if (titleCell) titleCell.s = titleStyle;
+        for (let rowIndex = headerRow + 1; rowIndex < gridRows.length + headerRow + 1; rowIndex += 1) {
+          for (let column = 1; column <= lastColumn; column += 1) {
+            const cell = sheet[XLSX.utils.encode_cell({ r: rowIndex, c: column })];
+            if (cell?.v === "DESCANSO") {
+              cell.s = {
+                fill: { fgColor: { rgb: "FFF2CC" } },
+                font: { bold: true, color: { rgb: "9C6500" } },
+                alignment: { horizontal: "center", vertical: "center", wrapText: true },
+              };
+            } else if (cell?.v === "FUERA DE TURNO") {
+              cell.s = {
+                fill: { fgColor: { rgb: "FCE4D6" } },
+                font: { bold: true, color: { rgb: "9C0006" }, underline: "single" },
+                alignment: { horizontal: "center", vertical: "center", wrapText: true },
+              };
+            } else if (cell?.v === "DISPONIBLE") {
+              cell.s = {
+                fill: { fgColor: { rgb: "E2F0D9" } },
+                font: { color: { rgb: "375623" } },
+                alignment: { horizontal: "center", vertical: "center", wrapText: true },
+              };
+            } else if (cell?.v) {
+              cell.s = {
+                fill: { fgColor: { rgb: "EAF2FF" } },
+                alignment: { horizontal: "center", vertical: "center", wrapText: true },
+              };
+            }
+          }
+        }
+        sheet["!cols"] = [{ wch: 12 }, ...exportDayLabels.map(() => ({ wch: 24 }))];
+        sheet["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: lastColumn } }];
+        sheet["!freeze"] = { xSplit: 1, ySplit: headerRow + 1 };
+        sheet["!autofilter"] = { ref: `A${headerRow + 1}:${XLSX.utils.encode_col(lastColumn)}${gridRows.length + headerRow + 1}` };
+
+        const rawName = staffLabel(worker.staff).replace(/[\\/*?:[\]]/g, " ").trim() || "Staff";
+        let sheetName = rawName.slice(0, 31);
+        let suffix = 2;
+        while (usedSheetNames.has(sheetName)) {
+          const suffixText = ` ${suffix}`;
+          sheetName = `${rawName.slice(0, 31 - suffixText.length)}${suffixText}`;
+          suffix += 1;
+        }
+        usedSheetNames.add(sheetName);
+        XLSX.utils.book_append_sheet(workbook, sheet, sheetName);
+      });
+
+      XLSX.writeFile(workbook, `horario_tareas_${new Date().toISOString().slice(0, 10)}.xlsx`);
+      toast.success("Horario de tareas descargado correctamente.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No se pudo generar el Excel de tareas.");
+    } finally {
+      setIsDownloadingTasksExcel(false);
+    }
+  };
 
   useEffect(() => {
     if (isLimitedTaskAccess && tasksSubtab !== "horario") {
@@ -3354,6 +3560,15 @@ export default function TasksPage() {
               ) : null}
             </div>
             <div className="flex w-full flex-col gap-2 sm:w-auto sm:items-end">
+              <button
+                type="button"
+                onClick={downloadTasksScheduleExcel}
+                disabled={isDownloadingTasksExcel || refreshing || loadingTaskLocations}
+                className="inline-flex items-center justify-center gap-2 rounded-md bg-[#3a5f94] px-4 py-2 text-[11px] font-bold tracking-[0.16em] text-white uppercase transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <span className="material-symbols-outlined text-[17px]">download</span>
+                {isDownloadingTasksExcel ? "Generando..." : "Descargar Excel"}
+              </button>
               <label className="w-full sm:w-72">
                 <span className="sr-only">Buscar trabajador</span>
                 <input
