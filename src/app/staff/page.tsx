@@ -46,6 +46,14 @@ type StaffBalanceMovementApi = {
   createdAt: string;
 };
 
+type StaffRecentActivityApi = {
+  id: string;
+  tipo: "entrada" | "salida" | "limpieza";
+  titulo: string;
+  detalle: string;
+  fecha: string;
+};
+
 type StaffApi = {
   id: string;
   numeroStaff: number;
@@ -210,6 +218,20 @@ function getTodayIsoDateLocal(): string {
   const month = String(now.getMonth() + 1).padStart(2, "0");
   const day = String(now.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function formatRecentActivityDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+
+  return date.toLocaleString("es-CO", {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: "America/Bogota",
+  }).toUpperCase();
 }
 
 function getCurrentTaskDayIndex(): number {
@@ -2150,6 +2172,8 @@ export default function StaffPage() {
   const [isLoadingAssignedTasksToday, setIsLoadingAssignedTasksToday] = useState(false);
   const [balanceMovements, setBalanceMovements] = useState<StaffBalanceMovementApi[]>([]);
   const [isLoadingBalanceMovements, setIsLoadingBalanceMovements] = useState(false);
+  const [recentActivities, setRecentActivities] = useState<StaffRecentActivityApi[]>([]);
+  const [isLoadingRecentActivities, setIsLoadingRecentActivities] = useState(false);
   const [isSavingBalanceMovement, setIsSavingBalanceMovement] = useState(false);
   const [balanceAdjustmentHours, setBalanceAdjustmentHours] = useState("");
   const [balanceAdjustmentMinutes, setBalanceAdjustmentMinutes] = useState("");
@@ -2246,6 +2270,37 @@ export default function StaffPage() {
     }
 
     void loadBalanceMovements(selectedStaff.id);
+  }, [selectedStaff?.id]);
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    const loadRecentActivities = async () => {
+      if (!selectedStaff?.id) {
+        setRecentActivities([]);
+        return;
+      }
+
+      setIsLoadingRecentActivities(true);
+      try {
+        const response = await fetchApiJson<{ actividades?: StaffRecentActivityApi[] }>(
+          `/api/staff/${selectedStaff.id}/actividades-recientes`,
+          { cache: "no-store" },
+        );
+        if (!isCancelled) {
+          setRecentActivities(Array.isArray(response.actividades) ? response.actividades.slice(0, 5) : []);
+        }
+      } catch {
+        if (!isCancelled) setRecentActivities([]);
+      } finally {
+        if (!isCancelled) setIsLoadingRecentActivities(false);
+      }
+    };
+
+    void loadRecentActivities();
+    return () => {
+      isCancelled = true;
+    };
   }, [selectedStaff?.id]);
 
   useEffect(() => {
@@ -2930,6 +2985,30 @@ export default function StaffPage() {
   }, [academicBlockedSlotDetails]);
 
   const totalAcademicBlockedHoursLabel = `${(totalAcademicBlockedMinutes / 60).toFixed(1)}h`;
+
+  const renderRecentActivities = () => (
+    <div className="relative space-y-4 pl-6 pr-1 before:absolute before:top-2 before:bottom-2 before:left-[7px] before:w-[2px] before:bg-[#cfdce3] before:content-['']">
+      {isLoadingRecentActivities ? (
+        <p className="text-xs text-[#566166]">Cargando actividades...</p>
+      ) : recentActivities.length === 0 ? (
+        <p className="text-xs text-[#566166]">No hay actividades recientes registradas.</p>
+      ) : (
+        recentActivities.slice(0, 5).map((activity) => {
+          const color = activity.tipo === "entrada" ? "bg-blue-500" : activity.tipo === "salida" ? "bg-slate-500" : "bg-green-500";
+          const titleColor = activity.tipo === "entrada" ? "text-[#2d5387]" : activity.tipo === "salida" ? "text-[#566166]" : "text-[#2a3439]";
+
+          return (
+            <div className="relative" key={activity.id}>
+              <span className={`absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white ${color}`} />
+              <p className="text-[10px] font-bold uppercase text-slate-400">{formatRecentActivityDate(activity.fecha)}</p>
+              <p className={`text-sm font-bold ${titleColor}`}>{activity.titulo}</p>
+              <p className="text-xs text-[#566166]">{activity.detalle}</p>
+            </div>
+          );
+        })
+      )}
+    </div>
+  );
 
   async function refreshNextStaffNumber() {
     try {
@@ -4513,26 +4592,7 @@ export default function StaffPage() {
                 <span className="h-1.5 w-1.5 rounded-full bg-[#3a5f94]" />
                 Actividades recientes e informes
               </h4>
-              <div className="relative space-y-6 pl-6 pr-1 before:absolute before:top-2 before:bottom-2 before:left-[7px] before:w-[2px] before:bg-[#cfdce3] before:content-['']">
-                <div className="relative">
-                  <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-green-500" />
-                  <p className="text-[10px] font-bold text-slate-400">HOY, 10:45</p>
-                  <p className="text-sm font-bold text-[#2a3439]">Salón 302 limpiado</p>
-                  <p className="text-xs text-[#566166]">Actividad: registro de mantenimiento</p>
-                </div>
-                <div className="relative">
-                  <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-[#9f403d]" />
-                  <p className="text-[10px] font-bold text-slate-400">AYER, 14:15</p>
-                  <p className="text-sm font-bold text-[#9f403d]">Informe de llegada tardía</p>
-                  <p className="text-xs text-[#566166]">Infracción: 15 min de retraso sin aviso.</p>
-                </div>
-                <div className="relative">
-                  <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-green-500" />
-                  <p className="text-[10px] font-bold text-slate-400">24 OCT, 09:00</p>
-                  <p className="text-sm font-bold text-[#2a3439]">Inventario verificado</p>
-                  <p className="text-xs text-[#566166]">Actividad: auditoría de equipos</p>
-                </div>
-              </div>
+              {renderRecentActivities()}
             </section>
           </div>
           </>
@@ -4644,26 +4704,7 @@ export default function StaffPage() {
                     <span className="h-1.5 w-1.5 rounded-full bg-[#3a5f94]" />
                     Actividades recientes e informes
                   </h4>
-                  <div className="relative space-y-6 pl-6 pr-1 before:absolute before:top-2 before:bottom-2 before:left-[7px] before:w-[2px] before:bg-[#cfdce3] before:content-['']">
-                    <div className="relative">
-                      <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-green-500" />
-                      <p className="text-[10px] font-bold text-slate-400">HOY, 10:45</p>
-                      <p className="text-sm font-bold text-[#2a3439]">Salón 302 limpiado</p>
-                      <p className="text-xs text-[#566166]">Actividad: registro de mantenimiento</p>
-                    </div>
-                    <div className="relative">
-                      <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-[#9f403d]" />
-                      <p className="text-[10px] font-bold text-slate-400">AYER, 14:15</p>
-                      <p className="text-sm font-bold text-[#9f403d]">Informe de llegada tardía</p>
-                      <p className="text-xs text-[#566166]">Infracción: 15 min de retraso sin aviso.</p>
-                    </div>
-                    <div className="relative">
-                      <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-green-500" />
-                      <p className="text-[10px] font-bold text-slate-400">24 OCT, 09:00</p>
-                      <p className="text-sm font-bold text-[#2a3439]">Inventario verificado</p>
-                      <p className="text-xs text-[#566166]">Actividad: auditoría de equipos</p>
-                    </div>
-                  </div>
+                  {renderRecentActivities()}
                 </section>
               </div>
             </div>
@@ -5149,26 +5190,7 @@ export default function StaffPage() {
                           <span className="h-1.5 w-1.5 rounded-full bg-[#3a5f94]" />
                           Actividades recientes e informes
                         </h4>
-                        <div className="relative space-y-6 pl-6 before:absolute before:top-2 before:bottom-2 before:left-[7px] before:w-[2px] before:bg-[#cfdce3] before:content-['']">
-                          <div className="relative">
-                            <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-green-500" />
-                            <p className="text-[10px] font-bold text-slate-400">HOY, 10:45</p>
-                            <p className="text-sm font-bold text-[#2a3439]">Salón 302 limpiado</p>
-                            <p className="text-xs text-[#566166]">Actividad: registro de mantenimiento</p>
-                          </div>
-                          <div className="relative">
-                            <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-[#9f403d]" />
-                            <p className="text-[10px] font-bold text-slate-400">AYER, 14:15</p>
-                            <p className="text-sm font-bold text-[#9f403d]">Informe de llegada tardía</p>
-                            <p className="text-xs text-[#566166]">Infracción: 15 min de retraso sin aviso.</p>
-                          </div>
-                          <div className="relative">
-                            <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-green-500" />
-                            <p className="text-[10px] font-bold text-slate-400">24 OCT, 09:00</p>
-                            <p className="text-sm font-bold text-[#2a3439]">Inventario verificado</p>
-                            <p className="text-xs text-[#566166]">Actividad: auditoría de equipos</p>
-                          </div>
-                        </div>
+                        {renderRecentActivities()}
                       </section>
                     ) : null}
 

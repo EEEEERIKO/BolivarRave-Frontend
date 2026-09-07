@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { fetchApiJson } from "@/lib/api-client";
 import { readAuthSession, type AuthSession } from "@/lib/auth-session";
+import * as XLSX from "xlsx-js-style";
 
 type StaffState = "Active" | "Inactive";
 type StaffLiveStatus = "Activo" | "Descanso" | "Inactivo";
@@ -122,6 +123,7 @@ type AttendanceDashboard = {
   usuariosActivosAhora: Array<{
     id: string;
     staffId: string;
+    cedula: string;
     nombreCompleto: string;
     rol: string;
     horaEntrada: string;
@@ -131,6 +133,7 @@ type AttendanceDashboard = {
   usuariosRegistradosAhora: Array<{
     id: string;
     staffId: string;
+    cedula: string;
     nombreCompleto: string;
     rol: string;
     horaEntrada: string;
@@ -140,6 +143,7 @@ type AttendanceDashboard = {
   usuariosNoRegistradosAhora: Array<{
     id: string;
     staffId: string;
+    cedula: string;
     nombreCompleto: string;
     rol: string;
     horaEntrada: string;
@@ -154,6 +158,23 @@ type AttendanceDashboard = {
 
 type DashboardResponse = {
   dashboard?: AttendanceDashboard;
+};
+
+type AttendanceReportRow = {
+  staffId: string;
+  nombreCompleto: string;
+  cedula: string;
+  rol: string;
+  fecha: string;
+  diaSemana: string;
+  horaEntradaProgramada: string;
+  horaSalidaProgramada: string;
+  minutosJornada: number;
+  horaEntrada: string | null;
+  horaSalida: string | null;
+  minutosTarde: number;
+  minutosSalidaAnticipada: number;
+  minutosBalance: number;
 };
 
 type AttendanceAutoAction = "entrada" | "salida";
@@ -188,6 +209,100 @@ const formatTimeOfDay = (value: string) => {
 };
 
 const formatShiftRange = (start: string, end: string) => `${start} - ${end}`;
+
+const formatMinutes = (minutes: number) => {
+  const absolute = Math.abs(Math.round(minutes));
+  const hours = Math.floor(absolute / 60);
+  const rest = absolute % 60;
+  if (!hours) return `${rest} min`;
+  return `${hours} h ${String(rest).padStart(2, "0")} min`;
+};
+
+const monthSheetName = (dateKey: string) => {
+  const [year, month] = dateKey.split("-");
+  return `${year}-${month}`;
+};
+
+const downloadAttendanceExcel = (rows: AttendanceReportRow[], fromDate: string, toDate: string) => {
+  const workbook = XLSX.utils.book_new();
+  const grouped = rows.reduce<Record<string, AttendanceReportRow[]>>((accumulator, row) => {
+    const key = monthSheetName(row.fecha);
+    (accumulator[key] ??= []).push(row);
+    return accumulator;
+  }, {});
+
+  const monthKeys = Object.keys(grouped).sort();
+  for (const monthKey of monthKeys) {
+    const monthRows = grouped[monthKey] ?? [];
+    const data: (string | number)[][] = [
+      [`REGISTROS DE ASISTENCIA · ${monthKey}`, "", "", "", "", "", "", "", "", "", "", ""],
+      [`Periodo: ${fromDate} al ${toDate}`, "", "", "", "", "", "", "", "", "", "", ""],
+      [
+        "Fecha", "Día", "Trabajador", "Cédula", "Rol", "Jornada programada",
+        "Entrada registrada", "Estado entrada", "Tardanza", "Salida programada",
+        "Salida registrada", "Estado salida", "Horas faltantes",
+      ],
+    ];
+
+    for (const row of monthRows) {
+      const noRegistro = !row.horaEntrada;
+      const isFuture = row.fecha > new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
+      const statusEntry = noRegistro ? (isFuture ? "PENDIENTE" : "NO REGISTRÓ") : row.minutosTarde > 0 ? "TARDE" : "A TIEMPO";
+      const statusExit = noRegistro ? (isFuture ? "PENDIENTE" : "NO REGISTRÓ") : !row.horaSalida ? "SALIDA PENDIENTE" : row.minutosSalidaAnticipada > 0 ? "SALIDA ANTICIPADA" : "COMPLETA";
+      data.push([
+        row.fecha,
+        row.diaSemana,
+        row.nombreCompleto,
+        row.cedula,
+        row.rol,
+        formatShiftRange(row.horaEntradaProgramada, row.horaSalidaProgramada),
+        row.horaEntrada ?? "—",
+        statusEntry,
+        row.minutosTarde > 0 ? formatMinutes(row.minutosTarde) : "—",
+        row.horaSalidaProgramada,
+        row.horaSalida ?? "—",
+        statusExit,
+        noRegistro && !isFuture ? `-${formatMinutes(row.minutosJornada)}` : row.minutosSalidaAnticipada > 0 ? `-${formatMinutes(row.minutosSalidaAnticipada)}` : "—",
+      ]);
+    }
+
+    const sheet = XLSX.utils.aoa_to_sheet(data);
+    sheet["!merges"] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 12 } },
+      { s: { r: 1, c: 0 }, e: { r: 1, c: 12 } },
+    ];
+    sheet["!cols"] = [
+      { wch: 12 }, { wch: 13 }, { wch: 28 }, { wch: 16 }, { wch: 16 }, { wch: 22 },
+      { wch: 18 }, { wch: 19 }, { wch: 14 }, { wch: 18 }, { wch: 18 }, { wch: 21 }, { wch: 16 },
+    ];
+    const range = XLSX.utils.decode_range(sheet["!ref"] ?? "A1:M1");
+    for (let column = range.s.c; column <= range.e.c; column += 1) {
+      const title = sheet[XLSX.utils.encode_cell({ r: 0, c: column })];
+      const header = sheet[XLSX.utils.encode_cell({ r: 2, c: column })];
+      if (title) title.s = { fill: { fgColor: { rgb: "1F4E78" } }, font: { color: { rgb: "FFFFFF" }, bold: true, sz: 14 }, alignment: { horizontal: "center" } };
+      if (header) header.s = { fill: { fgColor: { rgb: "D9EAF7" } }, font: { bold: true, color: { rgb: "17365D" } }, alignment: { horizontal: "center", wrapText: true }, border: { bottom: { style: "thin", color: { rgb: "7F9DB9" } } } };
+    }
+    for (let rowIndex = 3; rowIndex <= range.e.r; rowIndex += 1) {
+      const row = monthRows[rowIndex - 3];
+      if (!row) continue;
+      const noRegistro = !row.horaEntrada;
+      const fill = noRegistro ? "FCE4D6" : row.minutosTarde > 10 ? "F4CCCC" : row.minutosTarde > 0 ? "FCE5CD" : row.minutosSalidaAnticipada > 0 ? "FFF2CC" : rowIndex % 2 ? "FFFFFF" : "F7FBFE";
+      for (let column = 0; column <= 12; column += 1) {
+        const cell = sheet[XLSX.utils.encode_cell({ r: rowIndex, c: column })];
+        if (cell) cell.s = { fill: { fgColor: { rgb: fill } }, alignment: { vertical: "center", wrapText: true }, border: { bottom: { style: "hair", color: { rgb: "D9E2F3" } } } };
+      }
+      const statusCell = sheet[XLSX.utils.encode_cell({ r: rowIndex, c: 7 })];
+      if (statusCell) statusCell.s = { fill: { fgColor: { rgb: row.minutosTarde > 10 ? "F4CCCC" : row.minutosTarde > 0 ? "FCE5CD" : noRegistro ? "F4B183" : "E2F0D9" } }, font: { bold: true, color: { rgb: "7F2704" } }, alignment: { horizontal: "center" } };
+    }
+    XLSX.utils.book_append_sheet(workbook, sheet, monthKey.slice(0, 31));
+  }
+
+  if (!monthKeys.length) {
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([["No hay jornadas asignadas en el periodo seleccionado."]]), "Sin registros");
+  }
+
+  XLSX.writeFile(workbook, `registros_asistencia_${fromDate}_${toDate}.xlsx`);
+};
 
 function normalizeDayName(dayName: string): string {
   return dayName
@@ -267,13 +382,13 @@ export default function RegistroPage() {
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState<AttendanceAutoAction | null>(null);
   const [isLoadingDashboard, setIsLoadingDashboard] = useState(false);
-  const [staffList, setStaffList] = useState<StaffApi[]>([]);
-  const [liveJornadaByStaffId, setLiveJornadaByStaffId] = useState<Record<string, StaffJornadaItem[]>>({});
-  const [livePausaByStaffId, setLivePausaByStaffId] = useState<Record<string, StaffPausaItem[]>>({});
-  const [isLoadingLiveSchedules, setIsLoadingLiveSchedules] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [nowLabel, setNowLabel] = useState("");
+  const [isReportOpen, setIsReportOpen] = useState(false);
+  const [reportFrom, setReportFrom] = useState(() => new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" }));
+  const [reportTo, setReportTo] = useState(() => new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" }));
+  const [isDownloadingReport, setIsDownloadingReport] = useState(false);
 
   useEffect(() => {
     const currentSession = readAuthSession();
@@ -293,46 +408,15 @@ export default function RegistroPage() {
     }
   };
 
-  const loadStaffNow = async () => {
-    setIsLoadingLiveSchedules(true);
-
-    try {
-      const [staffResponse, jornadasResponse, pausasResponse] = await Promise.all([
-        fetchApiJson<{ staff?: StaffApi[] }>("/api/staff", { cache: "no-store" }).catch(() => ({ staff: [] })),
-        fetchApiJson<StaffJornadasBulkResponse>("/api/staff/jornadas-bulk", { cache: "no-store" }).catch(() => ({ jornadas: {} })),
-        fetchApiJson<StaffPausasBulkResponse>("/api/staff/pausas-bulk", { cache: "no-store" }).catch(() => ({ pausas: {} })),
-      ]);
-
-      const nextStaff = Array.isArray(staffResponse.staff) ? staffResponse.staff : [];
-      const jornadasByStaffId = (jornadasResponse.jornadas ?? {}) as Record<string, StaffJornadaItem[]>;
-      const pausasByStaffId = (pausasResponse.pausas ?? {}) as Record<string, StaffPausaItem[]>;
-      const jornadasMap: Record<string, StaffJornadaItem[]> = {};
-      const pausasMap: Record<string, StaffPausaItem[]> = {};
-
-      for (const staff of nextStaff) {
-        jornadasMap[staff.id] = jornadasByStaffId[staff.id] ?? [];
-        pausasMap[staff.id] = pausasByStaffId[staff.id] ?? [];
-      }
-
-      setStaffList(nextStaff);
-      setLiveJornadaByStaffId(jornadasMap);
-      setLivePausaByStaffId(pausasMap);
-    } finally {
-      setIsLoadingLiveSchedules(false);
-    }
-  };
-
   useEffect(() => {
     if (!sessionReady || (session?.role !== "admin" && session?.role !== "registro")) {
       return;
     }
 
     void loadDashboard();
-    void loadStaffNow();
     const timer = window.setInterval(() => {
       void loadDashboard();
-      void loadStaffNow();
-    }, 30000);
+    }, 60000);
 
     return () => window.clearInterval(timer);
   }, [session, sessionReady]);
@@ -426,7 +510,9 @@ export default function RegistroPage() {
         await loadPreview(cedula);
       }
 
-      await loadDashboard();
+      // El endpoint de registro ya devuelve el preview actualizado. El dashboard
+      // se refresca en segundo plano para no retrasar la confirmación visual.
+      void loadDashboard();
 
       const combinedMessage = [response.mensaje, response.alerta].filter(Boolean).join(" · ");
       setMessage(combinedMessage || "Operación completada correctamente.");
@@ -438,38 +524,63 @@ export default function RegistroPage() {
     }
   };
 
+  const handleDownloadReport = async () => {
+    if (!reportFrom || !reportTo || reportFrom > reportTo) {
+      setError("Selecciona un rango de fechas válido para descargar los registros.");
+      return;
+    }
+
+    setIsDownloadingReport(true);
+    setError(null);
+    try {
+      const response = await fetchApiJson<{ registros?: AttendanceReportRow[] }>(
+        `/api/registro/report?desde=${encodeURIComponent(reportFrom)}&hasta=${encodeURIComponent(reportTo)}`,
+        { cache: "no-store" },
+      );
+      downloadAttendanceExcel(response.registros ?? [], reportFrom, reportTo);
+      setIsReportOpen(false);
+    } catch (downloadError) {
+      setError(downloadError instanceof Error ? downloadError.message : "No se pudo descargar el reporte.");
+    } finally {
+      setIsDownloadingReport(false);
+    }
+  };
+
   const handleSearch = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const consultedPreview = await loadPreview(cedula);
-
-    if (!consultedPreview) {
+    const cleanCedula = cedula.trim();
+    if (!cleanCedula) {
+      setError("Ingresa una cédula para continuar.");
       return;
     }
 
-    const autoAction = getAutoActionFromPreview(consultedPreview);
-    if (!autoAction) {
-      setMessage(consultedPreview.mensaje);
-      return;
+    setIsLoadingPreview(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const response = await fetchApiJson<AttendanceActionResponse>("/api/registro/auto", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cedula: cleanCedula }),
+      });
+      setPreview(response.preview ?? null);
+      const combinedMessage = [response.mensaje, response.alerta].filter(Boolean).join(" · ");
+      setMessage(combinedMessage || response.preview?.mensaje || null);
+      void loadDashboard();
+    } catch (submitError) {
+      const text = submitError instanceof Error ? submitError.message : "No se pudo procesar el registro.";
+      setPreview(null);
+      setError(text);
+    } finally {
+      setIsLoadingPreview(false);
     }
-
-    await handleAction(autoAction);
   };
 
   const canRender = sessionReady && (session?.role === "admin" || session?.role === "registro");
   const currentAutoAction = preview ? getAutoActionFromPreview(preview) : null;
-  const currentLiveStatusByStaffId = staffList.reduce<Record<string, StaffLiveStatus>>((accumulator, staff) => {
-    if (staff.estado !== "Active") {
-      return accumulator;
-    }
-
-    accumulator[staff.id] = getLiveStatusFromSchedules(liveJornadaByStaffId[staff.id] ?? [], livePausaByStaffId[staff.id] ?? []);
-    return accumulator;
-  }, {});
-
-  const staffActivosAhora = staffList.filter((staff) => currentLiveStatusByStaffId[staff.id] === "Activo");
-  const registroIdsHoy = new Set((dashboard?.usuariosActivos ?? []).map((item) => item.staffId));
-  const staffRegistradosAhora = staffActivosAhora.filter((staff) => registroIdsHoy.has(staff.id));
-  const staffNoRegistradosAhora = staffActivosAhora.filter((staff) => !registroIdsHoy.has(staff.id));
+  const staffActivosAhora = dashboard?.usuariosActivosAhora ?? [];
+  const staffRegistradosAhora = dashboard?.usuariosRegistradosAhora ?? [];
+  const staffNoRegistradosAhora = dashboard?.usuariosNoRegistradosAhora ?? [];
 
   if (!sessionReady) {
     return (
@@ -573,8 +684,19 @@ export default function RegistroPage() {
 
             <div className="bg-white rounded-3xl p-8 shadow-sm border border-slate-100">
               <div className="flex items-center justify-between mb-8">
-                <h3 className="text-xl font-bold text-[#2a3439]">Movimientos Recientes</h3>
-                <button className="text-[#3a5f94] text-sm font-semibold hover:underline" type="button">Ver Historial Completo</button>
+                <div>
+                  <h3 className="text-xl font-bold text-[#2a3439]">Movimientos de hoy</h3>
+                  <p className="mt-1 text-xs text-[#566166]">Solo se cargan los registros del día actual.</p>
+                </div>
+                <button
+                  className="inline-flex items-center gap-2 rounded-xl bg-[#3a5f94] px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-[#2d5387] disabled:opacity-60"
+                  type="button"
+                  onClick={() => setIsReportOpen(true)}
+                  disabled={isDownloadingReport}
+                >
+                  <span className="material-symbols-outlined text-lg">download</span>
+                  Descargar registros
+                </button>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left">
@@ -593,7 +715,7 @@ export default function RegistroPage() {
                         <td colSpan={5} className="py-6 text-center text-sm text-[#566166]">Cargando movimientos...</td>
                       </tr>
                     ) : dashboard && dashboard.movimientosRecientes.length > 0 ? (
-                      dashboard.movimientosRecientes.slice(0, 12).map((movement) => (
+                      dashboard.movimientosRecientes.map((movement) => (
                         <tr key={movement.id} className="hover:bg-[#f7f9fb] transition-colors border-t border-[#f0f4f7]">
                           <td className="py-5 font-medium">{formatShortDate(movement.fecha)}</td>
                           <td className="py-5">{movement.actividad}</td>
@@ -613,6 +735,42 @@ export default function RegistroPage() {
                 </table>
               </div>
             </div>
+
+            {isReportOpen ? (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 px-4" role="dialog" aria-modal="true" aria-labelledby="attendance-report-title">
+                <div className="w-full max-w-lg rounded-3xl bg-white p-7 shadow-2xl">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <h3 id="attendance-report-title" className="text-xl font-extrabold text-[#2a3439]">Descargar registros</h3>
+                      <p className="mt-1 text-sm text-[#566166]">Se creará una hoja por cada mes incluido en el periodo.</p>
+                    </div>
+                    <button type="button" className="rounded-full p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700" onClick={() => setIsReportOpen(false)} aria-label="Cerrar">
+                      <span className="material-symbols-outlined">close</span>
+                    </button>
+                  </div>
+                  <div className="mt-7 grid gap-4 sm:grid-cols-2">
+                    <label className="text-sm font-bold text-[#2a3439]">
+                      Fecha inicial
+                      <input className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-3 font-medium outline-none focus:border-[#3a5f94] focus:ring-2 focus:ring-[#3a5f94]/15" type="date" value={reportFrom} onChange={(event) => setReportFrom(event.target.value)} />
+                    </label>
+                    <label className="text-sm font-bold text-[#2a3439]">
+                      Fecha final
+                      <input className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-3 font-medium outline-none focus:border-[#3a5f94] focus:ring-2 focus:ring-[#3a5f94]/15" type="date" value={reportTo} onChange={(event) => setReportTo(event.target.value)} />
+                    </label>
+                  </div>
+                  <div className="mt-6 rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-xs leading-relaxed text-blue-800">
+                    El archivo mostrará la jornada programada junto a la entrada y salida reales. Las tardanzas, salidas anticipadas y días sin registro quedarán destacados con colores.
+                  </div>
+                  <div className="mt-7 flex justify-end gap-3">
+                    <button type="button" className="rounded-xl px-4 py-3 text-sm font-bold text-slate-600 hover:bg-slate-100" onClick={() => setIsReportOpen(false)}>Cancelar</button>
+                    <button type="button" className="inline-flex items-center gap-2 rounded-xl bg-[#3a5f94] px-5 py-3 text-sm font-bold text-white hover:bg-[#2d5387] disabled:opacity-60" onClick={() => void handleDownloadReport()} disabled={isDownloadingReport}>
+                      <span className="material-symbols-outlined text-lg">download</span>
+                      {isDownloadingReport ? "Preparando..." : "Descargar Excel"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
           </div>
 
           <div className="col-span-12 lg:col-span-4 flex flex-col gap-8">
@@ -628,7 +786,7 @@ export default function RegistroPage() {
               <div className="flex flex-col gap-5">
                 
 
-                {isLoadingDashboard || isLoadingLiveSchedules ? (
+                {isLoadingDashboard && !dashboard ? (
                   <p className="text-sm text-[#566166]">Cargando trabajadores de la hora actual...</p>
                 ) : staffActivosAhora.length > 0 ? (
                   <div className="space-y-3">
@@ -639,12 +797,12 @@ export default function RegistroPage() {
                           <div key={worker.id} className="flex items-center justify-between gap-3">
                             <div className="flex min-w-0 items-center gap-3">
                               <img
-                                alt={`${worker.nombres} ${worker.apellidos}`}
+                                alt={worker.nombreCompleto}
                                 className="h-11 w-11 shrink-0 rounded-full border-2 border-white object-cover object-center shadow-sm"
                                 src={`/api/staff-photo/${encodeURIComponent(worker.cedula)}`}
                               />
                               <div className="min-w-0">
-                                <p className="truncate text-sm font-bold text-[#2a3439]">{worker.nombres} {worker.apellidos}</p>
+                                <p className="truncate text-sm font-bold text-[#2a3439]">{worker.nombreCompleto}</p>
                                 <p className="text-[11px] text-[#566166]">{worker.rol}</p>
                               </div>
                             </div>
@@ -662,12 +820,12 @@ export default function RegistroPage() {
                           <div key={worker.id} className="flex items-center justify-between gap-3">
                             <div className="flex min-w-0 items-center gap-3">
                               <img
-                                alt={`${worker.nombres} ${worker.apellidos}`}
+                                alt={worker.nombreCompleto}
                                 className="h-11 w-11 shrink-0 rounded-full border-2 border-white object-cover object-center shadow-sm"
                                 src={`/api/staff-photo/${encodeURIComponent(worker.cedula)}`}
                               />
                               <div className="min-w-0">
-                                <p className="truncate text-sm font-bold text-[#2a3439]">{worker.nombres} {worker.apellidos}</p>
+                                <p className="truncate text-sm font-bold text-[#2a3439]">{worker.nombreCompleto}</p>
                                 <p className="text-[11px] text-[#566166]">{worker.rol}</p>
                               </div>
                             </div>
