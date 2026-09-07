@@ -7,6 +7,7 @@ import { readAuthSession } from "@/lib/auth-session";
 import { useWebSocketSchedules } from "@/lib/use-websocket-schedules";
 import toast from "react-hot-toast";
 import { confirmToast } from "@/lib/toast-dialog";
+import * as XLSX from "xlsx-js-style";
 
 type AuditorioEstado = "Pendiente" | "Aprobada" | "Cancelada";
 
@@ -453,6 +454,9 @@ export default function AuditorioPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isDownloadingExcel, setIsDownloadingExcel] = useState(false);
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [exportStartDate, setExportStartDate] = useState(toDateKey(startOfMonth(colombiaToday)));
+  const [exportEndDate, setExportEndDate] = useState(toDateKey(endOfMonth(colombiaToday)));
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
   const [formState, setFormState] = useState<NewEventFormState>(createEmptyFormState(defaultDateKey));
   const [scheduleMode, setScheduleMode] = useState<"" | "single" | "multi">("");
@@ -1196,39 +1200,345 @@ export default function AuditorioPage() {
     }
   }
 
-  const downloadExcelHistory = async () => {
+  const downloadExcelHistory = () => {
     if (isDownloadingExcel) return;
+    if (!exportStartDate || !exportEndDate) {
+      toast.error("Selecciona la fecha inicial y la fecha final.");
+      return;
+    }
+    if (exportEndDate < exportStartDate) {
+      toast.error("La fecha final debe ser igual o posterior a la fecha inicial.");
+      return;
+    }
 
     try {
       setIsDownloadingExcel(true);
-      const response = await fetch("/api/auditorio/reservas/export", {
-        cache: "no-store",
-      });
 
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(text || `No se pudo descargar el excel (HTTP ${response.status})`);
+      const eventsInRange = events
+        .map((event) => ({
+          ...event,
+          scheduleBlocks: event.scheduleBlocks
+            .filter((block) => block.date >= exportStartDate && block.date <= exportEndDate)
+            .sort((left, right) => left.date.localeCompare(right.date) || left.startTime.localeCompare(right.startTime)),
+        }))
+        .filter((event) => event.scheduleBlocks.length > 0 || (event.periodStartDate <= exportEndDate && event.periodEndDate >= exportStartDate));
+
+      if (eventsInRange.length === 0) {
+        toast.error("No hay eventos dentro del rango seleccionado.");
+        return;
       }
 
-      const blob = await response.blob();
-      const objectUrl = window.URL.createObjectURL(blob);
-      const link = document.createElement("a");
+      const resourcesLabel = (event: AuditoriumEvent) => [
+        event.needsScreen ? "Pantalla" : null,
+        event.needsSound ? "Sonido" : null,
+        event.needsMonitor ? "Monitor" : null,
+        event.needsProjector ? "Proyector" : null,
+        event.needsWaterFilter ? "Filtro de agua" : null,
+      ].filter((value): value is string => Boolean(value)).join(", ") || "Ninguno";
 
-      const disposition = response.headers.get("content-disposition") ?? "";
-      const fileNameMatch = disposition.match(/filename=\"?([^\";]+)\"?/i);
-      const fileName = fileNameMatch?.[1] ?? `historial_auditorio_${Date.now()}.xlsx`;
+      const eventRows = eventsInRange.flatMap((event) => {
+        if (event.scheduleBlocks.length === 0) {
+          return [[
+            event.periodStartDate,
+            event.periodEndDate,
+            "Sin bloque horario",
+            event.title,
+            event.organizer,
+            event.status,
+            event.attendees,
+            resourcesLabel(event),
+            event.assignedWorkers.map((worker) => worker.nombreCompleto).join(", ") || "Sin asignar",
+            event.observations || "",
+          ]];
+        }
 
-      link.href = objectUrl;
-      link.download = fileName;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      window.URL.revokeObjectURL(objectUrl);
-      setLoadError(null);
+        return event.scheduleBlocks.map((block) => [
+          block.date,
+          block.date,
+          block.startTime,
+          event.title,
+          event.organizer,
+          event.status,
+          event.attendees,
+          resourcesLabel(event),
+          event.assignedWorkers.map((worker) => worker.nombreCompleto).join(", ") || "Sin asignar",
+          event.observations || "",
+        ]);
+      });
+
+      const summaryRows = eventsInRange.map((event) => [
+        event.title,
+        event.organizer,
+        event.status,
+        event.periodStartDate,
+        event.periodEndDate,
+        event.scheduleBlocks.length,
+        event.attendees,
+        resourcesLabel(event),
+        event.assignedWorkers.map((worker) => worker.nombreCompleto).join(", ") || "Sin asignar",
+        event.observations || "",
+      ]);
+
+      const calendarSheet = XLSX.utils.aoa_to_sheet([
+        ["CALENDARIO DE EVENTOS DEL AUDITORIO"],
+        [`Periodo: ${exportStartDate} al ${exportEndDate}`],
+        [],
+        ["Fecha", "Fecha fin / periodo", "Horario", "Evento", "Organizador", "Estado", "Asistentes", "Recursos", "Personal asignado", "Observaciones"],
+        ...eventRows,
+      ]);
+      const summarySheet = XLSX.utils.aoa_to_sheet([
+        ["RESUMEN DE EVENTOS DEL AUDITORIO"],
+        [`Periodo: ${exportStartDate} al ${exportEndDate}`],
+        [],
+        ["Evento", "Organizador", "Estado", "Inicio del periodo", "Fin del periodo", "Bloques", "Asistentes", "Recursos", "Personal asignado", "Observaciones"],
+        ...summaryRows,
+      ]);
+
+      const titleStyle = {
+        font: { bold: true, color: { rgb: "FFFFFF" }, sz: 14 },
+        fill: { fgColor: { rgb: "1F4E78" } },
+        alignment: { horizontal: "center", vertical: "center" },
+      };
+      const headerStyle = {
+        font: { bold: true, color: { rgb: "FFFFFF" } },
+        fill: { fgColor: { rgb: "5B9BD5" } },
+        alignment: { horizontal: "center", vertical: "center", wrapText: true },
+      };
+      const statusColors: Record<AuditorioEstado, string> = {
+        Aprobada: "E2F0D9",
+        Pendiente: "FFF2CC",
+        Cancelada: "FCE4D6",
+      };
+
+      const styleSheet = (sheet: XLSX.WorkSheet, widths: number[], dataRows: number, statusColumn: number) => {
+        const lastColumn = widths.length - 1;
+        const title = sheet["A1"];
+        if (title) title.s = titleStyle;
+        for (let column = 0; column <= lastColumn; column += 1) {
+          const header = sheet[XLSX.utils.encode_cell({ r: 3, c: column })];
+          if (header) header.s = headerStyle;
+        }
+        for (let row = 4; row < dataRows + 4; row += 1) {
+          const statusCell = sheet[XLSX.utils.encode_cell({ r: row, c: statusColumn })];
+          if (statusCell && statusColors[statusCell.v as AuditorioEstado]) {
+            statusCell.s = {
+              fill: { fgColor: { rgb: statusColors[statusCell.v as AuditorioEstado] } },
+              font: { bold: true },
+              alignment: { horizontal: "center" },
+            };
+          }
+          for (let column = 0; column <= lastColumn; column += 1) {
+            const cell = sheet[XLSX.utils.encode_cell({ r: row, c: column })];
+            if (cell && typeof cell.v === "string" && cell.v.includes("\n")) {
+              cell.s = { alignment: { vertical: "top", wrapText: true } };
+            }
+          }
+        }
+        sheet["!cols"] = widths.map((wch) => ({ wch }));
+        sheet["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: lastColumn } }];
+        sheet["!autofilter"] = { ref: `A4:${XLSX.utils.encode_col(lastColumn)}${dataRows + 4}` };
+        sheet["!freeze"] = { xSplit: 0, ySplit: 4 };
+      };
+
+      styleSheet(calendarSheet, [14, 18, 14, 28, 24, 14, 12, 28, 32, 42], eventRows.length, 5);
+      styleSheet(summarySheet, [28, 24, 14, 18, 18, 10, 12, 28, 32, 42], summaryRows.length, 2);
+
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, calendarSheet, "Calendario");
+      XLSX.utils.book_append_sheet(workbook, summarySheet, "Resumen eventos");
+      XLSX.writeFile(workbook, `calendario_auditorio_${exportStartDate}_${exportEndDate}.xlsx`);
+      setIsExportModalOpen(false);
+      toast.success("Calendario del auditorio descargado correctamente.");
     } catch (error) {
-      const message = error instanceof Error ? error.message : "No se pudo descargar el historial en excel";
-      setLoadError(message);
-      toast.error(message);
+      toast.error(error instanceof Error ? error.message : "No se pudo generar el Excel del auditorio.");
+    } finally {
+      setIsDownloadingExcel(false);
+    }
+  };
+
+  const downloadMonthlyAuditoriumExcel = () => {
+    if (isDownloadingExcel) return;
+    if (!exportStartDate || !exportEndDate || exportEndDate < exportStartDate) {
+      toast.error("Selecciona un rango de fechas válido.");
+      return;
+    }
+
+    try {
+      setIsDownloadingExcel(true);
+      const eventsInRange = events
+        .map((event) => ({
+          ...event,
+          scheduleBlocks: event.scheduleBlocks
+            .filter((block) => block.date >= exportStartDate && block.date <= exportEndDate)
+            .sort((left, right) => left.date.localeCompare(right.date) || left.startTime.localeCompare(right.startTime)),
+        }))
+        .filter((event) => event.scheduleBlocks.length > 0 || (event.periodStartDate <= exportEndDate && event.periodEndDate >= exportStartDate));
+
+      if (eventsInRange.length === 0) {
+        toast.error("No hay eventos dentro del rango seleccionado.");
+        return;
+      }
+
+      const entriesByDate = new Map<string, Array<{ event: AuditoriumEvent; block: ScheduleBlock }>>();
+      const eventsWithoutBlocks = eventsInRange.filter((event) => event.scheduleBlocks.length === 0);
+      eventsInRange.forEach((event) => event.scheduleBlocks.forEach((block) => {
+        const entries = entriesByDate.get(block.date) ?? [];
+        entries.push({ event, block });
+        entriesByDate.set(block.date, entries);
+      }));
+
+      const titleStyle = {
+        font: { bold: true, color: { rgb: "FFFFFF" }, sz: 14 },
+        fill: { fgColor: { rgb: "1F4E78" } },
+        alignment: { horizontal: "center", vertical: "center" },
+      };
+      const headerStyle = {
+        font: { bold: true, color: { rgb: "FFFFFF" } },
+        fill: { fgColor: { rgb: "5B9BD5" } },
+        alignment: { horizontal: "center", vertical: "center", wrapText: true },
+      };
+      const eventColors: Record<AuditoriumEvent["color"], string> = {
+        blue: "DDEBF7",
+        emerald: "E2F0D9",
+        amber: "FFF2CC",
+      };
+      const statusFontColors: Record<AuditorioEstado, string> = {
+        Aprobada: "375623",
+        Pendiente: "9C6500",
+        Cancelada: "9C0006",
+      };
+      const statusLabels: Record<AuditorioEstado, string> = {
+        Aprobada: "Aprobada",
+        Pendiente: "Pendiente",
+        Cancelada: "Cancelada",
+      };
+      const workbook = XLSX.utils.book_new();
+      const usedSheetNames = new Set<string>();
+      const firstMonth = startOfMonth(parseISODate(exportStartDate));
+      const lastMonth = startOfMonth(parseISODate(exportEndDate));
+
+      for (let monthDate = firstMonth; monthDate <= lastMonth; monthDate = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 1)) {
+        const rows: string[][] = [
+          ["CALENDARIO DEL AUDITORIO · " + monthNames[monthDate.getMonth()] + " " + monthDate.getFullYear()],
+          ["Periodo exportado: " + exportStartDate + " al " + exportEndDate],
+          [],
+        ];
+        const merges: Array<XLSX.Range> = [];
+        const headerCells: Array<{ row: number; column: number; span: number }> = [];
+        const eventCells: Array<{ row: number; column: number; event: AuditoriumEvent }> = [];
+        let maxColumns = 1;
+
+        for (const week of chunkWeeks(buildMonthGrid(monthDate))) {
+          const days = week.filter((date) => {
+            const key = toDateKey(date);
+            return date.getMonth() === monthDate.getMonth() && date.getFullYear() === monthDate.getFullYear() && key >= exportStartDate && key <= exportEndDate;
+          });
+          if (days.length === 0) continue;
+
+          const dayEntries = days.map((date) => ({ date, entries: entriesByDate.get(toDateKey(date)) ?? [] }));
+          const spans = dayEntries.map(({ entries }) => Math.max(1, entries.length));
+          const totalColumns = 1 + spans.reduce((sum, span) => sum + span, 0);
+          maxColumns = Math.max(maxColumns, totalColumns);
+          const headerRow = rows.length;
+          const header = ["Semana del " + formatDateLabel(days[0] ?? monthDate)];
+          const subheader = ["Actividad"];
+          let column = 1;
+
+          dayEntries.forEach(({ date }, dayIndex) => {
+            const span = spans[dayIndex] ?? 1;
+            const label = (weekDays[mondayIndex(date)] ?? "Día") + " " + String(date.getDate()).padStart(2, "0") + "/" + String(date.getMonth() + 1).padStart(2, "0");
+            header.push(label, ...Array.from({ length: span - 1 }, () => ""));
+            subheader.push(...Array.from({ length: span }, (_, index) => "Evento " + (index + 1)));
+            headerCells.push({ row: headerRow, column, span });
+            if (span > 1) merges.push({ s: { r: headerRow, c: column }, e: { r: headerRow, c: column + span - 1 } });
+            column += span;
+          });
+
+          rows.push(header, subheader);
+          const eventCount = Math.max(...dayEntries.map(({ entries }) => entries.length), 1);
+          for (let eventIndex = 0; eventIndex < eventCount; eventIndex += 1) {
+            const row = ["Evento " + (eventIndex + 1)];
+            dayEntries.forEach(({ entries }) => {
+              const span = Math.max(1, entries.length);
+              for (let slot = 0; slot < span; slot += 1) {
+                const entry = entries[slot];
+                if (!entry || slot !== eventIndex) {
+                  row.push("");
+                  continue;
+                }
+                row.push(entry.block.startTime + " - " + entry.block.endTime + "\n" + entry.event.title + "\n" + entry.event.organizer + "\n" + statusLabels[entry.event.status]);
+                eventCells.push({ row: rows.length, column: row.length - 1, event: entry.event });
+              }
+            });
+            rows.push(row);
+          }
+          rows.push([]);
+        }
+
+        if (rows.length <= 3) continue;
+        const sheet = XLSX.utils.aoa_to_sheet(rows);
+        const lastColumn = Math.max(maxColumns - 1, 1);
+        merges.push({ s: { r: 0, c: 0 }, e: { r: 0, c: lastColumn } });
+        sheet["!merges"] = merges;
+        sheet["!cols"] = [{ wch: 20 }, ...Array.from({ length: lastColumn }, () => ({ wch: 25 }))];
+        sheet["!freeze"] = { xSplit: 1, ySplit: 4 };
+        if (sheet["A1"]) sheet["A1"].s = titleStyle;
+
+        headerCells.forEach(({ row, column, span }) => {
+          for (let offset = 0; offset < span; offset += 1) {
+            const cell = sheet[XLSX.utils.encode_cell({ r: row, c: column + offset })];
+            if (cell) cell.s = headerStyle;
+            const subheader = sheet[XLSX.utils.encode_cell({ r: row + 1, c: column + offset })];
+            if (subheader) subheader.s = headerStyle;
+          }
+        });
+        eventCells.forEach(({ row, column, event }) => {
+          const cell = sheet[XLSX.utils.encode_cell({ r: row, c: column })];
+          if (cell) {
+            cell.s = {
+              fill: { fgColor: { rgb: eventColors[event.color] } },
+              font: { bold: true, color: { rgb: statusFontColors[event.status] } },
+              alignment: { horizontal: "center", vertical: "center", wrapText: true },
+              border: {
+                top: { style: "thin", color: { rgb: "FFFFFF" } },
+                bottom: { style: "thin", color: { rgb: "FFFFFF" } },
+                left: { style: "thin", color: { rgb: "FFFFFF" } },
+                right: { style: "thin", color: { rgb: "FFFFFF" } },
+              },
+            };
+          }
+        });
+
+        let sheetName = (monthNames[monthDate.getMonth()] + " " + monthDate.getFullYear()).slice(0, 31);
+        let suffix = 2;
+        while (usedSheetNames.has(sheetName)) sheetName = monthNames[monthDate.getMonth()].slice(0, 27) + " " + suffix++;
+        usedSheetNames.add(sheetName);
+        XLSX.utils.book_append_sheet(workbook, sheet, sheetName);
+      }
+
+      if (eventsWithoutBlocks.length > 0) {
+        const sheet = XLSX.utils.aoa_to_sheet([
+          ["EVENTOS SIN BLOQUE HORARIO"],
+          ["Periodo exportado: " + exportStartDate + " al " + exportEndDate],
+          [],
+          ["Evento", "Organizador", "Estado", "Inicio", "Fin", "Asistentes", "Observaciones"],
+          ...eventsWithoutBlocks.map((event) => [event.title, event.organizer, event.status, event.periodStartDate, event.periodEndDate, String(event.attendees), event.observations || ""]),
+        ]);
+        sheet["!cols"] = [{ wch: 30 }, { wch: 24 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 48 }];
+        sheet["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 6 } }];
+        if (sheet["A1"]) sheet["A1"].s = titleStyle;
+        for (let column = 0; column < 7; column += 1) {
+          const cell = sheet[XLSX.utils.encode_cell({ r: 3, c: column })];
+          if (cell) cell.s = headerStyle;
+        }
+        XLSX.utils.book_append_sheet(workbook, sheet, "Sin bloque");
+      }
+
+      XLSX.writeFile(workbook, "calendario_auditorio_" + exportStartDate + "_" + exportEndDate + ".xlsx");
+      setIsExportModalOpen(false);
+      toast.success("Calendario mensual descargado correctamente.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No se pudo generar el Excel del auditorio.");
     } finally {
       setIsDownloadingExcel(false);
     }
@@ -1325,15 +1635,80 @@ export default function AuditorioPage() {
           </div>
           <button
             type="button"
-            onClick={() => void downloadExcelHistory()}
-            disabled={isDownloadingExcel}
+            onClick={() => setIsExportModalOpen(true)}
+            disabled={isDownloadingExcel || isLoading}
             className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70"
           >
             <span className="material-symbols-outlined text-[18px]">download</span>
-            {isDownloadingExcel ? "Descargando..." : "Descargar excel"}
+            {isDownloadingExcel ? "Generando..." : "Descargar calendario"}
           </button>
         </div>
       </div>
+
+      {isExportModalOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl">
+            <div className="mb-4 flex items-start justify-between gap-4">
+              <div>
+                <p className="text-[10px] font-black tracking-[0.22em] text-slate-500 uppercase">Exportar calendario</p>
+                <h2 className="mt-1 text-lg font-black text-slate-900">Selecciona el periodo</h2>
+                <p className="mt-1 text-xs leading-5 text-slate-500">
+                  Se incluirán los bloques del auditorio dentro de estas fechas.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsExportModalOpen(false)}
+                className="rounded-full px-2 py-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                aria-label="Cerrar exportación"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="space-y-1">
+                <span className="text-xs font-bold text-slate-600">Fecha inicial</span>
+                <input
+                  type="date"
+                  value={exportStartDate}
+                  onChange={(event) => setExportStartDate(event.target.value)}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 outline-none focus:border-[#3a5f94]"
+                />
+              </label>
+              <label className="space-y-1">
+                <span className="text-xs font-bold text-slate-600">Fecha final</span>
+                <input
+                  type="date"
+                  value={exportEndDate}
+                  min={exportStartDate}
+                  onChange={(event) => setExportEndDate(event.target.value)}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 outline-none focus:border-[#3a5f94]"
+                />
+              </label>
+            </div>
+
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setIsExportModalOpen(false)}
+                className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={downloadMonthlyAuditoriumExcel}
+                disabled={isDownloadingExcel}
+                className="inline-flex items-center gap-2 rounded-lg bg-[#3a5f94] px-4 py-2 text-xs font-bold text-white hover:bg-[#2f507c] disabled:opacity-60"
+              >
+                <span className="material-symbols-outlined text-[16px]">download</span>
+                {isDownloadingExcel ? "Generando..." : "Generar Excel"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {loadError ? (
         <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
