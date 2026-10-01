@@ -691,12 +691,18 @@ export default function PublicAuditorioPage() {
         }),
       });
 
+      const responseBody = (await response.json().catch(() => null)) as { error?: string; message?: string; registeredEmailSent?: boolean } | null;
+
       if (!response.ok) {
-        const body = (await response.json().catch(() => null)) as { error?: string; message?: string } | null;
+        const body = responseBody;
         throw new Error(body?.error ?? body?.message ?? "No se pudo enviar la solicitud.");
       }
 
-      toast.success("Solicitud enviada. Quedó en estado Pendiente para revisión de los administradores.");
+      if (responseBody?.registeredEmailSent === false) {
+        toast.error("La solicitud se registró, pero no se pudo enviar el correo de confirmación. La administración podrá revisarla igualmente.");
+      } else {
+        toast.success("Solicitud enviada. Se registró correctamente y recibirás un correo mientras la administración revisa la solicitud.");
+      }
       resetPublicForm();
       setIsCreateOpen(false);
     } catch (error) {

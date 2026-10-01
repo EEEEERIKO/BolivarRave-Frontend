@@ -8,7 +8,6 @@ import { useEffect, useMemo, useRef, useState, type SyntheticEvent } from "react
 import toast from "react-hot-toast";
 import { confirmToast } from "@/lib/toast-dialog";
 import { Minus, Plus, X } from "lucide-react";
-import * as XLSX from "xlsx";
 
 type StaffView = "directory" | "schedule";
 type StaffMobileDetailTab = "profile" | "tasks" | "daily" | "academic" | "activity";
@@ -44,14 +43,6 @@ type StaffBalanceMovementApi = {
   motivo: string | null;
   creadoPorStaffId: string | null;
   createdAt: string;
-};
-
-type StaffRecentActivityApi = {
-  id: string;
-  tipo: "entrada" | "salida" | "limpieza";
-  titulo: string;
-  detalle: string;
-  fecha: string;
 };
 
 type StaffApi = {
@@ -218,20 +209,6 @@ function getTodayIsoDateLocal(): string {
   const month = String(now.getMonth() + 1).padStart(2, "0");
   const day = String(now.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
-}
-
-function formatRecentActivityDate(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-
-  return date.toLocaleString("es-CO", {
-    day: "2-digit",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-    timeZone: "America/Bogota",
-  }).toUpperCase();
 }
 
 function getCurrentTaskDayIndex(): number {
@@ -628,8 +605,8 @@ function StaffScheduleBoard({
   const [editorPausaRows, setEditorPausaRows] = useState<EditablePausaItem[]>([]);
   const [isLoadingPausas, setIsLoadingPausas] = useState(false);
   const [isSavingJornada, setIsSavingJornada] = useState(false);
-  const [isDownloadingExcel, setIsDownloadingExcel] = useState(false);
   const [editorSelectedDay, setEditorSelectedDay] = useState<WorkWeekDay>("Lunes");
+  const [editorInitialSnapshot, setEditorInitialSnapshot] = useState("");
   const [selectedScheduleDay, setSelectedScheduleDay] = useState<WorkWeekDay>(() => getCurrentWorkWeekDay());
   const [nowTimestamp, setNowTimestamp] = useState(() => Date.now());
   const leftColumnRef = useRef<HTMLDivElement>(null);
@@ -918,187 +895,6 @@ function StaffScheduleBoard({
     }
   };
 
-  const downloadStaffScheduleExcel = () => {
-    if (isDownloadingExcel || staffList.length === 0) return;
-
-    try {
-      setIsDownloadingExcel(true);
-
-      const dayColumns = MASTER_WEEK_DAYS.map((day) => ({ day, key: normalizeDayName(day) }));
-      const orderedStaff = [...staffList].sort((left, right) => left.numeroStaff - right.numeroStaff);
-      const jornadasByStaff = new Map(
-        orderedStaff.map((staff) => [staff.id, jornadaByStaffId[staff.id] ?? []]),
-      );
-
-      const formatJornada = (row: StaffJornadaItem) =>
-        `${row.horaEntrada} - ${row.horaSalida} (${row.totalHorasDia.toFixed(1)} h)`;
-      const formatPausa = (row: StaffPausaItem) =>
-        `${row.horaInicio} - ${row.horaFin} (${calculateHoursDifference(row.horaInicio, row.horaFin).toFixed(1)} h)`;
-
-      const summaryRows = orderedStaff.map((staff) => {
-        const jornadas = jornadasByStaff.get(staff.id) ?? [];
-        const pausas = pausaByStaffId[staff.id] ?? [];
-        const dayValues = dayColumns.flatMap(({ key }) => {
-          const jornadaText = jornadas
-            .filter((row) => normalizeDayName(row.diaSemana) === key)
-            .sort((left, right) => timeToMinutes(left.horaEntrada) - timeToMinutes(right.horaEntrada))
-            .map(formatJornada)
-            .join("\n");
-          const pausaText = pausas
-            .filter((row) => normalizeDayName(row.diaSemana) === key)
-            .sort((left, right) => timeToMinutes(left.horaInicio) - timeToMinutes(right.horaInicio))
-            .map(formatPausa)
-            .join("\n");
-
-          return [jornadaText, pausaText];
-        });
-        const totalDescansoSemanal = pausas.reduce(
-          (total, row) => total + calculateHoursDifference(row.horaInicio, row.horaFin),
-          0,
-        );
-
-        return [
-          staff.numeroStaff,
-          `${staff.nombres} ${staff.apellidos}`.trim(),
-          staff.cedula,
-          ...dayValues,
-          jornadas.reduce((total, row) => total + row.totalHorasDia, 0),
-          totalDescansoSemanal,
-        ];
-      });
-
-      const summarySheet = XLSX.utils.aoa_to_sheet([
-        ["HORARIO SEMANAL DEL PERSONAL"],
-        [`Generado el ${new Date().toLocaleString("es-CO")}`],
-        [],
-        [
-          "N.º",
-          "Personal",
-          "Cédula",
-          ...dayColumns.flatMap(({ day }) => [`${day} - Jornada`, `${day} - Descanso`]),
-          "Total laboral semanal (h)",
-          "Descanso semanal (h)",
-        ],
-        ...summaryRows,
-      ]);
-
-      const detailRows = orderedStaff.flatMap((staff) => {
-        const jornadas = jornadasByStaff.get(staff.id) ?? [];
-        return jornadas
-          .slice()
-          .sort((left, right) => {
-            const dayDifference = (WORK_DAY_ORDER[left.diaSemana] ?? 99) - (WORK_DAY_ORDER[right.diaSemana] ?? 99);
-            return dayDifference || timeToMinutes(left.horaEntrada) - timeToMinutes(right.horaEntrada);
-          })
-          .map((row) => [
-            staff.numeroStaff,
-            `${staff.nombres} ${staff.apellidos}`.trim(),
-            staff.cedula,
-            row.diaSemana,
-            row.horaEntrada,
-            row.horaSalida,
-            row.totalHorasDia,
-          ]);
-      });
-
-      const detailSheet = XLSX.utils.aoa_to_sheet([
-        ["DETALLE DE JORNADAS"],
-        [],
-        ["N.º", "Personal", "Cédula", "Día", "Entrada", "Salida", "Horas"],
-        ...detailRows,
-      ]);
-
-      const pauseRows = orderedStaff.flatMap((staff) =>
-        (pausaByStaffId[staff.id] ?? [])
-          .slice()
-          .sort((left, right) => {
-            const dayDifference = (WORK_DAY_ORDER[left.diaSemana] ?? 99) - (WORK_DAY_ORDER[right.diaSemana] ?? 99);
-            return dayDifference || timeToMinutes(left.horaInicio) - timeToMinutes(right.horaInicio);
-          })
-          .map((row) => [
-            staff.numeroStaff,
-            `${staff.nombres} ${staff.apellidos}`.trim(),
-            row.diaSemana,
-            formatPausa(row),
-          ]),
-      );
-
-      const pauseSheet = XLSX.utils.aoa_to_sheet([
-        ["PAUSAS PROGRAMADAS"],
-        [],
-        ["N.º", "Personal", "Día", "Descanso"],
-        ...pauseRows,
-      ]);
-
-      const titleStyle = {
-        font: { bold: true, color: { rgb: "FFFFFF" }, sz: 14 },
-        fill: { fgColor: { rgb: "3A5F94" } },
-        alignment: { horizontal: "center", vertical: "center" },
-      };
-      const headerStyle = {
-        font: { bold: true, color: { rgb: "FFFFFF" } },
-        fill: { fgColor: { rgb: "566166" } },
-        alignment: { horizontal: "center", vertical: "center", wrapText: true },
-      };
-
-      const styleSheet = (
-        sheet: XLSX.WorkSheet,
-        titleRow: number,
-        headerRow: number,
-        columnWidths: number[],
-        lastRow: number,
-      ) => {
-        const lastColumn = columnWidths.length - 1;
-        const titleCell = sheet[XLSX.utils.encode_cell({ r: titleRow, c: 0 })];
-        if (titleCell) titleCell.s = titleStyle;
-
-        for (let column = 0; column <= lastColumn; column += 1) {
-          const headerCell = sheet[XLSX.utils.encode_cell({ r: headerRow, c: column })];
-          if (headerCell) headerCell.s = headerStyle;
-        }
-
-        for (let row = headerRow + 1; row <= lastRow; row += 1) {
-          for (let column = 0; column <= lastColumn; column += 1) {
-            const cell = sheet[XLSX.utils.encode_cell({ r: row, c: column })];
-            if (cell && typeof cell.v === "string" && cell.v.includes("\n")) {
-              cell.s = { alignment: { vertical: "top", wrapText: true } };
-            }
-          }
-        }
-
-        sheet["!cols"] = columnWidths.map((width) => ({ wch: width }));
-        sheet["!merges"] = [{ s: { r: titleRow, c: 0 }, e: { r: titleRow, c: lastColumn } }];
-        sheet["!autofilter"] = {
-          ref: `${XLSX.utils.encode_col(0)}${headerRow + 1}:${XLSX.utils.encode_col(lastColumn)}${lastRow + 1}`,
-        };
-        sheet["!freeze"] = { xSplit: 0, ySplit: headerRow + 1 };
-      };
-
-      const summaryColumnWidths = [
-        8,
-        28,
-        16,
-        ...dayColumns.flatMap(() => [20, 20]),
-        18,
-        18,
-      ];
-      styleSheet(summarySheet, 0, 3, summaryColumnWidths, summaryRows.length + 4);
-      styleSheet(detailSheet, 0, 2, [8, 28, 16, 14, 12, 12, 12], detailRows.length + 3);
-      styleSheet(pauseSheet, 0, 2, [8, 28, 14, 24], pauseRows.length + 3);
-
-      const workbook = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(workbook, summarySheet, "Resumen semanal");
-      XLSX.utils.book_append_sheet(workbook, detailSheet, "Detalle jornadas");
-      XLSX.utils.book_append_sheet(workbook, pauseSheet, "Pausas");
-      XLSX.writeFile(workbook, `horario_personal_${new Date().toISOString().slice(0, 10)}.xlsx`);
-      toast.success("Horario descargado correctamente.");
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "No se pudo generar el archivo Excel.");
-    } finally {
-      setIsDownloadingExcel(false);
-    }
-  };
-
   useEffect(() => {
     void loadJornadas();
   }, [staffList]);
@@ -1112,6 +908,9 @@ function StaffScheduleBoard({
       totalHorasDia: "5",
     },
   ] as EditableJornadaItem[];
+
+  const getEditorSnapshot = (rows: EditableJornadaItem[], pausas: EditablePausaItem[]) =>
+    JSON.stringify({ rows, pausas });
 
   const loadPausasForStaff = async (staffId: string) => {
     const response = await fetchApiJson<StaffPausaResponse>(`/api/staff/${staffId}/pausas-programadas`, {
@@ -1127,6 +926,7 @@ function StaffScheduleBoard({
     }));
 
     setEditorPausaRows(mapped);
+    return mapped;
   };
 
   const openEditor = async (staff: StaffApi) => {
@@ -1146,13 +946,15 @@ function StaffScheduleBoard({
     setEditingStaff(staff);
     setEditorRows(mappedRows);
     setEditorPausaRows([]);
+    setEditorInitialSnapshot(getEditorSnapshot(mappedRows, []));
     setEditorSelectedDay("Lunes");
     setIsEditorOpen(true);
     setScheduleError(null);
 
     try {
       setIsLoadingPausas(true);
-      await loadPausasForStaff(staff.id);
+      const mappedPausas = await loadPausasForStaff(staff.id);
+      setEditorInitialSnapshot(getEditorSnapshot(mappedRows, mappedPausas));
     } catch (error) {
       setScheduleError(error instanceof Error ? error.message : "No se pudieron cargar las pausas programadas.");
     } finally {
@@ -1160,11 +962,26 @@ function StaffScheduleBoard({
     }
   };
 
-  const closeEditor = () => {
+  const closeEditor = async (force = false) => {
+    const hasUnsavedChanges = editorInitialSnapshot !== getEditorSnapshot(editorRows, editorPausaRows);
+    if (!force && isEditorOpen && hasUnsavedChanges) {
+      const shouldClose = await confirmToast(
+        "Hay cambios sin guardar en este horario. ¿Deseas cerrar sin guardar? Si quieres conservarlos, cancela y pulsa Guardar configuración.",
+        {
+          title: "Cambios sin guardar",
+          confirmLabel: "Cerrar sin guardar",
+          cancelLabel: "Seguir editando",
+        },
+      );
+
+      if (!shouldClose) return;
+    }
+
     setIsEditorOpen(false);
     setEditingStaff(null);
     setEditorRows([]);
     setEditorPausaRows([]);
+    setEditorInitialSnapshot("");
     setEditorSelectedDay("Lunes");
   };
 
@@ -1173,6 +990,8 @@ function StaffScheduleBoard({
       ...prev,
       {
         id: `jornada-${Date.now()}-${prev.length + 1}`,
+        // A new block belongs to the day currently being edited. Keeping the
+        // day on the row prevents it from appearing in every day tab.
         diaSemana: editorSelectedDay,
         horaEntrada: "07:00",
         horaSalida: "12:00",
@@ -1204,6 +1023,7 @@ function StaffScheduleBoard({
       ...prev,
       {
         id: `pausa-${Date.now()}-${prev.length + 1}`,
+        // A new pause must be scoped to the selected day as well.
         diaSemana: editorSelectedDay,
         tipoPausa: "",
         horaInicio: "12:00",
@@ -1506,7 +1326,7 @@ function StaffScheduleBoard({
         return next;
       });
 
-      closeEditor();
+      await closeEditor(true);
       toast.success("Jornada y pausas actualizadas correctamente.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "No se pudo guardar la configuración de jornada/pausas.");
@@ -1589,31 +1409,20 @@ function StaffScheduleBoard({
           <h2 className="text-xl font-bold tracking-tight text-[#2a3439] sm:text-2xl">Horario maestro semanal del personal</h2>
           <p className="mt-0.5 text-xs text-[#566166] sm:mt-1 sm:text-sm">Vista diaria • {selectedScheduleDay}</p>
         </div>
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          <button
-            className="flex items-center gap-1.5 rounded-lg bg-[#3a5f94] px-3 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-[#2f507c] disabled:cursor-not-allowed disabled:opacity-60"
-            disabled={isDownloadingExcel || isLoadingJornadas || staffList.length === 0}
-            onClick={downloadStaffScheduleExcel}
-            type="button"
-          >
-            <span className="material-symbols-outlined text-[17px]">download</span>
-            {isDownloadingExcel ? "Generando..." : "Descargar horario"}
-          </button>
-          <div className="flex flex-wrap items-center gap-1.5 rounded-lg bg-[#f0f4f7] p-1">
-            {MASTER_WEEK_DAYS.map((day) => {
-              const isSelected = day === selectedScheduleDay;
-              return (
-                <button
-                  className={`rounded-md px-2.5 py-1 text-[11px] font-bold transition sm:px-3 sm:py-1.5 sm:text-xs ${isSelected ? "bg-white text-[#3a5f94] shadow-sm" : "text-[#566166] hover:bg-white/70"}`}
-                  key={day}
-                  onClick={() => setSelectedScheduleDay(day)}
-                  type="button"
-                >
-                  {day}
-                </button>
-              );
-            })}
-          </div>
+        <div className="flex flex-wrap items-center gap-1.5 rounded-lg bg-[#f0f4f7] p-1">
+          {MASTER_WEEK_DAYS.map((day) => {
+            const isSelected = day === selectedScheduleDay;
+            return (
+              <button
+                className={`rounded-md px-2.5 py-1 text-[11px] font-bold transition sm:px-3 sm:py-1.5 sm:text-xs ${isSelected ? "bg-white text-[#3a5f94] shadow-sm" : "text-[#566166] hover:bg-white/70"}`}
+                key={day}
+                onClick={() => setSelectedScheduleDay(day)}
+                type="button"
+              >
+                {day}
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -1899,7 +1708,7 @@ function StaffScheduleBoard({
                   {editingStaff.nombres} {editingStaff.apellidos} • N.{editingStaff.numeroStaff}
                 </p>
               </div>
-              <button className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-[#566166]" onClick={closeEditor} type="button">
+              <button className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-[#566166]" onClick={() => void closeEditor()} type="button">
                 Cerrar
               </button>
             </div>
@@ -1939,9 +1748,8 @@ function StaffScheduleBoard({
 
                 <div className="space-y-2">
                   {editorRows
-                    .filter((row) => row.diaSemana === editorSelectedDay || row.diaSemana === "")
-                    .map((row, filteredIndex) => {
-                      const totalFilteredForDay = editorRows.filter((r) => r.diaSemana === editorSelectedDay || r.diaSemana === "").length;
+                    .filter((row) => row.diaSemana === editorSelectedDay)
+                    .map((row) => {
                       return (
                         <div className="grid grid-cols-1 gap-2 rounded-xl border border-slate-200 bg-white p-3 md:grid-cols-[auto_1fr_1fr_1fr_auto]" key={row.id}>
                           <select
@@ -2001,7 +1809,7 @@ function StaffScheduleBoard({
                         </div>
                       );
                     })}
-                  {editorRows.filter((row) => row.diaSemana === editorSelectedDay || row.diaSemana === "").length === 0 && (
+                    {editorRows.filter((row) => row.diaSemana === editorSelectedDay).length === 0 && (
                     <p className="rounded-lg border border-dashed border-slate-300 bg-white px-3 py-2 text-xs text-[#566166]">
                       No hay bloques de jornada para {editorSelectedDay}
                     </p>
@@ -2028,7 +1836,7 @@ function StaffScheduleBoard({
                 ) : (
                   <div className="space-y-2">
                     {sortedEditorPausaRows
-                      .filter((row) => row.diaSemana === editorSelectedDay || row.diaSemana === "")
+                      .filter((row) => row.diaSemana === editorSelectedDay)
                       .map((row) => (
                         <div className="grid grid-cols-1 gap-2 rounded-lg border border-slate-200 bg-white p-3 md:grid-cols-[auto_1fr_1fr_1fr_1fr_auto]" key={row.id}>
                           <select
@@ -2096,7 +1904,7 @@ function StaffScheduleBoard({
                           </button>
                         </div>
                       ))}
-                    {sortedEditorPausaRows.filter((row) => row.diaSemana === editorSelectedDay || row.diaSemana === "").length === 0 && (
+                    {sortedEditorPausaRows.filter((row) => row.diaSemana === editorSelectedDay).length === 0 && (
                       <p className="rounded-lg border border-dashed border-slate-300 bg-white px-3 py-2 text-xs text-[#566166]">
                         No hay pausas configuradas para {editorSelectedDay}
                       </p>
@@ -2123,7 +1931,7 @@ function StaffScheduleBoard({
 
                 <div className="flex flex-wrap justify-end gap-2">
                   <div className="flex gap-2">
-                  <button className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-bold text-[#566166]" onClick={closeEditor} type="button">
+                  <button className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-bold text-[#566166]" onClick={() => void closeEditor()} type="button">
                     Cancelar
                   </button>
                     <button className="rounded-lg bg-[#3a5f94] px-4 py-2 text-xs font-bold text-white disabled:opacity-60" disabled={isSavingJornada || isLoadingPausas} type="submit">
@@ -2172,8 +1980,6 @@ export default function StaffPage() {
   const [isLoadingAssignedTasksToday, setIsLoadingAssignedTasksToday] = useState(false);
   const [balanceMovements, setBalanceMovements] = useState<StaffBalanceMovementApi[]>([]);
   const [isLoadingBalanceMovements, setIsLoadingBalanceMovements] = useState(false);
-  const [recentActivities, setRecentActivities] = useState<StaffRecentActivityApi[]>([]);
-  const [isLoadingRecentActivities, setIsLoadingRecentActivities] = useState(false);
   const [isSavingBalanceMovement, setIsSavingBalanceMovement] = useState(false);
   const [balanceAdjustmentHours, setBalanceAdjustmentHours] = useState("");
   const [balanceAdjustmentMinutes, setBalanceAdjustmentMinutes] = useState("");
@@ -2270,37 +2076,6 @@ export default function StaffPage() {
     }
 
     void loadBalanceMovements(selectedStaff.id);
-  }, [selectedStaff?.id]);
-
-  useEffect(() => {
-    let isCancelled = false;
-
-    const loadRecentActivities = async () => {
-      if (!selectedStaff?.id) {
-        setRecentActivities([]);
-        return;
-      }
-
-      setIsLoadingRecentActivities(true);
-      try {
-        const response = await fetchApiJson<{ actividades?: StaffRecentActivityApi[] }>(
-          `/api/staff/${selectedStaff.id}/actividades-recientes`,
-          { cache: "no-store" },
-        );
-        if (!isCancelled) {
-          setRecentActivities(Array.isArray(response.actividades) ? response.actividades.slice(0, 5) : []);
-        }
-      } catch {
-        if (!isCancelled) setRecentActivities([]);
-      } finally {
-        if (!isCancelled) setIsLoadingRecentActivities(false);
-      }
-    };
-
-    void loadRecentActivities();
-    return () => {
-      isCancelled = true;
-    };
   }, [selectedStaff?.id]);
 
   useEffect(() => {
@@ -2985,30 +2760,6 @@ export default function StaffPage() {
   }, [academicBlockedSlotDetails]);
 
   const totalAcademicBlockedHoursLabel = `${(totalAcademicBlockedMinutes / 60).toFixed(1)}h`;
-
-  const renderRecentActivities = () => (
-    <div className="relative space-y-4 pl-6 pr-1 before:absolute before:top-2 before:bottom-2 before:left-[7px] before:w-[2px] before:bg-[#cfdce3] before:content-['']">
-      {isLoadingRecentActivities ? (
-        <p className="text-xs text-[#566166]">Cargando actividades...</p>
-      ) : recentActivities.length === 0 ? (
-        <p className="text-xs text-[#566166]">No hay actividades recientes registradas.</p>
-      ) : (
-        recentActivities.slice(0, 5).map((activity) => {
-          const color = activity.tipo === "entrada" ? "bg-blue-500" : activity.tipo === "salida" ? "bg-slate-500" : "bg-green-500";
-          const titleColor = activity.tipo === "entrada" ? "text-[#2d5387]" : activity.tipo === "salida" ? "text-[#566166]" : "text-[#2a3439]";
-
-          return (
-            <div className="relative" key={activity.id}>
-              <span className={`absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white ${color}`} />
-              <p className="text-[10px] font-bold uppercase text-slate-400">{formatRecentActivityDate(activity.fecha)}</p>
-              <p className={`text-sm font-bold ${titleColor}`}>{activity.titulo}</p>
-              <p className="text-xs text-[#566166]">{activity.detalle}</p>
-            </div>
-          );
-        })
-      )}
-    </div>
-  );
 
   async function refreshNextStaffNumber() {
     try {
@@ -4592,7 +4343,26 @@ export default function StaffPage() {
                 <span className="h-1.5 w-1.5 rounded-full bg-[#3a5f94]" />
                 Actividades recientes e informes
               </h4>
-              {renderRecentActivities()}
+              <div className="relative space-y-6 pl-6 pr-1 before:absolute before:top-2 before:bottom-2 before:left-[7px] before:w-[2px] before:bg-[#cfdce3] before:content-['']">
+                <div className="relative">
+                  <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-green-500" />
+                  <p className="text-[10px] font-bold text-slate-400">HOY, 10:45</p>
+                  <p className="text-sm font-bold text-[#2a3439]">Salón 302 limpiado</p>
+                  <p className="text-xs text-[#566166]">Actividad: registro de mantenimiento</p>
+                </div>
+                <div className="relative">
+                  <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-[#9f403d]" />
+                  <p className="text-[10px] font-bold text-slate-400">AYER, 14:15</p>
+                  <p className="text-sm font-bold text-[#9f403d]">Informe de llegada tardía</p>
+                  <p className="text-xs text-[#566166]">Infracción: 15 min de retraso sin aviso.</p>
+                </div>
+                <div className="relative">
+                  <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-green-500" />
+                  <p className="text-[10px] font-bold text-slate-400">24 OCT, 09:00</p>
+                  <p className="text-sm font-bold text-[#2a3439]">Inventario verificado</p>
+                  <p className="text-xs text-[#566166]">Actividad: auditoría de equipos</p>
+                </div>
+              </div>
             </section>
           </div>
           </>
@@ -4704,7 +4474,26 @@ export default function StaffPage() {
                     <span className="h-1.5 w-1.5 rounded-full bg-[#3a5f94]" />
                     Actividades recientes e informes
                   </h4>
-                  {renderRecentActivities()}
+                  <div className="relative space-y-6 pl-6 pr-1 before:absolute before:top-2 before:bottom-2 before:left-[7px] before:w-[2px] before:bg-[#cfdce3] before:content-['']">
+                    <div className="relative">
+                      <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-green-500" />
+                      <p className="text-[10px] font-bold text-slate-400">HOY, 10:45</p>
+                      <p className="text-sm font-bold text-[#2a3439]">Salón 302 limpiado</p>
+                      <p className="text-xs text-[#566166]">Actividad: registro de mantenimiento</p>
+                    </div>
+                    <div className="relative">
+                      <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-[#9f403d]" />
+                      <p className="text-[10px] font-bold text-slate-400">AYER, 14:15</p>
+                      <p className="text-sm font-bold text-[#9f403d]">Informe de llegada tardía</p>
+                      <p className="text-xs text-[#566166]">Infracción: 15 min de retraso sin aviso.</p>
+                    </div>
+                    <div className="relative">
+                      <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-green-500" />
+                      <p className="text-[10px] font-bold text-slate-400">24 OCT, 09:00</p>
+                      <p className="text-sm font-bold text-[#2a3439]">Inventario verificado</p>
+                      <p className="text-xs text-[#566166]">Actividad: auditoría de equipos</p>
+                    </div>
+                  </div>
                 </section>
               </div>
             </div>
@@ -5190,7 +4979,26 @@ export default function StaffPage() {
                           <span className="h-1.5 w-1.5 rounded-full bg-[#3a5f94]" />
                           Actividades recientes e informes
                         </h4>
-                        {renderRecentActivities()}
+                        <div className="relative space-y-6 pl-6 before:absolute before:top-2 before:bottom-2 before:left-[7px] before:w-[2px] before:bg-[#cfdce3] before:content-['']">
+                          <div className="relative">
+                            <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-green-500" />
+                            <p className="text-[10px] font-bold text-slate-400">HOY, 10:45</p>
+                            <p className="text-sm font-bold text-[#2a3439]">Salón 302 limpiado</p>
+                            <p className="text-xs text-[#566166]">Actividad: registro de mantenimiento</p>
+                          </div>
+                          <div className="relative">
+                            <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-[#9f403d]" />
+                            <p className="text-[10px] font-bold text-slate-400">AYER, 14:15</p>
+                            <p className="text-sm font-bold text-[#9f403d]">Informe de llegada tardía</p>
+                            <p className="text-xs text-[#566166]">Infracción: 15 min de retraso sin aviso.</p>
+                          </div>
+                          <div className="relative">
+                            <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-green-500" />
+                            <p className="text-[10px] font-bold text-slate-400">24 OCT, 09:00</p>
+                            <p className="text-sm font-bold text-[#2a3439]">Inventario verificado</p>
+                            <p className="text-xs text-[#566166]">Actividad: auditoría de equipos</p>
+                          </div>
+                        </div>
                       </section>
                     ) : null}
 

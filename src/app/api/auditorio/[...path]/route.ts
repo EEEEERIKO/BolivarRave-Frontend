@@ -31,10 +31,21 @@ const proxy = async (request: NextRequest, path: string[]) => {
         ? undefined
         : Buffer.from(await request.arrayBuffer());
 
+    console.log("[Auditorio Proxy] forwarding request", {
+      method: request.method,
+      targetUrl,
+    });
+
     const upstreamResponse = await fetch(targetUrl, {
       method: request.method,
       headers,
       body,
+    });
+
+    console.log("[Auditorio Proxy] upstream response", {
+      method: request.method,
+      targetUrl,
+      status: upstreamResponse.status,
     });
 
     if (!upstreamResponse.ok) {

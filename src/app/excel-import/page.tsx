@@ -1335,23 +1335,10 @@ export default function ExcelImportPage() {
       setImportProgress({
         active: true,
         percent: 35,
-        stage: "Procesando servidor",
-        detail: "El horario está siendo actualizado. Puede tardar algunos segundos...",
+        stage: "Enviando al servidor",
+        detail: "Enviando cambios al backend y validando sesión.",
       });
 
-      const progressTimer = setInterval(() => {
-        setImportProgress((current) => {
-          if (current.percent >= 80) return current;
-
-          return {
-            ...current,
-            percent: current.percent + 5,
-            detail: "Validando clases y guardando cambios...",
-          };
-        });
-      }, 3000);
-
-      
       const body = await fetchApiJson<ImportResponse>("/api/schedules/import-parsed", {
         method: "POST",
         credentials: "include",
