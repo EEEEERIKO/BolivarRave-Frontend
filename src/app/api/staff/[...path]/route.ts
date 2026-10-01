@@ -48,18 +48,9 @@ const proxy = async (request: NextRequest, path: string[]) => {
       });
     }
 
-    // El backend entrega el refresh token como cookie HttpOnly. Debemos
-    // copiarla explícitamente al response del proxy para que el navegador
-    // pueda renovarla cuando expire el access token.
-    const responseHeaders = new Headers(upstreamResponse.headers);
-    const setCookie = upstreamResponse.headers.get("set-cookie");
-    if (setCookie) {
-      responseHeaders.set("set-cookie", setCookie);
-    }
-
     return new NextResponse(upstreamResponse.body, {
       status: upstreamResponse.status,
-      headers: responseHeaders,
+      headers: upstreamResponse.headers,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Proxy error";
