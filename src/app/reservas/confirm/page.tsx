@@ -112,12 +112,10 @@ function ConfirmReservationContent() {
 
             <div className="mt-6 rounded-xl border border-[#fdecea] bg-[#fff7f7] p-4">
               <div className="text-sm font-bold text-[#9f403d]">Importante</div>
-              <div className="mt-2 text-sm text-slate-700">Debe dejar el salón en buen estado y cumplir el horario confirmado. El incumplimiento o cualquier daño reportado podrá generar penalizaciones administrativas.</div>
+              <div className="mt-2 text-sm text-slate-700">Debe devolverlo en buen estado y cumplir el horario confirmado. El incumplimiento o cualquier daño reportado podrá generar penalizaciones administrativas.</div>
             </div>
 
-            <div className="mt-6 flex justify-center">
-              <a href="/" className="inline-block rounded-xl bg-[#3a5f94] px-6 py-3 text-sm font-bold text-white transition hover:bg-[#2d5387]">Volver al Inicio</a>
-            </div>
+            
           </div>
           ) : (
             <div className="rounded-2xl border border-[#e6eef7] bg-white p-8 shadow-lg">
@@ -137,9 +135,7 @@ function ConfirmReservationContent() {
                 <p className="mt-2 text-sm text-slate-600">{message}</p>
               </div>
 
-              <div className="mt-6 flex justify-center">
-                <a href="/" className="inline-block rounded-xl bg-[#3a5f94] px-6 py-3 text-sm font-bold text-white transition hover:bg-[#2d5387]">Volver al Inicio</a>
-              </div>
+              
             </div>
           )
         )}
@@ -155,7 +151,6 @@ function ConfirmReservationContent() {
               <h1 className="text-2xl font-black text-[#2a3439]">Error en la Confirmación</h1>
               <p className="mt-2 text-sm text-slate-600">{message}</p>
             </div>
-            <a href="/" className="inline-block rounded-xl bg-[#3a5f94] px-6 py-3 text-sm font-bold text-white transition hover:bg-[#2d5387]">Volver al Inicio</a>
           </div>
         )}
       </div>

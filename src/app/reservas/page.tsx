@@ -340,6 +340,10 @@ export default function ReservasPage() {
         const desiredEnd = endTime;
 
         return inventoryItems.filter((it) => {
+            // Keep the visible elements scoped to the group currently selected.
+            // This also prevents stale results from a previous group request
+            // from appearing while the user changes groups.
+            if (resourceType === "equipment" && String(it.groupId) !== String(selectedGroupId)) return false;
             if (((it.status ?? "").toLowerCase() !== "disponible")) return false;
 
             // If there exists an active reservation for this item on the same date that overlaps the desired range, exclude it
@@ -358,7 +362,7 @@ export default function ReservasPage() {
 
             return !conflicting;
         });
-    }, [inventoryItems, allReservations, bookingDate, startTime, endTime]);
+    }, [inventoryItems, allReservations, bookingDate, startTime, endTime, resourceType, selectedGroupId]);
 
     const authSession = useMemo(() => readAuthSession(), []);
     const canViewReservations = authSession?.role === "admin" || authSession?.role === "monitor";
@@ -464,9 +468,6 @@ export default function ReservasPage() {
                 if (cancelled) return;
                 const groups = res.groups ?? [];
                 setInventoryGroups(groups);
-                if (groups.length > 0) {
-                    setSelectedGroupId((current) => (current ? current : groups[0].id));
-                }
             } catch {
                 // ignore
             }
@@ -477,6 +478,17 @@ export default function ReservasPage() {
         return () => {
             cancelled = true;
         };
+    }, [resourceType]);
+
+    useEffect(() => {
+        // Equipment reservations require an explicit group choice. Do not
+        // reuse the TV group that may have been selected in another mode.
+        if (resourceType === "equipment") {
+            setSelectedGroupId("");
+            setInventoryItems([]);
+            setSelectedResourceId("");
+            setSelectedCardId(null);
+        }
     }, [resourceType]);
 
     useEffect(() => {
@@ -1425,6 +1437,7 @@ export default function ReservasPage() {
                                                     onChange={(e) => setSelectedGroupId(e.target.value)}
                                                     className="w-full appearance-none rounded-xl border border-slate-200 bg-white p-3 pr-10 text-sm text-slate-700 shadow-sm outline-none transition focus:border-[#3a5f94]"
                                                 >
+                                                    <option value="">Selecciona un grupo...</option>
                                                     {equipmentGroupOptions.map((g) => (
                                                         <option key={g.id} value={g.id}>
                                                             {g.name}
@@ -1442,7 +1455,11 @@ export default function ReservasPage() {
 
                                     <div className="mb-3">
                                         <label className="mb-2 block text-xs font-bold text-slate-500 uppercase">Elemento del grupo</label>
-                                        {availableInventoryItems.length > 0 ? (
+                                        {!selectedGroupId ? (
+                                            <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-3 text-sm text-slate-500">
+                                                Selecciona un grupo para ver sus elementos
+                                            </div>
+                                        ) : availableInventoryItems.length > 0 ? (
                                             <div className="relative">
                                                 <select
                                                     value={selectedResourceId}
