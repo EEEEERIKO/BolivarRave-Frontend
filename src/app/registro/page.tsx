@@ -112,6 +112,7 @@ type AttendanceDashboard = {
     estado: string;
     fecha: string;
     hora: string;
+    horaEntradaProgramada: string | null;
   }>;
   usuariosActivos: Array<{
     id: string;
@@ -370,6 +371,34 @@ const getAutoActionFromPreview = (preview: AttendancePreview): AttendanceAutoAct
   }
 
   return preview.puedeRegistrarEntrada ? "entrada" : null;
+};
+
+const getMovementStatus = (movement: AttendanceDashboard["movimientosRecientes"][number]) => {
+  if (movement.actividad === "Entrada" && movement.horaEntradaProgramada) {
+    const minutesDifference = timeToMinutes(movement.hora) - timeToMinutes(movement.horaEntradaProgramada);
+
+    if (minutesDifference < 0) {
+      return {
+        label: `Llegó ${Math.abs(minutesDifference)} min antes`,
+        tone: "early" as const,
+      };
+    }
+
+    if (minutesDifference > 0) {
+      return {
+        label: `Llegó ${minutesDifference} min tarde`,
+        tone: "late" as const,
+      };
+    }
+
+    return { label: "Llegó a tiempo", tone: "onTime" as const };
+  }
+
+  if (movement.actividad === "Salida" && movement.estado.toLowerCase().includes("anticipada")) {
+    return { label: movement.estado, tone: "late" as const };
+  }
+
+  return { label: movement.actividad === "Salida" ? "Salida completada" : movement.estado, tone: "onTime" as const };
 };
 
 export default function RegistroPage() {
@@ -686,7 +715,7 @@ export default function RegistroPage() {
               <div className="flex items-center justify-between mb-8">
                 <div>
                   <h3 className="text-xl font-bold text-[#2a3439]">Movimientos de hoy</h3>
-                  <p className="mt-1 text-xs text-[#566166]">Solo se cargan los registros del día actual.</p>
+                    <p className="mt-1 text-xs text-[#566166]">Solo se muestran los movimientos del {dashboard ? formatShortDate(dashboard.fecha) : "día actual"}.</p>
                 </div>
                 <button
                   className="inline-flex items-center gap-2 rounded-xl bg-[#3a5f94] px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-[#2d5387] disabled:opacity-60"
@@ -703,7 +732,7 @@ export default function RegistroPage() {
                   <thead>
                     <tr className="text-[#566166] text-xs font-bold uppercase tracking-widest border-b border-[#f0f4f7]">
                       <th className="pb-4">Fecha</th>
-                      <th className="pb-4">Actividad</th>
+                      <th className="pb-4">Movimiento</th>
                       <th className="pb-4">Hora</th>
                       <th className="pb-4">Nombre</th>
                       <th className="pb-4 text-right">Estado</th>
@@ -716,15 +745,31 @@ export default function RegistroPage() {
                       </tr>
                     ) : dashboard && dashboard.movimientosRecientes.length > 0 ? (
                       dashboard.movimientosRecientes.map((movement) => (
+                        (() => {
+                          const status = getMovementStatus(movement);
+                          const statusStyles = status.tone === "early"
+                            ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                            : status.tone === "late"
+                              ? "border-rose-200 bg-rose-50 text-rose-800"
+                              : "border-blue-200 bg-blue-50 text-blue-800";
+
+                          return (
                         <tr key={movement.id} className="hover:bg-[#f7f9fb] transition-colors border-t border-[#f0f4f7]">
                           <td className="py-5 font-medium">{formatShortDate(movement.fecha)}</td>
-                          <td className="py-5">{movement.actividad}</td>
+                          <td className="py-5">
+                            <span className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-extrabold ${movement.actividad === "Entrada" ? "border-sky-200 bg-sky-50 text-sky-800" : "border-violet-200 bg-violet-50 text-violet-800"}`}>
+                              <span className="material-symbols-outlined text-base">{movement.actividad === "Entrada" ? "login" : "logout"}</span>
+                              {movement.actividad}
+                            </span>
+                          </td>
                           <td className="py-5">{formatTimeOfDay(movement.hora)}</td>
                           <td className="py-5 text-[#566166]">{movement.nombreCompleto}</td>
                           <td className="py-5 text-right">
-                            <span className="px-3 py-1 rounded-full bg-[#e8eff3] text-[#4d5d73] text-[10px] font-bold uppercase">{movement.estado}</span>
+                            <span className={`inline-flex rounded-full border px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide ${statusStyles}`}>{status.label}</span>
                           </td>
                         </tr>
+                          );
+                        })()
                       ))
                     ) : (
                       <tr>
