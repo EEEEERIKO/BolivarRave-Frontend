@@ -45,6 +45,14 @@ type StaffBalanceMovementApi = {
   createdAt: string;
 };
 
+type StaffRecentActivityApi = {
+  id: string;
+  tipo: "entrada" | "salida" | "limpieza";
+  titulo: string;
+  detalle: string;
+  fecha: string;
+};
+
 type StaffApi = {
   id: string;
   numeroStaff: number;
@@ -260,6 +268,16 @@ function formatDurationHuman(hoursDecimal: number): string {
 
   return `${minutes} min`;
 }
+
+function formatSignedHours(hoursDecimal: number): string {
+  return `${hoursDecimal >= 0 ? "+" : "−"}${formatDurationHuman(Math.abs(hoursDecimal))}`;
+}
+
+function isAttendanceBalanceMovement(motivo: string | null): boolean {
+  const normalized = motivo?.trim().toLowerCase() ?? "";
+  return normalized.startsWith("tardanza de ") || normalized.startsWith("salida anticipada de ");
+}
+
 function formatMovementDate(value: string): string {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
@@ -1985,6 +2003,12 @@ export default function StaffPage() {
   const [balanceAdjustmentMinutes, setBalanceAdjustmentMinutes] = useState("");
   const [balanceAdjustmentMode, setBalanceAdjustmentMode] = useState<"a_favor" | "en_contra" | null>(null);
   const [isBalanceAdjustmentDialogOpen, setIsBalanceAdjustmentDialogOpen] = useState(false);
+  const [recentActivities, setRecentActivities] = useState<StaffRecentActivityApi[]>([]);
+  const [isLoadingRecentActivities, setIsLoadingRecentActivities] = useState(false);
+  const [showActivityFilters, setShowActivityFilters] = useState(false);
+  const [activityFromDate, setActivityFromDate] = useState(getTodayIsoDateLocal());
+  const [activityToDate, setActivityToDate] = useState(getTodayIsoDateLocal());
+  const [activityType, setActivityType] = useState<"todos" | StaffRecentActivityApi["tipo"]>("todos");
   const selectedStaffContentRef = useRef<HTMLDivElement>(null);
   const staffDetailPanelRef = useRef<HTMLDivElement>(null);
   const balanceMovementsSectionRef = useRef<HTMLDivElement>(null);
@@ -2061,7 +2085,11 @@ export default function StaffPage() {
       }
 
       const payload = await response.json() as { movimientos?: StaffBalanceMovementApi[] };
-      setBalanceMovements(Array.isArray(payload.movimientos) ? payload.movimientos : []);
+      setBalanceMovements(
+        Array.isArray(payload.movimientos)
+          ? payload.movimientos.filter((movement) => !isAttendanceBalanceMovement(movement.motivo))
+          : [],
+      );
     } catch {
       setBalanceMovements([]);
     } finally {
@@ -2069,13 +2097,40 @@ export default function StaffPage() {
     }
   };
 
+  const loadRecentActivities = async (
+    staffId: string,
+    filters: { fromDate?: string; toDate?: string; type?: "todos" | StaffRecentActivityApi["tipo"] } = {},
+  ) => {
+    setIsLoadingRecentActivities(true);
+    try {
+      const params = new URLSearchParams({
+        desde: filters.fromDate ?? getTodayIsoDateLocal(),
+        hasta: filters.toDate ?? getTodayIsoDateLocal(),
+        limit: "50",
+      });
+      if (filters.type && filters.type !== "todos") params.set("tipo", filters.type);
+
+      const response = await fetchApiJson<{ actividades?: StaffRecentActivityApi[] }>(
+        `/api/staff/${staffId}/actividades-recientes?${params.toString()}`,
+        { cache: "no-store" },
+      );
+      setRecentActivities(Array.isArray(response.actividades) ? response.actividades : []);
+    } catch {
+      setRecentActivities([]);
+    } finally {
+      setIsLoadingRecentActivities(false);
+    }
+  };
+
   useEffect(() => {
     if (!selectedStaff?.id) {
       setBalanceMovements([]);
+      setRecentActivities([]);
       return;
     }
 
     void loadBalanceMovements(selectedStaff.id);
+    void loadRecentActivities(selectedStaff.id);
   }, [selectedStaff?.id]);
 
   useEffect(() => {
@@ -3362,6 +3417,87 @@ export default function StaffPage() {
     }
   }
 
+  const renderRecentActivitiesPanel = () => (
+    <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5 lg:p-6">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <h4 className="flex items-center gap-2 text-[11px] font-black tracking-widest text-[#566166] uppercase">
+          <span className="h-1.5 w-1.5 rounded-full bg-[#3a5f94]" />
+          Actividades recientes e informes
+        </h4>
+        <span className="rounded-full bg-[#f0f4f7] px-2.5 py-1 text-[10px] font-bold text-[#566166]">Solo hoy</span>
+      </div>
+
+      {isLoadingRecentActivities ? (
+        <p className="py-4 text-xs text-[#566166]">Cargando actividades de hoy...</p>
+      ) : recentActivities.length === 0 ? (
+        <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-xs text-[#566166]">No hay registros para el día seleccionado.</p>
+      ) : (
+        <div className="relative space-y-4 pl-6 pr-1 before:absolute before:top-2 before:bottom-2 before:left-[7px] before:w-[2px] before:bg-[#cfdce3] before:content-['']">
+          {recentActivities.map((activity) => {
+            const isLate = activity.tipo === "entrada" && activity.detalle.toLowerCase().includes("tarde");
+            const colorClass = isLate ? "bg-rose-500" : activity.tipo === "limpieza" ? "bg-emerald-500" : "bg-sky-500";
+            const icon = activity.tipo === "entrada" ? "login" : activity.tipo === "salida" ? "logout" : "cleaning_services";
+
+            return (
+              <div className="relative" key={activity.id}>
+                <span className={`absolute -left-[23px] top-1 flex h-4 w-4 items-center justify-center rounded-full border-2 border-white text-white ${colorClass}`}>
+                  <span className="material-symbols-outlined text-[10px]">{icon}</span>
+                </span>
+                <p className="text-[10px] font-bold text-slate-400">{formatMovementDate(activity.fecha)}</p>
+                <p className={`text-sm font-bold ${isLate ? "text-[#9f403d]" : "text-[#2a3439]"}`}>{activity.titulo}</p>
+                <p className="text-xs text-[#566166]">{activity.detalle}</p>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <button
+        className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-[#3a5f94]/25 bg-[#f5f8fc] px-4 py-2.5 text-xs font-bold text-[#3a5f94] transition hover:bg-[#eaf1f8]"
+        type="button"
+        onClick={() => setShowActivityFilters((visible) => !visible)}
+      >
+        <span className="material-symbols-outlined text-base">{showActivityFilters ? "expand_less" : "manage_search"}</span>
+        {showActivityFilters ? "Ocultar filtros" : "Ver más registros y filtrar"}
+      </button>
+
+      {showActivityFilters ? (
+        <form
+          className="mt-4 space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (selectedStaff) {
+              void loadRecentActivities(selectedStaff.id, { fromDate: activityFromDate, toDate: activityToDate, type: activityType });
+            }
+          }}
+        >
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="text-[10px] font-bold uppercase tracking-wide text-slate-500">
+              Desde
+              <input className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-xs" type="date" value={activityFromDate} onChange={(event) => setActivityFromDate(event.target.value)} />
+            </label>
+            <label className="text-[10px] font-bold uppercase tracking-wide text-slate-500">
+              Hasta
+              <input className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-xs" type="date" value={activityToDate} onChange={(event) => setActivityToDate(event.target.value)} />
+            </label>
+          </div>
+          <label className="block text-[10px] font-bold uppercase tracking-wide text-slate-500">
+            Tipo de registro
+            <select className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-xs" value={activityType} onChange={(event) => setActivityType(event.target.value as typeof activityType)}>
+              <option value="todos">Todos</option>
+              <option value="entrada">Entradas</option>
+              <option value="salida">Salidas</option>
+              <option value="limpieza">Limpieza de salones</option>
+            </select>
+          </label>
+          <button className="w-full rounded-lg bg-[#3a5f94] px-3 py-2 text-xs font-bold text-white disabled:opacity-60" type="submit" disabled={isLoadingRecentActivities || !selectedStaff}>
+            {isLoadingRecentActivities ? "Buscando..." : "Aplicar filtros"}
+          </button>
+        </form>
+      ) : null}
+    </section>
+  );
+
   return (
     <div className="px-3 py-3 sm:px-5 sm:py-5 lg:px-7 lg:py-7">
       {formFeedback ? (
@@ -4338,32 +4474,7 @@ export default function StaffPage() {
                 </div>
               ) : null}
             </section>
-            <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5 lg:p-6">
-              <h4 className="mb-4 flex items-center gap-2 text-[11px] font-black tracking-widest text-[#566166] uppercase">
-                <span className="h-1.5 w-1.5 rounded-full bg-[#3a5f94]" />
-                Actividades recientes e informes
-              </h4>
-              <div className="relative space-y-6 pl-6 pr-1 before:absolute before:top-2 before:bottom-2 before:left-[7px] before:w-[2px] before:bg-[#cfdce3] before:content-['']">
-                <div className="relative">
-                  <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-green-500" />
-                  <p className="text-[10px] font-bold text-slate-400">HOY, 10:45</p>
-                  <p className="text-sm font-bold text-[#2a3439]">Salón 302 limpiado</p>
-                  <p className="text-xs text-[#566166]">Actividad: registro de mantenimiento</p>
-                </div>
-                <div className="relative">
-                  <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-[#9f403d]" />
-                  <p className="text-[10px] font-bold text-slate-400">AYER, 14:15</p>
-                  <p className="text-sm font-bold text-[#9f403d]">Informe de llegada tardía</p>
-                  <p className="text-xs text-[#566166]">Infracción: 15 min de retraso sin aviso.</p>
-                </div>
-                <div className="relative">
-                  <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-green-500" />
-                  <p className="text-[10px] font-bold text-slate-400">24 OCT, 09:00</p>
-                  <p className="text-sm font-bold text-[#2a3439]">Inventario verificado</p>
-                  <p className="text-xs text-[#566166]">Actividad: auditoría de equipos</p>
-                </div>
-              </div>
-            </section>
+            {renderRecentActivitiesPanel()}
           </div>
           </>
           ) : selectedStaff && isCollaborador ? (
@@ -4469,32 +4580,7 @@ export default function StaffPage() {
                   ) : null}
                 </section>
 
-                <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5 lg:p-6">
-                  <h4 className="mb-4 flex items-center gap-2 text-[11px] font-black tracking-widest text-[#566166] uppercase">
-                    <span className="h-1.5 w-1.5 rounded-full bg-[#3a5f94]" />
-                    Actividades recientes e informes
-                  </h4>
-                  <div className="relative space-y-6 pl-6 pr-1 before:absolute before:top-2 before:bottom-2 before:left-[7px] before:w-[2px] before:bg-[#cfdce3] before:content-['']">
-                    <div className="relative">
-                      <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-green-500" />
-                      <p className="text-[10px] font-bold text-slate-400">HOY, 10:45</p>
-                      <p className="text-sm font-bold text-[#2a3439]">Salón 302 limpiado</p>
-                      <p className="text-xs text-[#566166]">Actividad: registro de mantenimiento</p>
-                    </div>
-                    <div className="relative">
-                      <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-[#9f403d]" />
-                      <p className="text-[10px] font-bold text-slate-400">AYER, 14:15</p>
-                      <p className="text-sm font-bold text-[#9f403d]">Informe de llegada tardía</p>
-                      <p className="text-xs text-[#566166]">Infracción: 15 min de retraso sin aviso.</p>
-                    </div>
-                    <div className="relative">
-                      <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-green-500" />
-                      <p className="text-[10px] font-bold text-slate-400">24 OCT, 09:00</p>
-                      <p className="text-sm font-bold text-[#2a3439]">Inventario verificado</p>
-                      <p className="text-xs text-[#566166]">Actividad: auditoría de equipos</p>
-                    </div>
-                  </div>
-                </section>
+                {renderRecentActivitiesPanel()}
               </div>
             </div>
           ) : !isCollaborador ? (
@@ -4663,7 +4749,7 @@ export default function StaffPage() {
                   {balanceMovements.slice(0, 5).map((movement) => (
                     <div key={movement.id} className="rounded-lg border border-slate-200 bg-white px-2.5 py-2">
                       <p className={`text-xs font-black ${movement.horasDelta >= 0 ? "text-green-600" : "text-[#9f403d]"}`}>
-                        {movement.horasDelta >= 0 ? "+" : ""}{movement.horasDelta} horas
+                        {formatSignedHours(movement.horasDelta)}
                       </p>
                       <p className="text-[10px] text-[#566166]">{formatMovementDate(movement.createdAt)}</p>
                       <p className="text-[10px] text-[#2a3439]">{movement.motivo?.trim() ? movement.motivo : "Sin motivo"}</p>
@@ -4974,32 +5060,7 @@ export default function StaffPage() {
                     ) : null}
 
                     {mobileDetailTab === "activity" ? (
-                      <section className="rounded-2xl border border-slate-200 bg-white p-4">
-                        <h4 className="mb-4 flex items-center gap-2 text-[11px] font-black tracking-widest text-[#566166] uppercase">
-                          <span className="h-1.5 w-1.5 rounded-full bg-[#3a5f94]" />
-                          Actividades recientes e informes
-                        </h4>
-                        <div className="relative space-y-6 pl-6 before:absolute before:top-2 before:bottom-2 before:left-[7px] before:w-[2px] before:bg-[#cfdce3] before:content-['']">
-                          <div className="relative">
-                            <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-green-500" />
-                            <p className="text-[10px] font-bold text-slate-400">HOY, 10:45</p>
-                            <p className="text-sm font-bold text-[#2a3439]">Salón 302 limpiado</p>
-                            <p className="text-xs text-[#566166]">Actividad: registro de mantenimiento</p>
-                          </div>
-                          <div className="relative">
-                            <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-[#9f403d]" />
-                            <p className="text-[10px] font-bold text-slate-400">AYER, 14:15</p>
-                            <p className="text-sm font-bold text-[#9f403d]">Informe de llegada tardía</p>
-                            <p className="text-xs text-[#566166]">Infracción: 15 min de retraso sin aviso.</p>
-                          </div>
-                          <div className="relative">
-                            <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-white bg-green-500" />
-                            <p className="text-[10px] font-bold text-slate-400">24 OCT, 09:00</p>
-                            <p className="text-sm font-bold text-[#2a3439]">Inventario verificado</p>
-                            <p className="text-xs text-[#566166]">Actividad: auditoría de equipos</p>
-                          </div>
-                        </div>
-                      </section>
+                      renderRecentActivitiesPanel()
                     ) : null}
 
                     {mobileDetailTab === "profile" && canManageStaff ? (
