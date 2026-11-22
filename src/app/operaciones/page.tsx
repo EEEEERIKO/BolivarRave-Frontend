@@ -467,11 +467,18 @@ export default function OperacionesPage() {
     };
 
     void loadDashboard();
-    const refreshTimer = window.setInterval(() => {
-      void loadDashboard();
-    }, 60_000);
+    const refreshIfVisible = () => {
+      if (document.visibilityState === "visible") {
+        void loadDashboard();
+      }
+    };
+    const refreshTimer = window.setInterval(refreshIfVisible, 120_000);
+    document.addEventListener("visibilitychange", refreshIfVisible);
 
-    return () => window.clearInterval(refreshTimer);
+    return () => {
+      window.clearInterval(refreshTimer);
+      document.removeEventListener("visibilitychange", refreshIfVisible);
+    };
   }, [isDesktopViewport]);
 
   const summary = dashboard?.summary;

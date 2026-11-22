@@ -466,8 +466,15 @@ export default function AuditorioPage() {
   const [approvalStaffSearchQuery, setApprovalStaffSearchQuery] = useState<string>("");
   const [approvalStaffIds, setApprovalStaffIds] = useState<string[]>([]);
   const appliedDeepLinkReservaIdRef = useRef<string | null>(null);
+  const reservasLoadInFlightRef = useRef(false);
 
   const syncReservas = useCallback(async () => {
+    if (reservasLoadInFlightRef.current) {
+      return;
+    }
+    reservasLoadInFlightRef.current = true;
+
+    try {
     const response = await fetchApiJson<{ reservas?: AuditorioReservaApi[] }>("/api/auditorio/reservas", {
       cache: "no-store",
     });
@@ -481,6 +488,9 @@ export default function AuditorioPage() {
       }
       return null;
     });
+    } finally {
+      reservasLoadInFlightRef.current = false;
+    }
   }, []);
 
   const syncStaffCatalog = useCallback(async () => {
@@ -535,9 +545,13 @@ export default function AuditorioPage() {
 
   // Fallback de auto-actualizacion para no depender solo del socket.
   useEffect(() => {
+    // Socket.IO handles normal updates. Keep a conservative fallback in case
+    // a browser misses an event or reconnects after a network interruption.
     const intervalId = window.setInterval(() => {
-      handleRealtimeRefresh();
-    }, 15000);
+      if (document.visibilityState === "visible") {
+        handleRealtimeRefresh();
+      }
+    }, 60_000);
 
     const onVisibility = () => {
       if (document.visibilityState === "visible") {

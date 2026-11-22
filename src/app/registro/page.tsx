@@ -443,11 +443,18 @@ export default function RegistroPage() {
     }
 
     void loadDashboard();
-    const timer = window.setInterval(() => {
-      void loadDashboard();
-    }, 60000);
+    const refreshIfVisible = () => {
+      if (document.visibilityState === "visible") {
+        void loadDashboard();
+      }
+    };
+    const timer = window.setInterval(refreshIfVisible, 120_000);
+    document.addEventListener("visibilitychange", refreshIfVisible);
 
-    return () => window.clearInterval(timer);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", refreshIfVisible);
+    };
   }, [session, sessionReady]);
 
   useEffect(() => {
