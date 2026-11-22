@@ -82,8 +82,9 @@ export const useWebSocketSchedules = ({
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
       reconnectionAttempts: 10,
-      // En local usamos polling para evitar ruido de "WebSocket closed before established".
-      transports: isLocalDev ? ["polling"] : ["polling", "websocket"],
+      // Prefer a real WebSocket. Polling is only a compatibility fallback and
+      // otherwise creates recurring transport traffic even when no data changes.
+      transports: isLocalDev ? ["polling"] : ["websocket", "polling"],
       forceNew: false,
       upgrade: !isLocalDev,
     });

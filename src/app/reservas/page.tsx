@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { readAuthSession } from "@/lib/auth-session";
 import { fetchApiJson } from "@/lib/api-client";
@@ -313,6 +313,7 @@ export default function ReservasPage() {
     const [allReservations, setAllReservations] = useState<ReservationFeedItem[]>([]);
     const [reservationsFeed, setReservationsFeed] = useState<ReservationFeedItem[]>([]);
     const [reservationsLoading, setReservationsLoading] = useState(false);
+    const reservationsLoadInFlightRef = useRef(false);
     const [returningReservationId, setReturningReservationId] = useState<string | null>(null);
     const [actionReservationId, setActionReservationId] = useState<string | null>(null);
     const [modalOpen, setModalOpen] = useState(false);
@@ -913,6 +914,13 @@ export default function ReservasPage() {
             return;
         }
 
+        // Avoid stacking full-list requests when a focus event, timer, or
+        // manual action happens at the same time.
+        if (reservationsLoadInFlightRef.current) {
+            return;
+        }
+        reservationsLoadInFlightRef.current = true;
+
         setReservationsLoading(true);
 
         try {
@@ -920,14 +928,15 @@ export default function ReservasPage() {
                 const reservas = response.reservas ?? [];
                 setAllReservations(reservas);
                 setReservationsFeed(reservas.slice(0, 6));
-        } catch {
-                const err = (arguments[0] ?? null) as unknown as Error;
+        } catch (error) {
+                const err = error instanceof Error ? error : null;
                 const msg = err instanceof Error ? err.message : "No se pudo cargar las reservas.";
                 setAllReservations([]);
                 setReservationsFeed([]);
                 toast.error(msg);
         } finally {
             setReservationsLoading(false);
+            reservationsLoadInFlightRef.current = false;
         }
     }, [canViewReservations]);
 
@@ -1151,7 +1160,10 @@ export default function ReservasPage() {
             }
         };
 
-        const intervalId = window.setInterval(refreshIfVisible, 5000);
+        // The WebSocket is the primary update mechanism. This is only a
+        // low-frequency fallback for missed events; a 5-second full-list
+        // request generated substantial database egress with multiple tabs.
+        const intervalId = window.setInterval(refreshIfVisible, 60_000);
 
         window.addEventListener("focus", refreshIfVisible);
         document.addEventListener("visibilitychange", refreshIfVisible);
